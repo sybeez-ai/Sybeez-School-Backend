@@ -1,0 +1,5 @@
+[project]
+name = "sybeez-school-backend"
+version = "0.1.0"
+description = "Sybeez School Platform backend monorepo"
+requires-python = ">=3.12"

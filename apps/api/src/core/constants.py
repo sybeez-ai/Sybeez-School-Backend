@@ -1,0 +1,4 @@
+API_V1_PREFIX = "/api/v1"
+APP_NAME = "Sybeez School API"
+APP_VERSION = "0.1.0"
+EMBEDDING_DIM = 1536
