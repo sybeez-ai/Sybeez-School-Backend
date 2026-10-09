@@ -1,5 +1,18 @@
-from pydantic import BaseModel
+from datetime import datetime
+from uuid import UUID
+
+from pydantic import BaseModel, EmailStr
 
 
-class AuditStub(BaseModel):
-    message: str = "audit module ready"
+class AuditLogOut(BaseModel):
+    id: UUID
+    created_at: datetime
+    school_id: UUID | None = None
+    school_name: str | None = None
+    actor_id: UUID | None = None
+    actor_email: EmailStr | None = None
+    action: str
+    message: str | None = None
+    details: dict | None = None
+
+    model_config = {"from_attributes": True}

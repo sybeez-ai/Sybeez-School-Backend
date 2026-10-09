@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.exceptions import NotFoundError
 from src.db.models import AcademicYear
-from src.modules.academic_years.schemas import AcademicYearCreate
+from src.modules.academic_years.schemas import AcademicYearCreate, AcademicYearUpdate
 
 
 class AcademicYearService:
@@ -35,4 +35,18 @@ class AcademicYearService:
         row = result.scalar_one_or_none()
         if not row:
             raise NotFoundError("Academic year not found")
+        return row
+
+    async def update(self, school_id: UUID, year_id: UUID, data: AcademicYearUpdate) -> AcademicYear:
+        row = await self.get(school_id, year_id)
+        payload = data.model_dump(exclude_unset=True)
+        if payload.get("is_current") is True:
+            await self.db.execute(
+                update(AcademicYear)
+                .where(AcademicYear.school_id == school_id, AcademicYear.id != year_id)
+                .values(is_current=False)
+            )
+        for k, v in payload.items():
+            setattr(row, k, v)
+        await self.db.flush()
         return row

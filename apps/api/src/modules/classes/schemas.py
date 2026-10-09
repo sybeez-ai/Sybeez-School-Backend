@@ -10,6 +10,15 @@ class ClassCreate(BaseModel):
     academic_year_id: UUID
     section: str | None = None
     capacity: int | None = Field(default=None, ge=1, le=200)
+    class_teacher_id: UUID | None = None
+
+
+class ClassUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=64)
+    section: str | None = Field(default=None, min_length=1, max_length=16)
+    capacity: int | None = Field(default=None, ge=1, le=200)
+    # Pass null explicitly to clear class teacher
+    class_teacher_id: UUID | None = None
 
 
 class ClassOut(BaseModel):
@@ -20,6 +29,8 @@ class ClassOut(BaseModel):
     academic_year_id: UUID
     section: str | None
     capacity: int | None = None
+    class_teacher_id: UUID | None = None
+    class_teacher_name: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

@@ -7,7 +7,7 @@ FastAPI backend for the Sybeez School Platform, aligned with `Sybeez-School-Fron
 | Service | Port | Role |
 |---------|------|------|
 | `apps/api` | 8000 | Core school platform API |
-| `apps/ai` | 8001 | AI Teacher / RAG service |
+| `apps/ai` | 8001 | Legacy AI service (dev only). Production AI runs from `Sybeez-School-AI-Service`. |
 | `apps/worker` | — | Background jobs (Redis) |
 
 ## Roles
@@ -31,11 +31,19 @@ make api
 API docs: http://localhost:8000/docs
 
 ## Seeded credentials
+Development only. Seeding creates known-password accounts and is blocked when `APP_ENV=production`.
 
 | Role | Email | Password | Portal |
 |------|-------|----------|--------|
-| Platform Admin | `admin@sybeez.com` | `ChangeMe123!` | `/platform` |
-| School Admin (Green Valley) | `admin@greenvalley.edu` | `SchoolAdmin123!` | `/school` |
+| Platform | `platform.dev@sybeez.ai` | `DevLogin123!` | `/login/platform` |
+| School Admin | `admin@greenvalley.edu` | `DevLogin123!` | `/login/school` |
+| Teacher | `teacher@greenvalley.edu` | `DevLogin123!` | `/login/teacher` |
+| Student | `student@greenvalley.edu` | `DevLogin123!` | `/login/student` |
+| Parent | `parent@greenvalley.edu` | `DevLogin123!` | `/login/parent` |
+
+All five portal pages and the `/login` hub show a **Dev login** button in development. Password for every Dev login account is `DevLogin123!`.
+
+Each portal login page shows a **Dev login** button in development that signs in with these credentials through the real auth API. Manual email/password login uses the same path.
 
 ```bash
 cd apps/api && PYTHONPATH=. python -m src.db.seed

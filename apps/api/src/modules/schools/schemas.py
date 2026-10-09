@@ -9,5 +9,10 @@ class SchoolProfile(BaseModel):
     slug: str
     status: str
     timezone: str
+    logo_url: str | None = None
 
     model_config = {"from_attributes": True}
+
+
+class SchoolProfileUpdate(BaseModel):
+    name: str | None = None

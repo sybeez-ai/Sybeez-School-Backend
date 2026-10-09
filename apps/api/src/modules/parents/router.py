@@ -1,13 +1,14 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import CurrentUser, require_roles
 from src.core.database import get_db
 from src.core.exceptions import ForbiddenError
-from src.modules.parents.schemas import LinkParentRequest, ParentCreate, ParentOut
+from src.modules.parents.schemas import LinkParentRequest, ParentChildBrief, ParentCreate, ParentOut
 from src.modules.parents.service import ParentService
 from src.shared.enums import UserRole
 
@@ -20,12 +21,34 @@ def _sid(u: CurrentUser) -> UUID:
     return u.school_id
 
 
+class UnlinkParentRequest(BaseModel):
+    parent_id: UUID
+
+
+
+@router.get("/me", response_model=ParentOut)
+async def my_parent_profile(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(UserRole.PARENT))],
+):
+    return await ParentService(db).me(_sid(user), user.id)
+
+
+@router.get("/me/children", response_model=list[ParentChildBrief])
+async def my_children(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(UserRole.PARENT))],
+):
+    return await ParentService(db).my_children(_sid(user), user.id)
+
+
 @router.get("", response_model=list[ParentOut])
 async def list_parents(
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    q: str | None = Query(None),
 ):
-    return await ParentService(db).list(_sid(user))
+    return await ParentService(db).list(_sid(user), q=q)
 
 
 @router.post("", response_model=ParentOut, status_code=201)
@@ -54,4 +77,21 @@ async def link_parent(
     user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
 ):
     link = await ParentService(db).link_to_student(_sid(user), student_id, body)
-    return {"id": str(link.id), "student_id": str(link.student_id), "parent_id": str(link.parent_id), "relationship": link.relation_type}
+    return {
+        "id": str(link.id),
+        "student_id": str(link.student_id),
+        "parent_id": str(link.parent_id),
+        "relationship": link.relation_type,
+        "is_primary": link.is_primary,
+    }
+
+
+@router.post("/by-student/{student_id}/unlink", status_code=200)
+async def unlink_parent(
+    student_id: UUID,
+    body: UnlinkParentRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+):
+    await ParentService(db).unlink_from_student(_sid(user), student_id, body.parent_id)
+    return {"ok": True, "student_id": str(student_id), "parent_id": str(body.parent_id)}

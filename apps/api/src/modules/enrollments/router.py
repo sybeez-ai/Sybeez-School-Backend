@@ -25,8 +25,9 @@ async def list_enrollments(
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN, UserRole.TEACHER))],
     class_id: UUID | None = Query(None),
+    student_id: UUID | None = Query(None),
 ):
-    return await EnrollmentService(db).list(_sid(user), class_id)
+    return await EnrollmentService(db).list(_sid(user), class_id=class_id, student_id=student_id)
 
 
 @router.post("", response_model=EnrollmentOut, status_code=201)

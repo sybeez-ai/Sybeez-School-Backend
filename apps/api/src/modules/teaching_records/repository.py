@@ -34,3 +34,17 @@ class TeachingRecordRepository:
             .limit(limit)
         )
         return list(result.scalars().all())
+
+    async def list_for_teacher(
+        self, *, school_id: UUID, teacher_id: UUID, limit: int = 50
+    ) -> list[TeachingRecord]:
+        result = await self.db.execute(
+            select(TeachingRecord)
+            .where(
+                TeachingRecord.school_id == school_id,
+                TeachingRecord.teacher_id == teacher_id,
+            )
+            .order_by(TeachingRecord.taught_on.desc(), TeachingRecord.created_at.desc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())

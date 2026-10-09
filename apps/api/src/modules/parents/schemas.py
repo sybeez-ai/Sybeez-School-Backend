@@ -14,6 +14,15 @@ class ParentCreate(BaseModel):
     is_primary: bool = False
 
 
+class ParentChildBrief(BaseModel):
+    student_id: UUID
+    full_name: str | None = None
+    email: str | None = None
+    relationship: str
+    class_name: str | None = None
+    admission_no: str | None = None
+
+
 class ParentOut(BaseModel):
     id: UUID
     school_id: UUID
@@ -22,6 +31,9 @@ class ParentOut(BaseModel):
     email: str | None = None
     phone: str | None
     created_at: datetime
+    children: list[ParentChildBrief] = []
+    is_active: bool = True
+    temporary_password: str | None = None
 
     model_config = {"from_attributes": True}
 

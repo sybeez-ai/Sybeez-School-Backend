@@ -35,6 +35,22 @@ class AuthRepository:
         result = await self.db.execute(q.limit(1))
         return result.scalar_one_or_none()
 
+    async def get_membership_for_role(
+        self,
+        user_id: UUID,
+        role: str,
+        school_id: UUID | None = None,
+    ) -> SchoolMembership | None:
+        """Prefer membership matching the login portal role (teacher/student/…)."""
+        q = select(SchoolMembership).where(
+            SchoolMembership.user_id == user_id,
+            SchoolMembership.role == role,
+        )
+        if school_id:
+            q = q.where(SchoolMembership.school_id == school_id)
+        result = await self.db.execute(q.limit(1))
+        return result.scalar_one_or_none()
+
     async def list_memberships(self, user_id: UUID) -> list[SchoolMembership]:
         result = await self.db.execute(select(SchoolMembership).where(SchoolMembership.user_id == user_id))
         return list(result.scalars().all())
@@ -47,6 +63,29 @@ class AuthRepository:
     async def get_refresh_by_jti(self, jti: str) -> RefreshToken | None:
         result = await self.db.execute(select(RefreshToken).where(RefreshToken.jti == jti))
         return result.scalar_one_or_none()
+
+    async def revoke_refresh(self, refresh_token: str) -> None:
+        from src.core.security import decode_token
+
+        try:
+            payload = decode_token(refresh_token)
+        except ValueError:
+            return
+        if payload.get("type") != "refresh":
+            return
+        jti = payload.get("jti")
+        if not jti:
+            return
+        stored = await self.get_refresh_by_jti(jti)
+        if stored and not stored.revoked:
+            stored.revoked = True
+
+    async def revoke_all_for_user(self, user_id: UUID) -> None:
+        result = await self.db.execute(
+            select(RefreshToken).where(RefreshToken.user_id == user_id, RefreshToken.revoked.is_(False))
+        )
+        for tok in result.scalars().all():
+            tok.revoked = True
 
     async def get_invitation_by_token_hash(self, token_hash: str) -> Invitation | None:
         result = await self.db.execute(select(Invitation).where(Invitation.token_hash == token_hash))

@@ -26,5 +26,8 @@ class TeachingRecordOut(BaseModel):
     objectives: str | None
     homework_notes: str | None
     created_at: datetime
+    subject_name: str | None = None
+    class_name: str | None = None
+    teacher_name: str | None = None
 
     model_config = {"from_attributes": True}

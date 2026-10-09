@@ -1,4 +1,7 @@
-from sqlalchemy import String, Text
+import uuid
+
+from sqlalchemy import ForeignKey, String, Text
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -16,9 +19,19 @@ class School(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     status: Mapped[str] = mapped_column(String(32), nullable=False, default=SchoolStatus.ACTIVE.value)
     country: Mapped[str | None] = mapped_column(String(100), nullable=True)
     city: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    state: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    postal_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
     address: Mapped[str | None] = mapped_column(Text, nullable=True)
+    website: Mapped[str | None] = mapped_column(Text, nullable=True)
     timezone: Mapped[str] = mapped_column(String(64), default="UTC", nullable=False)
+    currency: Mapped[str] = mapped_column(String(8), default="INR", nullable=False)
     logo_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
     memberships = relationship("SchoolMembership", back_populates="school", cascade="all, delete-orphan")
     subscriptions = relationship("Subscription", back_populates="school", cascade="all, delete-orphan")

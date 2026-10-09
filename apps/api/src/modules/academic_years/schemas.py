@@ -11,6 +11,13 @@ class AcademicYearCreate(BaseModel):
     is_current: bool = False
 
 
+class AcademicYearUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=2, max_length=64)
+    starts_on: date | None = None
+    ends_on: date | None = None
+    is_current: bool | None = None
+
+
 class AcademicYearOut(BaseModel):
     id: UUID
     school_id: UUID

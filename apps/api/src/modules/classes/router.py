@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.api.dependencies import CurrentUser, require_roles, require_school_scope
 from src.core.database import get_db
 from src.core.exceptions import ForbiddenError
-from src.modules.classes.schemas import ClassCreate, ClassOut
+from src.modules.classes.schemas import ClassCreate, ClassOut, ClassUpdate
 from src.modules.classes.service import ClassService
 from src.shared.enums import UserRole
 
@@ -21,7 +21,10 @@ def _sid(u: CurrentUser) -> UUID:
 
 
 @router.get("", response_model=list[ClassOut])
-async def list_classes(db: Annotated[AsyncSession, Depends(get_db)], user: Annotated[CurrentUser, Depends(require_school_scope)]):
+async def list_classes(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_school_scope)],
+):
     return await ClassService(db).list(_sid(user))
 
 
@@ -32,3 +35,13 @@ async def create_class(
     user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
 ):
     return await ClassService(db).create(_sid(user), body)
+
+
+@router.patch("/{class_id}", response_model=ClassOut)
+async def update_class(
+    class_id: UUID,
+    body: ClassUpdate,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+):
+    return await ClassService(db).update(_sid(user), class_id, body)

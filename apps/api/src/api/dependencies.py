@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, Header
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,7 +11,7 @@ from src.core.database import get_db
 from src.core.exceptions import ForbiddenError, UnauthorizedError
 from src.core.security import decode_token
 from src.db.models import SchoolMembership, User
-from src.shared.enums import MembershipStatus, UserRole
+from src.shared.enums import MembershipStatus, PlatformRole, UserRole
 
 bearer = HTTPBearer(auto_error=False)
 
@@ -25,6 +25,7 @@ class CurrentUser:
     school_id: UUID | None
     membership_id: UUID | None
     is_platform_admin: bool
+    platform_role: str | None = None
 
 
 async def get_current_user(
@@ -61,16 +62,47 @@ async def get_current_user(
         school_id=school_id,
         membership_id=membership_id,
         is_platform_admin=user.is_platform_admin,
+        platform_role=user.platform_role or payload.get("platform_role"),
     )
 
 
 def require_roles(*roles: UserRole):
     async def _dep(user: Annotated[CurrentUser, Depends(get_current_user)]) -> CurrentUser:
         if user.role not in roles and not (UserRole.PLATFORM_ADMIN in roles and user.is_platform_admin):
-            raise ForbiddenError(f"Requires one of: {', '.join(r.value for r in roles)}")
+            needed = ", ".join(r.value for r in roles)
+            if UserRole.PLATFORM_ADMIN in roles:
+                msg = (
+                    f"Requires one of: {needed}. "
+                    f"Current session role is {user.role.value}. "
+                    "Sign in at /login/platform with a platform admin account."
+                )
+            else:
+                msg = f"Requires one of: {needed}"
+            raise ForbiddenError(msg)
         return user
 
     return _dep
+
+
+def require_super_admin(
+    user: Annotated[CurrentUser, Depends(require_roles(UserRole.PLATFORM_ADMIN))],
+) -> CurrentUser:
+    if user.platform_role != PlatformRole.SUPER_ADMIN.value:
+        raise ForbiddenError("Super admin only")
+    return user
+
+
+def require_admin_or_above(
+    user: Annotated[CurrentUser, Depends(require_roles(UserRole.PLATFORM_ADMIN))],
+) -> CurrentUser:
+    if user.platform_role not in {
+        PlatformRole.SUPER_ADMIN.value,
+        PlatformRole.ADMIN.value,
+        PlatformRole.PLATFORM_ADMIN.value,
+        PlatformRole.OPERATIONS.value,
+    }:
+        raise ForbiddenError("Admin only")
+    return user
 
 
 async def require_school_scope(

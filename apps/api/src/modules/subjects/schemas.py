@@ -8,6 +8,14 @@ class SubjectCreate(BaseModel):
     name: str = Field(min_length=1, max_length=128)
     code: str = Field(min_length=1, max_length=32)
     description: str | None = None
+    status: str | None = Field(default="ACTIVE", max_length=32)
+
+
+class SubjectUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=128)
+    code: str | None = Field(default=None, min_length=1, max_length=32)
+    description: str | None = None
+    status: str | None = Field(default=None, max_length=32)
 
 
 class SubjectOut(BaseModel):
@@ -16,6 +24,7 @@ class SubjectOut(BaseModel):
     name: str
     code: str
     description: str | None
+    status: str = "ACTIVE"
     created_at: datetime
 
     model_config = {"from_attributes": True}
