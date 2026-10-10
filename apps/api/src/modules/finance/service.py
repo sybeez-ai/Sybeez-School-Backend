@@ -1750,6 +1750,81 @@ class FinanceService:
             out.append({"collector": user.full_name if user else "Online / unknown", "amount": str(amount)})
         return out
 
+    async def report_branch_wise(self, from_date: date | None, to_date: date | None) -> list[dict]:
+        q = select(Payment).where(
+            Payment.school_id == self.school_id, Payment.status == PaymentStatus.SUCCESS.value
+        )
+        q = self._limit(q, Payment.branch_id, None)
+        payments = (await self.db.execute(q)).scalars().all()
+        buckets: dict[str, Decimal] = {}
+        for payment in payments:
+            paid_day = (payment.paid_at or payment.created_at).date()
+            if from_date and paid_day < from_date:
+                continue
+            if to_date and paid_day > to_date:
+                continue
+            key = str(payment.branch_id) if payment.branch_id else ""
+            buckets[key] = money(buckets.get(key, 0) + payment.amount)
+        out = []
+        for key, amount in sorted(buckets.items()):
+            label = "Unassigned"
+            if key:
+                branch = await self.db.get(SchoolBranch, UUID(key))
+                if branch and branch.school_id == self.school_id:
+                    label = branch.name
+            out.append({"branch": label, "branch_id": key or None, "amount": str(amount)})
+        return out
+
+    async def report_category_wise(self, from_date: date | None, to_date: date | None) -> list[dict]:
+        """Collection grouped by the student fee category (general, staff, RTE), not the fee head."""
+        q = select(Payment).where(
+            Payment.school_id == self.school_id, Payment.status == PaymentStatus.SUCCESS.value
+        )
+        q = self._limit(q, Payment.branch_id, None)
+        payments = (await self.db.execute(q)).scalars().all()
+        buckets: dict[str, Decimal] = {}
+        for payment in payments:
+            paid_day = (payment.paid_at or payment.created_at).date()
+            if from_date and paid_day < from_date:
+                continue
+            if to_date and paid_day > to_date:
+                continue
+            category = "GENERAL"
+            account = await self.db.get(StudentFeeAccount, payment.student_fee_account_id)
+            if account and account.school_id == self.school_id:
+                profile = (
+                    await self.db.execute(
+                        select(StudentFeeProfile).where(
+                            StudentFeeProfile.school_id == self.school_id,
+                            StudentFeeProfile.student_id == account.student_id,
+                        )
+                    )
+                ).scalar_one_or_none()
+                if profile:
+                    category = profile.category
+            buckets[category] = money(buckets.get(category, 0) + payment.amount)
+        return [{"category": k, "amount": str(v)} for k, v in sorted(buckets.items())]
+
+    async def list_notifications(self, limit: int = 50):
+        from src.db.models.notification import Notification
+        from src.modules.finance.schemas import FinanceNotificationOut
+        from src.shared.enums import NotificationType
+
+        categories = [item.value for item in NotificationType if item.value.startswith("FEE_")]
+        rows = (
+            await self.db.execute(
+                select(Notification)
+                .where(
+                    Notification.user_id == self.user_id,
+                    or_(Notification.school_id == self.school_id, Notification.school_id.is_(None)),
+                    Notification.category.in_(categories),
+                )
+                .order_by(Notification.created_at.desc())
+                .limit(max(1, min(limit, 200)))
+            )
+        ).scalars().all()
+        return [FinanceNotificationOut.model_validate(row) for row in rows]
+
     async def report_concessions(self, status: str | None = None) -> list[dict]:
         q = select(FeeConcessionRequest).where(FeeConcessionRequest.school_id == self.school_id)
         if status:

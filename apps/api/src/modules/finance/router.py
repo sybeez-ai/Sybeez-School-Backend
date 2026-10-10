@@ -43,6 +43,7 @@ from src.modules.finance.schemas import (
     DueLine,
     FeeProfileIn,
     FeeProfileOut,
+    FinanceNotificationOut,
     FinancialYearIn,
     FinancialYearOut,
     FineWaiverIn,
@@ -427,6 +428,40 @@ async def report_collector(
     assert_finance(svc.role, "reports.read")
     rows = await svc.report_collector_wise(from_date, to_date)
     return _export(rows, ["collector", "amount"], format, "collector-wise", "Collector-wise collection")
+
+
+@router.get("/reports/branch-wise")
+async def report_branch(
+    svc: Annotated[FinanceService, Depends(_svc)],
+    from_date: date | None = None,
+    to_date: date | None = None,
+    format: str = Query("json"),
+):
+    assert_finance(svc.role, "reports.read")
+    rows = await svc.report_branch_wise(from_date, to_date)
+    return _export(rows, ["branch", "branch_id", "amount"], format, "branch-wise", "Branch-wise collection")
+
+
+@router.get("/reports/category-wise")
+async def report_category(
+    svc: Annotated[FinanceService, Depends(_svc)],
+    from_date: date | None = None,
+    to_date: date | None = None,
+    format: str = Query("json"),
+):
+    assert_finance(svc.role, "reports.read")
+    rows = await svc.report_category_wise(from_date, to_date)
+    return _export(rows, ["category", "amount"], format, "category-wise", "Category-wise collection")
+
+
+@router.get("/notifications", response_model=list[FinanceNotificationOut])
+async def finance_notifications(
+    svc: Annotated[FinanceService, Depends(_svc)],
+    limit: int = Query(50, ge=1, le=200),
+):
+    """Fee notifications for this user in this school. Other schools stay hidden."""
+    assert_finance(svc.role, "dashboard.read")
+    return await svc.list_notifications(limit)
 
 
 @router.get("/reports/concessions")

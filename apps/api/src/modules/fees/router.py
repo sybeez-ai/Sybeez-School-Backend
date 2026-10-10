@@ -31,6 +31,9 @@ from src.modules.fees.schemas import (
     InvoiceGenerateIn,
     LateFeeRuleIn,
     ManualPaymentIn,
+    OnlinePaymentRow,
+    PaymentLinkIn,
+    PaymentLinkOut,
     PaymentOrderIn,
     PaymentVerifyIn,
     RefundIn,
@@ -106,7 +109,7 @@ async def update_category(
 @router.get("/fees/structures")
 async def list_structures(
     db: Annotated[AsyncSession, Depends(scoped_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    user: Annotated[CurrentUser, Depends(require_roles(*FINANCE_VIEW))],
     academic_year_id: UUID | None = None,
 ):
     return await FeeService(db).list_structures(_sid(user), academic_year_id)
@@ -116,7 +119,7 @@ async def list_structures(
 async def create_structure(
     body: FeeStructureCreate,
     db: Annotated[AsyncSession, Depends(scoped_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    user: Annotated[CurrentUser, Depends(require_roles(*FINANCE_SETUP))],
 ):
     return await FeeService(db).create_structure(_sid(user), user.id, body)
 
@@ -125,7 +128,7 @@ async def create_structure(
 async def get_structure(
     structure_id: UUID,
     db: Annotated[AsyncSession, Depends(scoped_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    user: Annotated[CurrentUser, Depends(require_roles(*FINANCE_VIEW))],
 ):
     return await FeeService(db).get_structure(_sid(user), structure_id)
 
@@ -135,7 +138,7 @@ async def update_structure(
     structure_id: UUID,
     body: FeeStructureUpdate,
     db: Annotated[AsyncSession, Depends(scoped_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    user: Annotated[CurrentUser, Depends(require_roles(*FINANCE_SETUP))],
 ):
     return await FeeService(db).update_structure(_sid(user), user.id, structure_id, body)
 
@@ -144,7 +147,7 @@ async def update_structure(
 async def publish_structure(
     structure_id: UUID,
     db: Annotated[AsyncSession, Depends(scoped_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    user: Annotated[CurrentUser, Depends(require_roles(*FINANCE_SETUP))],
 ):
     return await FeeService(db).publish_structure(_sid(user), user.id, structure_id)
 
@@ -154,7 +157,7 @@ async def add_structure_item(
     structure_id: UUID,
     body: StructureItemIn,
     db: Annotated[AsyncSession, Depends(scoped_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    user: Annotated[CurrentUser, Depends(require_roles(*FINANCE_SETUP))],
 ):
     return await FeeService(db).add_structure_item(_sid(user), structure_id, body)
 
@@ -164,7 +167,7 @@ async def add_installment(
     structure_id: UUID,
     body: InstallmentIn,
     db: Annotated[AsyncSession, Depends(scoped_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    user: Annotated[CurrentUser, Depends(require_roles(*FINANCE_SETUP))],
 ):
     return await FeeService(db).add_installment(_sid(user), structure_id, body)
 
@@ -175,7 +178,7 @@ async def add_installment(
 @router.get("/fees/dashboard")
 async def fees_dashboard(
     db: Annotated[AsyncSession, Depends(scoped_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    user: Annotated[CurrentUser, Depends(require_roles(*FINANCE_VIEW))],
 ):
     return await FeeService(db).dashboard(_sid(user))
 
@@ -183,7 +186,7 @@ async def fees_dashboard(
 @router.get("/fees/students")
 async def list_fee_students(
     db: Annotated[AsyncSession, Depends(scoped_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    user: Annotated[CurrentUser, Depends(require_roles(*FINANCE_VIEW))],
     academic_year_id: UUID | None = None,
     grade_id: UUID | None = None,
     section_id: UUID | None = None,
@@ -276,8 +279,18 @@ async def list_invoices(
 async def generate_invoices(
     body: InvoiceGenerateIn,
     db: Annotated[AsyncSession, Depends(scoped_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    user: Annotated[CurrentUser, Depends(require_roles(*FINANCE_SETUP))],
 ):
+    return await FeeService(db).generate_invoices(_sid(user), user.id, body)
+
+
+@router.post("/fees/demands/generate", status_code=201)
+async def generate_demands(
+    body: InvoiceGenerateIn,
+    db: Annotated[AsyncSession, Depends(scoped_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(*FINANCE_SETUP))],
+):
+    """Demand notes are the issued invoices. Same school-scoped generator."""
     return await FeeService(db).generate_invoices(_sid(user), user.id, body)
 
 
@@ -309,7 +322,7 @@ async def cancel_invoice(
     invoice_id: UUID,
     body: CancelIn,
     db: Annotated[AsyncSession, Depends(scoped_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    user: Annotated[CurrentUser, Depends(require_roles(*FINANCE_SETUP))],
 ):
     return await FeeService(db).cancel_invoice(_sid(user), user.id, invoice_id, body.reason)
 
@@ -337,6 +350,29 @@ async def list_payments(
             out.extend(await ps.list_payments(_sid(user), student_id=sid))
         return out
     return await ps.list_payments(_sid(user), student_id=student_id)
+
+
+@router.post("/fees/payment-links", status_code=201, response_model=PaymentLinkOut)
+async def create_payment_link(
+    body: PaymentLinkIn,
+    db: Annotated[AsyncSession, Depends(scoped_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(*FINANCE_COLLECT))],
+):
+    """Create an online payment link for one invoice in the caller's school."""
+    return await PaymentService(db).create_payment_link(_sid(user), user.id, user.role.value, body)
+
+
+@router.get("/fees/online-payments/reconciliation", response_model=list[OnlinePaymentRow])
+async def reconcile_online_payments(
+    db: Annotated[AsyncSession, Depends(scoped_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(*FINANCE_VIEW))],
+    status: str | None = None,
+    from_date: date | None = None,
+    to_date: date | None = None,
+):
+    return await PaymentService(db).reconcile_online_payments(
+        _sid(user), status=status, from_date=from_date, to_date=to_date
+    )
 
 
 @router.post("/fees/payments/manual", status_code=201)
@@ -513,7 +549,7 @@ async def my_receipts(
 @router.get("/fees/settings")
 async def get_settings(
     db: Annotated[AsyncSession, Depends(scoped_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    user: Annotated[CurrentUser, Depends(require_roles(*FINANCE_SETUP))],
 ):
     return await FeeService(db).get_settings(_sid(user))
 
@@ -522,7 +558,7 @@ async def get_settings(
 async def update_settings(
     body: FeeSettingsUpdate,
     db: Annotated[AsyncSession, Depends(scoped_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    user: Annotated[CurrentUser, Depends(require_roles(*FINANCE_SETUP))],
 ):
     return await FeeService(db).update_settings(_sid(user), body)
 
@@ -530,7 +566,7 @@ async def update_settings(
 @router.get("/fees/late-fee-rules")
 async def list_late_rules(
     db: Annotated[AsyncSession, Depends(scoped_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    user: Annotated[CurrentUser, Depends(require_roles(*FINANCE_VIEW))],
 ):
     return await FeeService(db).list_late_rules(_sid(user))
 
@@ -539,7 +575,7 @@ async def list_late_rules(
 async def create_late_rule(
     body: LateFeeRuleIn,
     db: Annotated[AsyncSession, Depends(scoped_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    user: Annotated[CurrentUser, Depends(require_roles(*FINANCE_SETUP))],
 ):
     return await FeeService(db).upsert_late_rule(_sid(user), body)
 
@@ -547,7 +583,7 @@ async def create_late_rule(
 @router.post("/fees/late-fees/apply")
 async def apply_late_fees(
     db: Annotated[AsyncSession, Depends(scoped_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    user: Annotated[CurrentUser, Depends(require_roles(*FINANCE_SETUP))],
 ):
     n = await FeeService(db).apply_late_fees(_sid(user), user.id)
     return {"applied": n}
@@ -565,7 +601,7 @@ async def refresh_overdue(
 @router.post("/fees/reminders/run")
 async def run_fee_reminders(
     db: Annotated[AsyncSession, Depends(scoped_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    user: Annotated[CurrentUser, Depends(require_roles(*FINANCE_SETUP))],
 ):
     return await FeeService(db).send_invoice_reminders(_sid(user))
 
@@ -573,7 +609,7 @@ async def run_fee_reminders(
 @router.get("/fees/reports/collection")
 async def report_collection(
     db: Annotated[AsyncSession, Depends(scoped_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    user: Annotated[CurrentUser, Depends(require_roles(*FINANCE_VIEW))],
     from_date: date | None = None,
     to_date: date | None = None,
     format: str = Query("json"),
@@ -597,7 +633,7 @@ async def report_collection(
 @router.get("/fees/reports/outstanding")
 async def report_outstanding(
     db: Annotated[AsyncSession, Depends(scoped_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    user: Annotated[CurrentUser, Depends(require_roles(*FINANCE_VIEW))],
     format: str = Query("json"),
 ):
     rows = await FeeService(db).report_outstanding(_sid(user))
@@ -628,7 +664,7 @@ async def report_outstanding(
 @router.get("/fees/reports/overdue")
 async def report_overdue(
     db: Annotated[AsyncSession, Depends(scoped_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    user: Annotated[CurrentUser, Depends(require_roles(*FINANCE_VIEW))],
 ):
     rows = await FeeService(db).report_outstanding(_sid(user))
     return [r for r in rows if r.days_overdue > 0]

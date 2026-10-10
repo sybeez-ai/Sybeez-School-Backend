@@ -223,6 +223,40 @@ class PaymentOrderOut(BaseModel):
     public_key: str | None = None
 
 
+class PaymentLinkIn(BaseModel):
+    invoice_id: UUID
+    amount: Decimal | None = None
+    idempotency_key: str | None = Field(default=None, max_length=255)
+
+
+class PaymentLinkOut(BaseModel):
+    payment_id: UUID
+    payment_number: str
+    invoice_id: UUID
+    order_id: str
+    amount: Decimal
+    currency: str
+    gateway: str
+    url: str
+    status: str
+
+
+class OnlinePaymentRow(BaseModel):
+    payment_id: UUID
+    payment_number: str
+    invoice_id: UUID | None = None
+    student_name: str | None = None
+    amount: Decimal
+    currency: str
+    status: str
+    gateway: str | None = None
+    gateway_order_id: str | None = None
+    gateway_payment_id: str | None = None
+    paid_at: datetime | None = None
+    created_at: datetime
+    payment_link: bool = False
+
+
 class PaymentVerifyIn(BaseModel):
     payment_id: UUID
     gateway_order_id: str

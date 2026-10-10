@@ -326,6 +326,18 @@ class ApprovalOut(BaseModel):
     decision_note: str | None = None
 
 
+class FinanceNotificationOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    title: str
+    body: str
+    category: str | None = None
+    link_path: str | None = None
+    is_read: bool
+    created_at: datetime
+
+
 class ReminderQueuedOut(BaseModel):
     queued: bool
     school_id: UUID

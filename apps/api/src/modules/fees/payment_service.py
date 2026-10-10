@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from uuid import UUID, uuid4
 
@@ -37,6 +37,9 @@ from src.modules.fees.receipt_pdf import build_receipt_pdf
 from src.modules.fees.reversal import reverse_payment_amount
 from src.modules.fees.schemas import (
     ManualPaymentIn,
+    OnlinePaymentRow,
+    PaymentLinkIn,
+    PaymentLinkOut,
     PaymentOrderIn,
     PaymentOrderOut,
     PaymentOut,
@@ -121,7 +124,13 @@ class PaymentService:
             raise ForbiddenError("Not linked to this student")
 
     async def create_order(
-        self, school_id: UUID, user_id: UUID, role: str, data: PaymentOrderIn
+        self,
+        school_id: UUID,
+        user_id: UUID,
+        role: str,
+        data: PaymentOrderIn,
+        *,
+        notes: str | None = None,
     ) -> PaymentOrderOut:
         inv = await self.db.get(FeeInvoice, data.invoice_id)
         if not inv or inv.school_id != school_id:
@@ -189,6 +198,7 @@ class PaymentService:
             gateway=gateway.name,
             gateway_order_id=order.order_id,
             idempotency_key=data.idempotency_key,
+            notes=notes,
         )
         self.db.add(payment)
         await self.db.commit()
@@ -202,6 +212,87 @@ class PaymentService:
             gateway=gateway.name,
             public_key=settings.gateway_public_key,
         )
+
+    async def create_payment_link(
+        self, school_id: UUID, user_id: UUID, role: str, data: PaymentLinkIn
+    ) -> PaymentLinkOut:
+        """Gateway order the school can send to a parent. Scoped to this school."""
+        order = await self.create_order(
+            school_id,
+            user_id,
+            role,
+            PaymentOrderIn(
+                invoice_id=data.invoice_id,
+                amount=data.amount,
+                idempotency_key=data.idempotency_key,
+            ),
+            notes="payment_link",
+        )
+        payment = await self.db.get(Payment, order.payment_id)
+        base = get_settings().web_app_url.rstrip("/")
+        return PaymentLinkOut(
+            payment_id=order.payment_id,
+            payment_number=order.payment_number,
+            invoice_id=data.invoice_id,
+            order_id=order.order_id,
+            amount=order.amount,
+            currency=order.currency,
+            gateway=order.gateway,
+            url=f"{base}/pay/{order.order_id}",
+            status=payment.status if payment and payment.school_id == school_id else PaymentStatus.PENDING.value,
+        )
+
+    async def reconcile_online_payments(
+        self,
+        school_id: UUID,
+        *,
+        status: str | None = None,
+        from_date: date | None = None,
+        to_date: date | None = None,
+    ) -> list[OnlinePaymentRow]:
+        """Online payments for this school only. RLS applies on top of the school filter."""
+        await bind_tenant(self.db, school_id)
+        q = select(Payment).where(
+            Payment.school_id == school_id,
+            Payment.method == PaymentMethod.ONLINE.value,
+        )
+        if status:
+            q = q.where(Payment.status == status)
+        payments = (
+            await self.db.execute(q.order_by(Payment.created_at.desc()))
+        ).scalars().all()
+        out: list[OnlinePaymentRow] = []
+        for payment in payments:
+            if payment.school_id != school_id:
+                continue
+            stamp = payment.paid_at or payment.created_at
+            day = stamp.date() if stamp is not None else None
+            if from_date and day and day < from_date:
+                continue
+            if to_date and day and day > to_date:
+                continue
+            account = await self.db.get(StudentFeeAccount, payment.student_fee_account_id)
+            student_name = None
+            if account and account.school_id == school_id:
+                student_name = await self.fees._student_name(account.student_id)
+            out.append(
+                OnlinePaymentRow(
+                    payment_id=payment.id,
+                    payment_number=payment.payment_number,
+                    invoice_id=payment.invoice_id,
+                    student_name=student_name,
+                    amount=money(payment.amount),
+                    currency=payment.currency,
+                    status=payment.status,
+                    gateway=payment.gateway,
+                    gateway_order_id=payment.gateway_order_id,
+                    gateway_payment_id=payment.gateway_payment_id,
+                    paid_at=payment.paid_at,
+                    created_at=payment.created_at,
+                    payment_link=payment.notes == "payment_link",
+                )
+            )
+        return out
 
     async def verify_payment(
         self, school_id: UUID, user_id: UUID, data: PaymentVerifyIn

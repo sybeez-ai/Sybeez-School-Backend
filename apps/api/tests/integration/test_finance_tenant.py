@@ -16,9 +16,11 @@ from src.core.exceptions import AppError, NotFoundError
 from src.db.models import AcademicYear, School, Student, User
 from src.db.models.fee import FeeCategory, FeeInvoice, FeeReceipt, FeeSequence, Payment, StudentFeeAccount
 from src.db.models.finance import FeeLedgerEntry, FeePaymentTender, SchoolBranch
+from src.db.models.notification import Notification
 from src.modules.fees.numbering import allocate_series_number
 from src.modules.fees.payment_service import PaymentService
 from src.modules.fees.tenant import bind_tenant
+from src.modules.finance.service import FinanceService
 from src.shared.enums import FeeInvoiceStatus, PaymentMethod, PaymentStatus
 
 pytestmark = pytest.mark.asyncio
@@ -454,5 +456,100 @@ async def test_ledger_is_append_only():
                 await db.commit()
             assert "append-only" in str(exc.value).lower()
             await db.rollback()
+    finally:
+        await _wipe(school_ids, user_ids)
+
+
+async def test_reconciliation_and_notifications_stay_in_school():
+    """Online reconciliation and fee notifications must not cross schools under RLS."""
+    school_ids: list = []
+    user_ids: list = []
+    try:
+        async with AsyncSessionLocal() as db:
+            school_a, user_a, _, _, account_a = await _school(db, "Recon A")
+            school_b, user_b, _, _, account_b = await _school(db, "Recon B")
+            school_ids += [school_a.id, school_b.id]
+            user_ids += [user_a.id, user_b.id]
+            invoice_a = _invoice(school_a.id, account_a.id, f"INV-{uuid4().hex[:8]}")
+            invoice_b = _invoice(school_b.id, account_b.id, f"INV-{uuid4().hex[:8]}")
+            db.add_all([invoice_a, invoice_b])
+            await db.flush()
+            online_a = _payment(
+                school_a.id, account_a.id, invoice_a.id, f"PAY-{uuid4().hex[:8]}", f"order-a-{uuid4().hex[:6]}"
+            )
+            online_a.notes = "payment_link"
+            online_a.status = PaymentStatus.SUCCESS.value
+            online_b = _payment(
+                school_b.id, account_b.id, invoice_b.id, f"PAY-{uuid4().hex[:8]}", f"order-b-{uuid4().hex[:6]}"
+            )
+            online_b.status = PaymentStatus.SUCCESS.value
+            cash_a = _payment(
+                school_a.id, account_a.id, invoice_a.id, f"PAY-{uuid4().hex[:8]}", f"order-c-{uuid4().hex[:6]}"
+            )
+            cash_a.method = PaymentMethod.CASH.value
+            cash_a.status = PaymentStatus.SUCCESS.value
+            note_a = Notification(
+                id=uuid4(),
+                school_id=school_a.id,
+                user_id=user_a.id,
+                title="Receipt A",
+                body="Paid at school A",
+                category="FEE_PAYMENT_SUCCESS",
+                is_read=False,
+            )
+            note_other_school = Notification(
+                id=uuid4(),
+                school_id=school_b.id,
+                user_id=user_a.id,
+                title="Receipt B",
+                body="Paid at school B",
+                category="FEE_PAYMENT_SUCCESS",
+                is_read=False,
+            )
+            note_other_user = Notification(
+                id=uuid4(),
+                school_id=school_a.id,
+                user_id=user_b.id,
+                title="Other user",
+                body="Not yours",
+                category="FEE_PAYMENT_SUCCESS",
+                is_read=False,
+            )
+            db.add_all([online_a, online_b, cash_a, note_a, note_other_school, note_other_user])
+            await db.commit()
+            online_a_id = online_a.id
+            online_b_id = online_b.id
+            cash_a_id = cash_a.id
+            note_a_id = note_a.id
+
+        async with AsyncSessionLocal() as db:
+            await db.execute(text("SET ROLE sybeez_app"))
+            await bind_tenant(db, school_ids[0], user_id=user_ids[0], role="ACCOUNTANT")
+            rows = await PaymentService(db).reconcile_online_payments(school_ids[0])
+            seen = {row.payment_id for row in rows}
+            assert online_a_id in seen
+            assert online_b_id not in seen
+            assert cash_a_id not in seen
+            linked = next(row for row in rows if row.payment_id == online_a_id)
+            assert linked.payment_link is True
+            assert linked.student_name == "Recon A"
+
+            finance = FinanceService(db, school_ids[0], user_ids[0], "ACCOUNTANT")
+            notes = await finance.list_notifications()
+            note_ids = {row.id for row in notes}
+            assert note_a_id in note_ids
+            assert all(row.title != "Receipt B" for row in notes)
+            assert all(row.title != "Other user" for row in notes)
+            branches = await finance.report_branch_wise(None, None)
+            assert sum(Decimal(row["amount"]) for row in branches) == Decimal("2000.00")
+            categories = await finance.report_category_wise(None, None)
+            assert categories == [{"category": "GENERAL", "amount": "2000.00"}]
+
+            await db.rollback()
+            await db.execute(text("RESET ROLE"))
+            await db.execute(text("SELECT set_config('app.school_id', '', false)"))
+            await db.execute(text("SELECT set_config('app.user_id', '', false)"))
+            await db.execute(text("SELECT set_config('app.role', '', false)"))
+            await db.commit()
     finally:
         await _wipe(school_ids, user_ids)
