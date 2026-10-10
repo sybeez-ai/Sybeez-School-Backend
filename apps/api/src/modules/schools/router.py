@@ -7,6 +7,9 @@ from src.api.dependencies import CurrentUser, require_school_scope
 from src.core.database import get_db
 from src.core.exceptions import ForbiddenError
 from src.modules.audit.repository import AuditRepository
+from src.modules.fees.tenant import bind_tenant
+from src.modules.finance.schemas import BranchOut
+from src.modules.finance.service import FinanceService
 from src.modules.schools.schemas import SchoolProfile, SchoolProfileUpdate
 from src.modules.schools.service import SchoolsService
 from src.shared.enums import UserRole
@@ -20,6 +23,22 @@ async def my_school(
     user: Annotated[CurrentUser, Depends(require_school_scope)],
 ):
     return await SchoolsService(db).get_my_school(user.school_id)
+
+
+@router.get("/me/branches", response_model=list[BranchOut])
+async def my_branches(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_school_scope)],
+):
+    """Branches of the caller's school. Cashiers see only assigned branches.
+
+    Send the chosen branch on later fee calls as the X-Branch-Id header.
+    """
+    if user.school_id is None:
+        raise ForbiddenError("School context required")
+    await bind_tenant(db, user.school_id)
+    svc = await FinanceService(db, user.school_id, user.id, user.role.value).prepare()
+    return await svc.list_branches()
 
 
 @router.patch("/me", response_model=SchoolProfile)

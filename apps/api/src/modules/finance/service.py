@@ -7,7 +7,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID, uuid4
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, nulls_last, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,6 +18,7 @@ from src.db.models import (
     FeeInvoice,
     FeeInvoiceItem,
     FeeReceipt,
+    FeeReminderLog,
     Payment,
     PaymentAllocation,
     SchoolMembership,
@@ -45,7 +46,7 @@ from src.modules.fees.ledger import ensure_ledger_backfill, post_ledger_entry
 from src.modules.fees.numbering import indian_financial_year
 from src.modules.fees.payment_service import PaymentService
 from src.modules.fees.reversal import reverse_payment_amount
-from src.modules.fees.schemas import RefundIn
+from src.modules.fees.schemas import ReceiptOut, RefundIn
 from src.modules.fees.service import FeeService
 from src.modules.fees.tenant import assert_same_school, bind_tenant
 from src.modules.finance.schemas import (
@@ -75,6 +76,7 @@ from src.modules.finance.schemas import (
     FinancialYearOut,
     FineWaiverIn,
     LedgerRow,
+    ReminderLogOut,
     SiblingGroupIn,
     SiblingGroupOut,
     StaffScopeIn,
@@ -125,28 +127,37 @@ class FinanceService:
         self.user_id = user_id
         self.role = role
         self.branch_ids: set[UUID] | None = None
+        self.active_branch_id: UUID | None = None
         self.fees = FeeService(db)
         self.payments = PaymentService(db)
 
-    async def prepare(self) -> "FinanceService":
+    async def prepare(self, branch_id: UUID | None = None) -> "FinanceService":
         await bind_tenant(self.db, self.school_id)
         if self.role == UserRole.SCHOOL_ADMIN.value:
             self.branch_ids = None
-            return self
-        rows = (
-            await self.db.execute(
-                select(FinanceStaffScope).where(
-                    FinanceStaffScope.school_id == self.school_id,
-                    FinanceStaffScope.user_id == self.user_id,
-                )
-            )
-        ).scalars().all()
-        if not rows:
-            self.branch_ids = None
         else:
-            self.branch_ids = {r.branch_id for r in rows if r.branch_id is not None}
-            if not self.branch_ids:
+            rows = (
+                await self.db.execute(
+                    select(FinanceStaffScope).where(
+                        FinanceStaffScope.school_id == self.school_id,
+                        FinanceStaffScope.user_id == self.user_id,
+                    )
+                )
+            ).scalars().all()
+            if not rows:
                 self.branch_ids = None
+            else:
+                self.branch_ids = {r.branch_id for r in rows if r.branch_id is not None}
+                if not self.branch_ids:
+                    self.branch_ids = None
+        if branch_id is not None:
+            branch = assert_same_school(
+                await self.db.get(SchoolBranch, branch_id), self.school_id, "Branch"
+            )
+            if self.branch_ids is not None and branch.id not in self.branch_ids:
+                raise ForbiddenError("Branch is outside your assignment")
+            self.branch_ids = {branch.id}
+            self.active_branch_id = branch.id
         return self
 
     def _require_branch(self, branch_id: UUID | None) -> UUID | None:
@@ -1664,6 +1675,7 @@ class FinanceService:
             Payment.school_id == self.school_id,
             Payment.status == PaymentStatus.SUCCESS.value,
         )
+        q = self._limit(q, Payment.branch_id, None)
         rows = (await self.db.execute(q)).all()
         buckets: dict[str, Decimal] = {}
         for alloc, payment in rows:
@@ -1737,6 +1749,89 @@ class FinanceService:
             user = await self.db.get(User, user_id) if user_id else None
             out.append({"collector": user.full_name if user else "Online / unknown", "amount": str(amount)})
         return out
+
+    async def report_concessions(self, status: str | None = None) -> list[dict]:
+        q = select(FeeConcessionRequest).where(FeeConcessionRequest.school_id == self.school_id)
+        if status:
+            q = q.where(FeeConcessionRequest.status == status)
+        rows = (
+            await self.db.execute(q.order_by(FeeConcessionRequest.created_at.desc()))
+        ).scalars().all()
+        out = []
+        for row in rows:
+            name = await self.fees._student_name(row.student_id)
+            out.append(
+                {
+                    "student": name,
+                    "student_id": str(row.student_id),
+                    "status": row.status,
+                    "value_type": row.value_type,
+                    "value": str(money(row.value)),
+                    "amount": str(money(row.computed_amount)),
+                    "reason": row.reason,
+                }
+            )
+        return out
+
+    async def report_cancelled_receipts(self) -> list[dict]:
+        q = select(FeeReceipt).where(
+            FeeReceipt.school_id == self.school_id,
+            FeeReceipt.status == ReceiptStatus.CANCELLED.value,
+        )
+        q = self._limit(q, FeeReceipt.branch_id, None)
+        receipts = (
+            await self.db.execute(q.order_by(nulls_last(FeeReceipt.cancelled_at.desc())))
+        ).scalars().all()
+        out = []
+        for receipt in receipts:
+            payment = await self.db.get(Payment, receipt.payment_id)
+            if not payment or payment.school_id != self.school_id:
+                continue
+            acc = await self.db.get(StudentFeeAccount, payment.student_fee_account_id)
+            name = await self.fees._student_name(acc.student_id) if acc else ""
+            out.append(
+                {
+                    "receipt": receipt.receipt_number,
+                    "student": name,
+                    "amount": str(money(payment.amount)),
+                    "reason": receipt.cancel_reason or "",
+                    "cancelled_at": receipt.cancelled_at.isoformat() if receipt.cancelled_at else "",
+                }
+            )
+        return out
+
+    async def list_receipts(self, status: str | None = None, limit: int = 100) -> list[ReceiptOut]:
+        q = select(FeeReceipt).where(FeeReceipt.school_id == self.school_id)
+        if status:
+            q = q.where(FeeReceipt.status == status)
+        q = self._limit(q, FeeReceipt.branch_id, None)
+        rows = (
+            await self.db.execute(
+                q.order_by(FeeReceipt.issued_at.desc()).limit(max(1, min(limit, 200)))
+            )
+        ).scalars().all()
+        return [await self.payments.get_receipt(self.school_id, row.id) for row in rows]
+
+    async def list_reminder_log(self, limit: int = 200) -> list[ReminderLogOut]:
+        rows = (
+            await self.db.execute(
+                select(FeeReminderLog)
+                .where(FeeReminderLog.school_id == self.school_id)
+                .order_by(FeeReminderLog.sent_on.desc(), FeeReminderLog.created_at.desc())
+                .limit(max(1, min(limit, 500)))
+            )
+        ).scalars().all()
+        return [
+            ReminderLogOut(
+                id=row.id,
+                school_id=row.school_id,
+                invoice_id=row.invoice_id,
+                kind=row.kind,
+                sent_on=row.sent_on,
+                created_at=row.created_at,
+            )
+            for row in rows
+        ]
 
     async def list_audit(self) -> list[AuditRow]:
         rows = (

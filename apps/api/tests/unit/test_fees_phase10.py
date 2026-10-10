@@ -68,6 +68,11 @@ def test_fees_openapi_paths():
 
 def test_fees_endpoints_require_auth():
     assert client.get("/api/v1/fees/categories").status_code == 401
+    assert client.get("/api/v1/fees/receipts").status_code == 401
+    assert client.post("/api/v1/fees/collections", json={}).status_code == 401
+    assert client.get("/api/v1/auth/memberships").status_code == 401
+    assert client.post("/api/v1/auth/switch-school", json={}).status_code == 401
+    assert client.get("/api/v1/schools/me/branches").status_code == 401
     assert client.get("/api/v1/fees/dashboard").status_code == 401
     assert client.post("/api/v1/fees/invoices/generate", json={}).status_code == 401
     assert client.post("/api/v1/payments/orders", json={}).status_code == 401

@@ -1,6 +1,7 @@
 """Money-safety decisions and finance contract paths. No database."""
 
 from datetime import date
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -97,8 +98,25 @@ def test_finance_role_matrix():
     assert UserRole.ACCOUNTANT.value in ACTIONS["collect"]
 
 
+def spec_role_enum(document: dict) -> list[str]:
+    schema = document["components"]["schemas"]["UserRole"]
+    return list(schema["enum"])
+
+
+def test_token_role_enum_includes_finance_roles():
+    shared = Path(__file__).resolve().parents[4] / "packages" / "shared" / "enums" / "__init__.py"
+    text = shared.read_text()
+    for role in ("ACCOUNTANT", "CASHIER", "AUDITOR"):
+        assert f'"{role}"' in text
+    document = client.get("/openapi.json").json()
+    assert {"ACCOUNTANT", "CASHIER", "AUDITOR"} <= set(spec_role_enum(document))
+    issued = document["components"]["schemas"]["TokenResponse"]["properties"]["role"]
+    assert "UserRole" in str(issued)
+
+
 def test_finance_openapi_paths():
-    paths = client.get("/openapi.json").json()["paths"]
+    document = client.get("/openapi.json").json()
+    paths = document["paths"]
     required = (
         "/api/v1/finance/branches",
         "/api/v1/finance/financial-years",
@@ -132,9 +150,40 @@ def test_finance_openapi_paths():
         "/api/v1/finance/refunds/{refund_id}/approve",
         "/api/v1/finance/audit",
         "/api/v1/finance/reminders/schedule",
+        "/api/v1/finance/reports/concessions",
+        "/api/v1/finance/reports/cancelled-receipts",
+        "/api/v1/fees/collections",
+        "/api/v1/fees/concessions",
+        "/api/v1/fees/concessions/{concession_id}/approve",
+        "/api/v1/fees/concessions/{concession_id}/reject",
+        "/api/v1/fees/fine-waivers",
+        "/api/v1/fees/cheques",
+        "/api/v1/fees/cheques/{tender_id}/deposit",
+        "/api/v1/fees/cheques/{tender_id}/clear",
+        "/api/v1/fees/cheques/{tender_id}/bounce",
+        "/api/v1/fees/receipts",
+        "/api/v1/fees/receipts/{receipt_id}/cancel",
+        "/api/v1/fees/receipts/{receipt_id}/duplicate",
+        "/api/v1/fees/day-close",
+        "/api/v1/fees/day-close/{day_close_id}/verify",
+        "/api/v1/fees/reports/head-wise",
+        "/api/v1/fees/reports/collector-wise",
+        "/api/v1/fees/reports/collector",
+        "/api/v1/fees/reports/concessions",
+        "/api/v1/fees/reports/cancelled-receipts",
+        "/api/v1/fees/reminders",
+        "/api/v1/fees/reminder-log",
+        "/api/v1/fees/audit",
+        "/api/v1/fees/approvals",
+        "/api/v1/auth/memberships",
+        "/api/v1/auth/switch-school",
+        "/api/v1/schools/me/branches",
     )
     for path in required:
         assert path in paths, path
-    collection = paths["/api/v1/finance/collections"]["post"]
+    collection = paths["/api/v1/fees/collections"]["post"]
     assert "CollectIn" in str(collection["requestBody"])
     assert "CollectionOut" in str(collection["responses"]["201"])
+    finance_collection = paths["/api/v1/finance/collections"]["post"]
+    assert "CollectIn" in str(finance_collection["requestBody"])
+    assert {"ACCOUNTANT", "CASHIER", "AUDITOR"} <= set(spec_role_enum(document))

@@ -13,6 +13,7 @@ from src.core.exceptions import ForbiddenError
 from src.modules.fees.payment_service import PaymentService
 from src.modules.fees.permissions import (
     FINANCE_COLLECT,
+    FINANCE_SETUP,
     FINANCE_VIEW,
     FINANCE_VIEW_VALUES,
     assert_not_teacher_finance,
@@ -21,6 +22,7 @@ from src.modules.fees.tenant import bind_tenant
 from src.modules.fees.schemas import (
     AdjustmentCreate,
     FeeCategoryCreate,
+    FeeCategoryOut,
     FeeCategoryUpdate,
     FeeSettingsUpdate,
     FeeStructureCreate,
@@ -36,6 +38,7 @@ from src.modules.fees.schemas import (
     StructureItemIn,
 )
 from src.modules.fees.service import FeeService
+from src.modules.finance.service import FinanceService
 from src.shared.enums import UserRole
 
 router = APIRouter(tags=["fees"])
@@ -69,29 +72,30 @@ async def fees_health():
 # ── categories ────────────────────────────────────────────────
 
 
-@router.get("/fees/categories")
+@router.get("/fees/categories", response_model=list[FeeCategoryOut])
 async def list_categories(
     db: Annotated[AsyncSession, Depends(scoped_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    user: Annotated[CurrentUser, Depends(require_roles(*FINANCE_VIEW))],
 ):
+    """Fee heads, including GST rate and Section 80C eligibility."""
     return await FeeService(db).list_categories(_sid(user))
 
 
-@router.post("/fees/categories", status_code=201)
+@router.post("/fees/categories", status_code=201, response_model=FeeCategoryOut)
 async def create_category(
     body: FeeCategoryCreate,
     db: Annotated[AsyncSession, Depends(scoped_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    user: Annotated[CurrentUser, Depends(require_roles(*FINANCE_SETUP))],
 ):
     return await FeeService(db).create_category(_sid(user), user.id, body)
 
 
-@router.patch("/fees/categories/{category_id}")
+@router.patch("/fees/categories/{category_id}", response_model=FeeCategoryOut)
 async def update_category(
     category_id: UUID,
     body: FeeCategoryUpdate,
     db: Annotated[AsyncSession, Depends(scoped_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    user: Annotated[CurrentUser, Depends(require_roles(*FINANCE_SETUP))],
 ):
     return await FeeService(db).update_category(_sid(user), category_id, body)
 
@@ -417,9 +421,13 @@ async def receipt_pdf(
         CurrentUser,
         Depends(require_roles(*FINANCE_VIEW, UserRole.PARENT, UserRole.STUDENT)),
     ],
+    duplicate: bool = False,
 ):
     ps = PaymentService(db)
     await ps.assert_receipt_access(_sid(user), user.id, user.role.value, receipt_id)
+    if duplicate and user.role in FINANCE_COLLECT:
+        svc = await FinanceService(db, _sid(user), user.id, user.role.value).prepare()
+        await svc.mark_reprint(receipt_id)
     data = await ps.receipt_pdf_bytes(_sid(user), receipt_id)
     return Response(
         content=data,

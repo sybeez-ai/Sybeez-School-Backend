@@ -6,7 +6,7 @@ from datetime import date
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Header, Query
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -81,8 +81,10 @@ def _user_staff(
 async def _svc(
     db: Annotated[AsyncSession, Depends(finance_db)],
     user: Annotated[CurrentUser, Depends(_user_staff)],
+    x_branch_id: Annotated[UUID | None, Header(alias="X-Branch-Id")] = None,
 ) -> FinanceService:
-    return await FinanceService(db, user.school_id, user.id, user.role.value).prepare()
+    """Staff session. X-Branch-Id narrows every query to one branch of this school."""
+    return await FinanceService(db, user.school_id, user.id, user.role.value).prepare(x_branch_id)
 
 
 def _export(rows: list[dict], columns: list[str], fmt: str, filename: str, title: str):
@@ -425,6 +427,29 @@ async def report_collector(
     assert_finance(svc.role, "reports.read")
     rows = await svc.report_collector_wise(from_date, to_date)
     return _export(rows, ["collector", "amount"], format, "collector-wise", "Collector-wise collection")
+
+
+@router.get("/reports/concessions")
+async def report_concessions(
+    svc: Annotated[FinanceService, Depends(_svc)],
+    status: str | None = None,
+    format: str = Query("json"),
+):
+    assert_finance(svc.role, "reports.read")
+    rows = await svc.report_concessions(status)
+    cols = ["student", "student_id", "status", "value_type", "value", "amount", "reason"]
+    return _export(rows, cols, format, "concessions", "Concessions")
+
+
+@router.get("/reports/cancelled-receipts")
+async def report_cancelled_receipts(
+    svc: Annotated[FinanceService, Depends(_svc)],
+    format: str = Query("json"),
+):
+    assert_finance(svc.role, "reports.read")
+    rows = await svc.report_cancelled_receipts()
+    cols = ["receipt", "student", "amount", "reason", "cancelled_at"]
+    return _export(rows, cols, format, "cancelled-receipts", "Cancelled receipts")
 
 
 @router.get("/approvals", response_model=list[ApprovalOut])

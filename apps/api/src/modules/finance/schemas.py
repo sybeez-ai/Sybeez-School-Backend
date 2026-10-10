@@ -332,6 +332,15 @@ class ReminderQueuedOut(BaseModel):
     job: str
 
 
+class ReminderLogOut(BaseModel):
+    id: UUID
+    school_id: UUID
+    invoice_id: UUID
+    kind: str
+    sent_on: date
+    created_at: datetime
+
+
 class AuditRow(BaseModel):
     id: UUID
     action: str
