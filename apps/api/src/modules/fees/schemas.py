@@ -10,12 +10,18 @@ class FeeCategoryCreate(BaseModel):
     code: str = Field(min_length=1, max_length=64)
     description: str | None = None
     active: bool = True
+    is_80c_eligible: bool = False
+    gst_rate: Decimal = Field(default=Decimal("0"), ge=0)
+    tally_ledger: str | None = None
 
 
 class FeeCategoryUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=128)
     description: str | None = None
     active: bool | None = None
+    is_80c_eligible: bool | None = None
+    gst_rate: Decimal | None = Field(default=None, ge=0)
+    tally_ledger: str | None = None
 
 
 class FeeCategoryOut(BaseModel):
@@ -27,6 +33,9 @@ class FeeCategoryOut(BaseModel):
     code: str
     description: str | None = None
     active: bool
+    is_80c_eligible: bool = False
+    gst_rate: Decimal = Decimal("0")
+    tally_ledger: str | None = None
 
 
 class StructureItemIn(BaseModel):
@@ -195,11 +204,13 @@ class ManualPaymentIn(BaseModel):
     reference: str | None = None
     paid_at: datetime | None = None
     notes: str | None = None
+    idempotency_key: str | None = Field(default=None, max_length=255)
 
 
 class PaymentOrderIn(BaseModel):
     invoice_id: UUID
     amount: Decimal | None = None
+    idempotency_key: str | None = Field(default=None, max_length=255)
 
 
 class PaymentOrderOut(BaseModel):
@@ -210,6 +221,40 @@ class PaymentOrderOut(BaseModel):
     currency: str
     gateway: str
     public_key: str | None = None
+
+
+class PaymentLinkIn(BaseModel):
+    invoice_id: UUID
+    amount: Decimal | None = None
+    idempotency_key: str | None = Field(default=None, max_length=255)
+
+
+class PaymentLinkOut(BaseModel):
+    payment_id: UUID
+    payment_number: str
+    invoice_id: UUID
+    order_id: str
+    amount: Decimal
+    currency: str
+    gateway: str
+    url: str
+    status: str
+
+
+class OnlinePaymentRow(BaseModel):
+    payment_id: UUID
+    payment_number: str
+    invoice_id: UUID | None = None
+    student_name: str | None = None
+    amount: Decimal
+    currency: str
+    status: str
+    gateway: str | None = None
+    gateway_order_id: str | None = None
+    gateway_payment_id: str | None = None
+    paid_at: datetime | None = None
+    created_at: datetime
+    payment_link: bool = False
 
 
 class PaymentVerifyIn(BaseModel):
@@ -244,6 +289,19 @@ class PaymentOut(BaseModel):
 class RefundIn(BaseModel):
     amount: Decimal = Field(gt=0)
     reason: str = Field(min_length=1)
+    idempotency_key: str | None = Field(default=None, max_length=255)
+
+
+class RefundOut(BaseModel):
+    id: UUID
+    school_id: UUID
+    payment_id: UUID
+    amount: Decimal
+    reason: str
+    status: str
+    gateway_refund_id: str | None = None
+    created_by: UUID | None = None
+    approved_by: UUID | None = None
 
 
 class ReceiptOut(BaseModel):
@@ -259,6 +317,9 @@ class ReceiptOut(BaseModel):
     student_name: str | None = None
     invoice_number: str | None = None
     method: str | None = None
+    status: str | None = None
+    copy_label: str | None = None
+    cancel_reason: str | None = None
 
 
 class StudentFeeSummaryOut(BaseModel):
@@ -323,6 +384,7 @@ class LateFeeRuleIn(BaseModel):
     calculation_type: str = "FIXED"
     amount: Decimal = Field(ge=0)
     maximum_amount: Decimal | None = None
+    slabs: list[dict] | None = None
     active: bool = True
 
 
@@ -335,6 +397,7 @@ class LateFeeRuleOut(BaseModel):
     calculation_type: str
     amount: Decimal
     maximum_amount: Decimal | None = None
+    slabs: list[dict] | None = None
     active: bool
 
 

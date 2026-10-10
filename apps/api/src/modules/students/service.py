@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import date
-from pathlib import Path
 from uuid import UUID
 
 from fastapi import UploadFile
@@ -615,12 +614,14 @@ class StudentService:
         if len(data) > 2_000_000:
             raise ConflictError("Photo too large (max 2MB)")
 
-        media_dir = Path(__file__).resolve().parents[3] / "media"
-        photo_dir = media_dir / "student-photos"
-        photo_dir.mkdir(parents=True, exist_ok=True)
-        filename = f"{student.id}{ext}"
-        (photo_dir / filename).write_bytes(data)
-        student.photo_url = f"/media/student-photos/{filename}"
+        from src.core.storage import put_object
+
+        key = put_object(
+            key=f"student-photos/{school_id}/{student.id}{ext}",
+            data=data,
+            content_type=content_type,
+        )
+        student.photo_url = key
         user = await self.db.get(User, student.user_id)
         if user:
             user.avatar_url = student.photo_url

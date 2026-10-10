@@ -24,8 +24,10 @@ from src.modules.auth.schemas import (
     LoginRequest,
     LogoutRequest,
     MeResponse,
+    MembershipOut,
     MessageOut,
     RefreshRequest,
+    SwitchSchoolRequest,
     TokenResponse,
     UpdateProfileRequest,
 )
@@ -80,6 +82,25 @@ async def confirm_forgot_password(
 @router.post("/accept-invitation", response_model=TokenResponse)
 async def accept_invitation(body: AcceptInviteRequest, db: Annotated[AsyncSession, Depends(get_db)]):
     return await AuthService(db).accept_invitation(body)
+
+
+@router.get("/memberships", response_model=list[MembershipOut])
+async def list_memberships(
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Schools and roles this user can sign into, including accountant, cashier, and auditor."""
+    return await AuthService(db).list_memberships(user.id)
+
+
+@router.post("/switch-school", response_model=TokenResponse)
+async def switch_school(
+    body: SwitchSchoolRequest,
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Issue a new access token for another school membership. Role is stamped on the token."""
+    return await AuthService(db).switch_school(user.id, body.school_id, body.role)
 
 
 @router.get("/me", response_model=MeResponse)

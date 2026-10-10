@@ -34,6 +34,9 @@ async def student_ai_context(
     school_id: UUID = Query(...),
     subject_id: UUID | None = Query(None),
 ):
+    from src.modules.fees.tenant import bind_tenant
+
+    await bind_tenant(db, school_id, user_id=user_id, role="SERVICE")
     return await InternalAIContextService(db).build(user_id=user_id, school_id=school_id, subject_id=subject_id)
 
 
@@ -53,6 +56,17 @@ async def delivery_result(
     body: DeliveryResultIn,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
+    from src.db.models.notification_delivery import NotificationDelivery
+    from src.modules.fees.tenant import bind_tenant, set_rls_bypass
+
+    await set_rls_bypass(db, True)
+    delivery = await db.get(NotificationDelivery, delivery_id)
+    await bind_tenant(
+        db,
+        None if delivery is None else delivery.school_id,
+        user_id=None if delivery is None else delivery.user_id,
+        role="SERVICE",
+    )
     await update_delivery_result(
         db,
         delivery_id=delivery_id,
@@ -72,7 +86,37 @@ async def internal_run_fee_reminders(
     school_id: UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    return await FeeService(db).send_invoice_reminders(school_id)
+    from src.modules.fees.tenant import bind_tenant
+
+    await bind_tenant(db, school_id, role="SERVICE")
+    reminders = await FeeService(db).send_invoice_reminders(school_id)
+    late = await FeeService(db).apply_late_fees(school_id, None)
+    return {"reminders": reminders, "late_fees_applied": late}
+
+
+@router.post(
+    "/fees/reminders/run-all",
+    dependencies=[Depends(require_internal_token)],
+)
+async def internal_run_all_fee_reminders(
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    from sqlalchemy import select
+
+    from src.db.models import School
+    from src.modules.fees.tenant import bind_tenant
+
+    await bind_tenant(db, None, role="SERVICE")
+    school_ids = (await db.execute(select(School.id))).scalars().all()
+    results = []
+    for school_id in school_ids:
+        await bind_tenant(db, school_id, role="SERVICE")
+        reminders = await FeeService(db).send_invoice_reminders(school_id)
+        late = await FeeService(db).apply_late_fees(school_id, None)
+        results.append(
+            {"school_id": str(school_id), "reminders": reminders, "late_fees_applied": late}
+        )
+    return {"schools": len(results), "results": results}
 
 
 @router.post(
@@ -84,4 +128,7 @@ async def internal_run_absence_digests(
     db: Annotated[AsyncSession, Depends(get_db)],
     attended_on: date = Query(default_factory=date.today),
 ):
+    from src.modules.fees.tenant import bind_tenant
+
+    await bind_tenant(db, school_id, role="SERVICE")
     return await AttendanceService(db).send_daily_absence_digests(school_id=school_id, attended_on=attended_on)

@@ -3,6 +3,9 @@ from src.shared.enums import UserRole
 ROLE_HIERARCHY: dict[UserRole, int] = {
     UserRole.PLATFORM_ADMIN: 100,
     UserRole.SCHOOL_ADMIN: 80,
+    UserRole.ACCOUNTANT: 75,
+    UserRole.CASHIER: 74,
+    UserRole.AUDITOR: 73,
     UserRole.TEACHER: 60,
     UserRole.PARENT: 40,
     UserRole.STUDENT: 20,
@@ -11,6 +14,9 @@ ROLE_HIERARCHY: dict[UserRole, int] = {
 PLATFORM_ROLES = {UserRole.PLATFORM_ADMIN}
 SCHOOL_ROLES = {
     UserRole.SCHOOL_ADMIN,
+    UserRole.ACCOUNTANT,
+    UserRole.CASHIER,
+    UserRole.AUDITOR,
     UserRole.TEACHER,
     UserRole.STUDENT,
     UserRole.PARENT,

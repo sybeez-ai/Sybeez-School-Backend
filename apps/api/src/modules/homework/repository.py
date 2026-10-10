@@ -1,5 +1,7 @@
 """Persistence for homework — always filter by school_id."""
 
+from __future__ import annotations
+
 from datetime import datetime
 from uuid import UUID
 

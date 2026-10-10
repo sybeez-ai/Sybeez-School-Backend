@@ -100,7 +100,9 @@ class FeeService:
         entity_id: UUID | None,
         *,
         reason: str | None = None,
+        old_values: dict | None = None,
         new_values: dict | None = None,
+        ip_address: str | None = None,
     ) -> None:
         self.db.add(
             FeeAuditLog(
@@ -111,30 +113,18 @@ class FeeService:
                 entity_type=entity_type,
                 entity_id=entity_id,
                 reason=reason,
-                new_values=json.dumps(new_values) if new_values else None,
+                old_values=json.dumps(old_values, default=str) if old_values else None,
+                new_values=json.dumps(new_values, default=str) if new_values else None,
+                ip_address=ip_address,
             )
         )
 
     async def next_number(self, school_id: UUID, seq_type: str, prefix: str) -> str:
-        year = date.today().year
-        row = (
-            await self.db.execute(
-                select(FeeSequence).where(
-                    FeeSequence.school_id == school_id,
-                    FeeSequence.seq_type == seq_type,
-                    FeeSequence.year == year,
-                )
-            )
-        ).scalar_one_or_none()
-        if not row:
-            row = FeeSequence(
-                id=uuid4(), school_id=school_id, seq_type=seq_type, year=year, last_value=0
-            )
-            self.db.add(row)
-            await self.db.flush()
-        row.last_value += 1
-        await self.db.flush()
-        return f"{prefix}-{year}-{row.last_value:06d}"
+        from src.modules.fees.numbering import allocate_series_number
+        from src.modules.fees.tenant import bind_tenant
+
+        await bind_tenant(self.db, school_id)
+        return await allocate_series_number(self.db, school_id, seq_type, prefix)
 
     async def get_or_create_settings(self, school_id: UUID) -> FeeSettings:
         row = (
@@ -187,6 +177,9 @@ class FeeService:
             code=code,
             description=data.description,
             active=data.active,
+            is_80c_eligible=bool(getattr(data, "is_80c_eligible", False)),
+            gst_rate=money(getattr(data, "gst_rate", 0) or 0),
+            tally_ledger=getattr(data, "tally_ledger", None),
         )
         self.db.add(row)
         await self._audit(school_id, user_id, "FEE_CATEGORY_CREATED", "fee_category", row.id)
@@ -206,6 +199,12 @@ class FeeService:
             row.description = data.description
         if data.active is not None:
             row.active = data.active
+        if data.is_80c_eligible is not None:
+            row.is_80c_eligible = data.is_80c_eligible
+        if data.gst_rate is not None:
+            row.gst_rate = money(data.gst_rate)
+        if data.tally_ledger is not None:
+            row.tally_ledger = data.tally_ledger
         await self.db.commit()
         await self.db.refresh(row)
         return FeeCategoryOut.model_validate(row)
@@ -492,7 +491,7 @@ class FeeService:
         if not st:
             return "Student"
         user = await self.db.get(User, st.user_id)
-        return user.name if user else "Student"
+        return user.full_name if user else "Student"
 
     async def _class_name(self, class_id: UUID | None) -> str | None:
         if not class_id:
@@ -710,6 +709,23 @@ class FeeService:
                     )
 
             await self._audit(school_id, user_id, "INVOICE_CREATED", "fee_invoice", inv.id)
+            from src.modules.fees.ledger import post_ledger_entry
+            from src.shared.enums import LedgerEntryType
+
+            await post_ledger_entry(
+                self.db,
+                school_id=school_id,
+                student_id=enr.student_id,
+                account_id=acc.id,
+                entry_type=LedgerEntryType.DEMAND.value,
+                debit=total,
+                credit=money(0),
+                ref_type="fee_invoice",
+                ref_id=inv.id,
+                narration=f"Invoice {inv.invoice_number}",
+                actor_user_id=user_id,
+                entry_date=invoice_date,
+            )
             await self._notify_invoice(school_id, enr.student_id, inv)
             created += 1
             total_amount += total
@@ -1006,6 +1022,7 @@ class FeeService:
             if existing_late:
                 continue
             rule = rules[0]
+            slabs = json.loads(rule.slabs_json) if getattr(rule, "slabs_json", None) else None
             fee = calculate_late_fee(
                 balance=money(inv.balance_amount),
                 due_date=inv.due_date,
@@ -1014,6 +1031,7 @@ class FeeService:
                 calculation_type=rule.calculation_type,
                 amount=money(rule.amount),
                 maximum_amount=money(rule.maximum_amount) if rule.maximum_amount is not None else None,
+                slabs=slabs,
             )
             if fee <= 0:
                 continue
@@ -1039,6 +1057,25 @@ class FeeService:
                 paid=money(inv.paid_amount),
                 due_date=inv.due_date,
             )
+            acc = await self.db.get(StudentFeeAccount, inv.student_fee_account_id)
+            if acc and acc.school_id == school_id:
+                from src.modules.fees.ledger import post_ledger_entry
+                from src.shared.enums import LedgerEntryType
+
+                await post_ledger_entry(
+                    self.db,
+                    school_id=school_id,
+                    student_id=acc.student_id,
+                    account_id=acc.id,
+                    entry_type=LedgerEntryType.FINE.value,
+                    debit=fee,
+                    credit=money(0),
+                    ref_type="fee_invoice",
+                    ref_id=inv.id,
+                    narration=f"Late fee on {inv.invoice_number}",
+                    actor_user_id=user_id,
+                    entry_date=today,
+                )
             applied += 1
         if applied:
             await self._audit(school_id, user_id, "LATE_FEE_APPLIED", "fee_invoice", None)
@@ -1344,10 +1381,13 @@ class FeeService:
         row.calculation_type = data.calculation_type
         row.amount = money(data.amount)
         row.maximum_amount = money(data.maximum_amount) if data.maximum_amount is not None else None
+        row.slabs_json = json.dumps(data.slabs) if data.slabs else None
         row.active = data.active
         await self.db.commit()
         await self.db.refresh(row)
-        return LateFeeRuleOut.model_validate(row)
+        out = LateFeeRuleOut.model_validate(row)
+        out.slabs = json.loads(row.slabs_json) if row.slabs_json else None
+        return out
 
     async def report_collection(
         self, school_id: UUID, *, from_date: date | None = None, to_date: date | None = None

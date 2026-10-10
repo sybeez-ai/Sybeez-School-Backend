@@ -1,5 +1,7 @@
 """Persistence for documents — always filter by school_id for tenant isolation."""
 
+from __future__ import annotations
+
 from uuid import UUID
 
 from sqlalchemy import select
