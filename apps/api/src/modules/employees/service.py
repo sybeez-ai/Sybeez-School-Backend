@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import func, or_, select, text
+from sqlalchemy import and_, case, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.exceptions import AppError, ConflictError, NotFoundError
@@ -44,6 +44,22 @@ async def sync_teacher_employees(db: AsyncSession, school_id: UUID) -> None:
 def employee_name_expr():
     """Display name of an employee row; needs ``Teacher`` and ``User`` outer-joined."""
     return func.coalesce(User.full_name, Employee.full_name)
+
+
+def employee_code_expr():
+    """Employee code of a row; needs ``Teacher`` outer-joined."""
+    return func.coalesce(Teacher.employee_code, Teacher.teacher_code, Employee.employee_code)
+
+
+def employee_active_expr():
+    """Whether an employee is active; needs ``Teacher`` and ``User`` outer-joined."""
+    return case(
+        (
+            Employee.staff_type == "TEACHING",
+            and_(Teacher.status == PersonStatus.ACTIVE.value, func.coalesce(User.is_active, True)),
+        ),
+        else_=Employee.status == "ACTIVE",
+    )
 
 
 async def employee_names(db: AsyncSession, school_id: UUID, ids: set[UUID]) -> dict[UUID, str]:

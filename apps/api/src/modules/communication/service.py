@@ -58,6 +58,8 @@ from src.shared.enums import (
     UserRole,
 )
 
+NotificationScope = tuple[UUID, tuple[str, ...]]
+
 DEFAULT_PREF_TYPES = [
     NotificationType.ATTENDANCE_ABSENCE.value,
     NotificationType.ATTENDANCE_LATE.value,
@@ -118,6 +120,14 @@ class CommunicationService:
 
     # ── notifications ────────────────────────────────────────
 
+    @staticmethod
+    def _scoped(stmt, scope: NotificationScope | None):
+        """Optionally narrow a user's notifications to one school and a set of entity types."""
+        if scope is None:
+            return stmt
+        school_id, entity_types = scope
+        return stmt.where(Notification.school_id == school_id, Notification.entity_type.in_(entity_types))
+
     async def list_notifications(
         self,
         user_id: UUID,
@@ -125,9 +135,12 @@ class CommunicationService:
         unread: bool | None = None,
         page: int = 1,
         page_size: int = 20,
+        scope: NotificationScope | None = None,
     ) -> NotificationListOut:
-        q = select(Notification).where(Notification.user_id == user_id)
-        count_q = select(func.count()).select_from(Notification).where(Notification.user_id == user_id)
+        q = self._scoped(select(Notification).where(Notification.user_id == user_id), scope)
+        count_q = self._scoped(
+            select(func.count()).select_from(Notification).where(Notification.user_id == user_id), scope
+        )
         if unread is True:
             q = q.where(Notification.is_read.is_(False))
             count_q = count_q.where(Notification.is_read.is_(False))
@@ -135,9 +148,12 @@ class CommunicationService:
         unread_count = int(
             (
                 await self.db.execute(
-                    select(func.count())
-                    .select_from(Notification)
-                    .where(Notification.user_id == user_id, Notification.is_read.is_(False))
+                    self._scoped(
+                        select(func.count())
+                        .select_from(Notification)
+                        .where(Notification.user_id == user_id, Notification.is_read.is_(False)),
+                        scope,
+                    )
                 )
             ).scalar_one()
         )
@@ -156,13 +172,16 @@ class CommunicationService:
             unread_count=unread_count,
         )
 
-    async def unread_count(self, user_id: UUID) -> UnreadCountOut:
+    async def unread_count(self, user_id: UUID, scope: NotificationScope | None = None) -> UnreadCountOut:
         count = int(
             (
                 await self.db.execute(
-                    select(func.count())
-                    .select_from(Notification)
-                    .where(Notification.user_id == user_id, Notification.is_read.is_(False))
+                    self._scoped(
+                        select(func.count())
+                        .select_from(Notification)
+                        .where(Notification.user_id == user_id, Notification.is_read.is_(False)),
+                        scope,
+                    )
                 )
             ).scalar_one()
         )
@@ -178,11 +197,14 @@ class CommunicationService:
         await self.db.refresh(row)
         return NotificationOut.model_validate(row)
 
-    async def mark_all_read(self, user_id: UUID) -> UnreadCountOut:
+    async def mark_all_read(self, user_id: UUID, scope: NotificationScope | None = None) -> UnreadCountOut:
         rows = (
             await self.db.execute(
-                select(Notification).where(
-                    Notification.user_id == user_id, Notification.is_read.is_(False)
+                self._scoped(
+                    select(Notification).where(
+                        Notification.user_id == user_id, Notification.is_read.is_(False)
+                    ),
+                    scope,
                 )
             )
         ).scalars().all()

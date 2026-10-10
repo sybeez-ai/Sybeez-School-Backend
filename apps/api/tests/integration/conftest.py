@@ -15,7 +15,7 @@ from sqlalchemy.pool import NullPool
 from src.core.config import get_settings
 from src.core.database import get_db
 from src.core.security import create_access_token
-from src.db.models import School, Teacher, User
+from src.db.models import School, SchoolMembership, Teacher, User
 from src.main import app
 from src.shared.enums import UserRole
 
@@ -85,6 +85,8 @@ async def _school(db: AsyncSession, label: str) -> School:
 async def _actor(db: AsyncSession, school: School, role: UserRole, *, teacher: bool = False) -> Actor:
     user = User(id=uuid4(), email=f"it-{uuid4().hex[:12]}@example.test", full_name=f"IT {role.value}")
     db.add(user)
+    await db.flush()
+    db.add(SchoolMembership(user_id=user.id, school_id=school.id, role=role.value))
     await db.flush()
     teacher_id = None
     if teacher:

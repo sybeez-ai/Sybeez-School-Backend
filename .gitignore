@@ -16,4 +16,5 @@ build/
 .idea/
 .vscode/
 apps/api/src/db/migrations/versions/*.pyc
+apps/api/private_media/
 .venv/

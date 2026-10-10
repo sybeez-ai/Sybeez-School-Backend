@@ -32,9 +32,14 @@ from src.modules.hr.schemas import (
     StaffLeaveRequestCreate,
     StaffLeaveRequestOut,
 )
+from src.modules.hr_notifications.service import (
+    LEAVE_APPROVED,
+    LEAVE_REJECTED,
+    LEAVE_SUBMITTED,
+    HrNotifier,
+)
+from src.modules.hr_settings.service import load_rules
 from src.shared.utils import utcnow
-
-MAX_LEAVE_DAYS = 366
 
 
 def _money(x: Decimal) -> Decimal:
@@ -43,6 +48,16 @@ def _money(x: Decimal) -> Decimal:
 
 def _fmt_day(d: date) -> str:
     return d.strftime("%d %b %Y")
+
+
+def _leave_span(row: StaffLeaveRequest) -> str:
+    days = (row.end_date - row.start_date).days + 1
+    dates = (
+        _fmt_day(row.start_date)
+        if row.start_date == row.end_date
+        else f"{_fmt_day(row.start_date)} – {_fmt_day(row.end_date)}"
+    )
+    return f"{dates} ({days} day{'s' if days != 1 else ''})"
 
 
 def _teacher_code():
@@ -68,8 +83,12 @@ class HRService:
     async def create_staff_leave(self, school_id: UUID, user_id: UUID, data: StaffLeaveRequestCreate) -> StaffLeaveRequestOut:
         if data.end_date < data.start_date:
             raise AppError("End date must be on or after the start date", status_code=422)
-        if (data.end_date - data.start_date).days >= MAX_LEAVE_DAYS:
-            raise AppError(f"A leave request cannot exceed {MAX_LEAVE_DAYS} days", status_code=422)
+        max_days = (await load_rules(self.db, school_id)).leave_max_days
+        if (data.end_date - data.start_date).days >= max_days:
+            raise AppError(
+                f"A leave request cannot exceed {max_days} day{'s' if max_days != 1 else ''}",
+                status_code=422,
+            )
         overlap = (
             await self.db.execute(
                 select(StaffLeaveRequest)
@@ -99,7 +118,17 @@ class HRService:
         )
         self.db.add(row)
         await self.db.flush()
-        return await self._leave_out(school_id, row.id)
+        out = await self._leave_out(school_id, row.id)
+        await HrNotifier(self.db).to_admins(
+            school_id,
+            kind="leave",
+            category=LEAVE_SUBMITTED,
+            title=f"Leave request from {out.staff_name or 'a staff member'}",
+            body=f"{_leave_span(row)} · {row.reason}",
+            entity_id=row.id,
+            actor=user_id,
+        )
+        return out
 
     async def list_staff_leaves(
         self,
@@ -141,7 +170,17 @@ class HRService:
             raise AppError("Only PENDING requests can be cancelled", status_code=422)
         row.status = "CANCELLED"
         await self.db.flush()
-        return await self._leave_out(school_id, row.id)
+        out = await self._leave_out(school_id, row.id)
+        await HrNotifier(self.db).to_admins(
+            school_id,
+            kind="leave",
+            category=LEAVE_SUBMITTED,
+            title=f"Leave request withdrawn by {out.staff_name or 'a staff member'}",
+            body=_leave_span(row),
+            entity_id=row.id,
+            actor=user_id,
+        )
+        return out
 
     async def decide_staff_leave(
         self, school_id: UUID, leave_id: UUID, decided_by: UUID, data: StaffLeaveDecisionIn
@@ -156,6 +195,17 @@ class HRService:
         row.decided_at = utcnow()
         row.decision_note = data.decision_note
         await self.db.flush()
+        approved = row.status == "APPROVED"
+        await HrNotifier(self.db).to_employee(
+            school_id,
+            row.user_id,
+            kind="leave",
+            category=LEAVE_APPROVED if approved else LEAVE_REJECTED,
+            title=f"Your leave request was {'approved' if approved else 'rejected'}",
+            body=_leave_span(row) + (f" · {row.decision_note}" if row.decision_note else ""),
+            entity_id=row.id,
+            actor=decided_by,
+        )
         return await self._leave_out(school_id, row.id)
 
     @staticmethod

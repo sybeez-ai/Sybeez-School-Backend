@@ -6,7 +6,7 @@ from datetime import date, timedelta
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import Select, and_, case, func, or_, select
+from sqlalchemy import Select, and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -20,7 +20,12 @@ from src.db.models import (
     Teacher,
     User,
 )
-from src.modules.employees.service import employee_name_expr, sync_teacher_employees
+from src.modules.employees.service import (
+    employee_active_expr,
+    employee_code_expr,
+    employee_name_expr,
+    sync_teacher_employees,
+)
 from src.modules.staff_attendance.schemas import (
     AttendanceBulk,
     AttendanceCounts,
@@ -34,7 +39,6 @@ from src.modules.staff_attendance.schemas import (
     EmployeeAttendanceSummary,
     RangeSummary,
 )
-from src.shared.enums import PersonStatus
 
 MAX_RANGE_DAYS = 366
 _STATUS_KEYS = {
@@ -64,24 +68,8 @@ def assert_range(date_from: date, date_to: date) -> None:
         )
 
 
-def _active_expr():
-    """Whether an employee can be marked; needs ``Teacher`` and ``User`` outer-joined."""
-    return case(
-        (
-            Employee.staff_type == "TEACHING",
-            and_(
-                Teacher.status == PersonStatus.ACTIVE.value,
-                func.coalesce(User.is_active, True),
-            ),
-        ),
-        else_=Employee.status == "ACTIVE",
-    )
-
-
-def _code_expr():
-    return func.coalesce(
-        Teacher.employee_code, Teacher.teacher_code, Employee.employee_code
-    )
+_active_expr = employee_active_expr
+_code_expr = employee_code_expr
 
 
 class StaffAttendanceService:

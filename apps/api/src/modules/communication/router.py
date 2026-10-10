@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
@@ -18,14 +18,15 @@ from src.modules.communication.schemas import (
     MessageContactOut,
     MessageCreate,
     MessageOut,
+    NotificationDeliveryOut,
     NotificationListOut,
     NotificationOut,
     PreferencesOut,
     PreferencesUpdate,
     UnreadCountOut,
-    NotificationDeliveryOut,
 )
-from src.modules.communication.service import CommunicationService
+from src.modules.communication.service import CommunicationService, NotificationScope
+from src.modules.hr_notifications.service import HR_ENTITY_TYPES
 from src.shared.enums import UserRole
 
 router = APIRouter(prefix="/communication", tags=["communication"])
@@ -35,6 +36,12 @@ def _sid(u: CurrentUser) -> UUID:
     if u.school_id is None:
         raise ForbiddenError("School context required")
     return u.school_id
+
+
+def _scope(u: CurrentUser, scope: str | None) -> NotificationScope | None:
+    if scope != "hr":
+        return None
+    return _sid(u), HR_ENTITY_TYPES
 
 
 @router.get("/health")
@@ -62,9 +69,10 @@ async def list_notifications(
     unread: bool | None = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
+    scope: Literal["hr"] | None = Query(None),
 ):
     return await CommunicationService(db).list_notifications(
-        user.id, unread=unread, page=page, page_size=page_size
+        user.id, unread=unread, page=page, page_size=page_size, scope=_scope(user, scope)
     )
 
 
@@ -82,8 +90,9 @@ async def unread_count(
             )
         ),
     ],
+    scope: Literal["hr"] | None = Query(None),
 ):
-    return await CommunicationService(db).unread_count(user.id)
+    return await CommunicationService(db).unread_count(user.id, _scope(user, scope))
 
 
 @router.post("/notifications/{notification_id}/read", response_model=NotificationOut)
@@ -119,8 +128,9 @@ async def mark_all_read(
             )
         ),
     ],
+    scope: Literal["hr"] | None = Query(None),
 ):
-    return await CommunicationService(db).mark_all_read(user.id)
+    return await CommunicationService(db).mark_all_read(user.id, _scope(user, scope))
 
 
 @router.delete("/notifications/{notification_id}", status_code=204)
