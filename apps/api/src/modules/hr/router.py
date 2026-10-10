@@ -25,7 +25,7 @@ from src.shared.enums import UserRole
 router = APIRouter(prefix="/hr", tags=["hr"])
 
 LEAVE_STATUS_PATTERN = "(?i)^(PENDING|APPROVED|REJECTED|CANCELLED)$"
-PAYSLIP_STATUS_PATTERN = "(?i)^(DRAFT|PAID|CANCELLED)$"
+PAYSLIP_STATUS_PATTERN = "(?i)^(DRAFT|PUBLISHED|PAID|CANCELLED)$"
 
 
 def _sid(u: CurrentUser) -> UUID:

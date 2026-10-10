@@ -18,6 +18,7 @@ NON_DISABLEABLE = {
     NotificationType.SYSTEM.value,
     NotificationType.LEAVE_APPROVED.value,
     NotificationType.LEAVE_REJECTED.value,
+    NotificationType.PAYSLIP_PUBLISHED.value,
 }
 
 
