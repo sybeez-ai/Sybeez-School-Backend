@@ -4,7 +4,9 @@ from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from src.db.models.hr import PAYSLIP_STATUSES
 
 
 class StaffLeaveRequestCreate(BaseModel):
@@ -12,10 +14,23 @@ class StaffLeaveRequestCreate(BaseModel):
     end_date: date
     reason: str = Field(min_length=3, max_length=4000)
 
+    @field_validator("reason", mode="before")
+    @classmethod
+    def _trim_reason(cls, v):
+        return v.strip() if isinstance(v, str) else v
+
 
 class StaffLeaveDecisionIn(BaseModel):
     decision: str = Field(pattern="^(APPROVED|REJECTED)$")
-    decision_note: str | None = None
+    decision_note: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("decision_note", mode="before")
+    @classmethod
+    def _trim_note(cls, v):
+        if isinstance(v, str):
+            v = v.strip()
+            return v or None
+        return v
 
 
 class StaffLeaveRequestOut(BaseModel):
@@ -24,11 +39,16 @@ class StaffLeaveRequestOut(BaseModel):
     id: UUID
     school_id: UUID
     user_id: UUID
+    staff_name: str | None = None
+    employee_code: str | None = None
+    department_name: str | None = None
     start_date: date
     end_date: date
+    days: int | None = None
     reason: str
     status: str
     decided_by: UUID | None
+    decided_by_name: str | None = None
     decided_at: datetime | None
     decision_note: str | None
     created_at: datetime
@@ -71,6 +91,16 @@ class PayrollPayslipUpdate(BaseModel):
     status: str | None = Field(default=None, max_length=32)
     paid_on: date | None = None
     notes: str | None = None
+
+    @field_validator("status")
+    @classmethod
+    def _known_status(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        s = v.strip().upper()
+        if s not in PAYSLIP_STATUSES:
+            raise ValueError(f"status must be one of {', '.join(PAYSLIP_STATUSES)}")
+        return s
 
 
 class PayrollPayslipOut(BaseModel):

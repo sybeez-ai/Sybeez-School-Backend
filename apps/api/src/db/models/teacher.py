@@ -11,7 +11,10 @@ from src.shared.enums import PersonStatus
 
 class Teacher(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "teachers"
-    __table_args__ = (UniqueConstraint("school_id", "user_id", name="uq_teacher_school_user"),)
+    __table_args__ = (
+        UniqueConstraint("school_id", "user_id", name="uq_teacher_school_user"),
+        UniqueConstraint("id", "school_id", name="uq_teachers_id_school_id"),
+    )
 
     school_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True

@@ -64,7 +64,15 @@ from src.db.models.homework import (
     HomeworkSubmission,
     SubmissionAttachment,
 )
-from src.db.models.hr import PayrollPayslip, PayrollRun, StaffLeaveRequest
+from src.db.models.hr import (
+    Department,
+    Designation,
+    Employee,
+    PayrollPayslip,
+    PayrollRun,
+    StaffAttendance,
+    StaffLeaveRequest,
+)
 from src.db.models.invitation import Invitation
 from src.db.models.knowledge import KnowledgeChunk, KnowledgeDocument
 from src.db.models.learning_session import LearningSession
@@ -137,6 +145,10 @@ __all__ = [
     "AttendanceDigestLog",
     "LeaveRequest",
     "StaffLeaveRequest",
+    "StaffAttendance",
+    "Employee",
+    "Department",
+    "Designation",
     "Document",
     "DiaryEntry",
     "PersonalNote",

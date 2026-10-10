@@ -1,3 +1,4 @@
+from datetime import date
 from typing import Annotated
 from uuid import UUID
 
@@ -23,6 +24,8 @@ from src.shared.enums import UserRole
 
 router = APIRouter(prefix="/hr", tags=["hr"])
 
+LEAVE_STATUS_PATTERN = "(?i)^(PENDING|APPROVED|REJECTED|CANCELLED)$"
+
 
 def _sid(u: CurrentUser) -> UUID:
     if u.school_id is None:
@@ -42,9 +45,15 @@ async def hr_health():
 async def list_staff_leaves(
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
-    status: str | None = Query(default=None),
+    status: str | None = Query(default=None, pattern=LEAVE_STATUS_PATTERN),
+    q: str | None = Query(default=None, max_length=200),
+    date_from: date | None = None,
+    date_to: date | None = None,
+    user_id: UUID | None = None,
 ):
-    return await HRService(db).list_staff_leaves(_sid(user), status=status)
+    return await HRService(db).list_staff_leaves(
+        _sid(user), status=status, q=q, date_from=date_from, date_to=date_to, user_id=user_id
+    )
 
 
 @router.get("/leave/requests/me", response_model=list[StaffLeaveRequestOut])

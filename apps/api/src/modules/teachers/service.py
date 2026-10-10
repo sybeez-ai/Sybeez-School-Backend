@@ -14,6 +14,7 @@ from src.core.exceptions import ConflictError, ForbiddenError, NotFoundError
 from src.db.models import (
     AcademicYear,
     ClassRoom,
+    Employee,
     Enrollment,
     Grade,
     Subject,
@@ -274,6 +275,15 @@ class TeacherService:
         if exclude_id:
             q = q.where(Teacher.id != exclude_id)
         if (await self.db.execute(q)).scalar_one_or_none():
+            raise ConflictError("Employee ID already exists")
+        staff_clash = await self.db.execute(
+            select(Employee.id).where(
+                Employee.school_id == school_id,
+                Employee.staff_type == "NON_TEACHING",
+                func.lower(Employee.employee_code) == employee_code.strip().lower(),
+            ).limit(1)
+        )
+        if staff_clash.first():
             raise ConflictError("Employee ID already exists")
 
     async def _next_teacher_code(self, school_id: UUID) -> str:

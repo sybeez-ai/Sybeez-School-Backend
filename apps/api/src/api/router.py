@@ -17,12 +17,15 @@ from src.modules.documents.router import router as documents_router
 from src.modules.diary.router import router as diary_router
 from src.modules.notes.router import router as notes_router
 from src.modules.bookstore.router import router as bookstore_router
+from src.modules.employees.router import router as employees_router
 from src.modules.enrollments.router import router as enrollments_router
 from src.modules.exams.router import router as exams_router
 from src.modules.fees.router import router as fees_router
 from src.modules.grades.router import router as grades_router
 from src.modules.health.router import router as health_router
 from src.modules.hr.router import router as hr_router
+from src.modules.hr_org.router import router as hr_org_router
+from src.modules.staff_attendance.router import router as staff_attendance_router
 from src.modules.intelligence.router import router as intelligence_router
 from src.modules.internal.router import router as internal_router
 from src.modules.homework.router import router as homework_router
@@ -92,6 +95,9 @@ api_router.include_router(notifications_router, prefix=API_V1_PREFIX)
 api_router.include_router(communication_router, prefix=API_V1_PREFIX)
 api_router.include_router(admissions_router, prefix=API_V1_PREFIX)
 api_router.include_router(hr_router, prefix=API_V1_PREFIX)
+api_router.include_router(employees_router, prefix=API_V1_PREFIX)
+api_router.include_router(hr_org_router, prefix=API_V1_PREFIX)
+api_router.include_router(staff_attendance_router, prefix=API_V1_PREFIX)
 api_router.include_router(intelligence_router, prefix=API_V1_PREFIX)
 api_router.include_router(announcements_router, prefix=API_V1_PREFIX)
 api_router.include_router(messaging_router, prefix=API_V1_PREFIX)
