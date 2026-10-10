@@ -92,6 +92,7 @@ def test_notification_types_cover_phase9():
         "FEE_PAYMENT_FAILED",
         "FEE_RECEIPT_READY",
         "FEE_REFUND",
+        "PAYSLIP_PUBLISHED",
     }
     assert {t.value for t in NotificationType} == expected
 
