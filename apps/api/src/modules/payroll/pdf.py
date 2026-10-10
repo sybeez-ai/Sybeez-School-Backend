@@ -22,17 +22,15 @@ def _rgb(hex_color: str) -> str:
     return f"{r:.3f} {g:.3f} {b:.3f} rg"
 
 
-def build_payslip_pdf(payload: dict) -> bytes:
-    template = (payload.get("template_code") or "CLASSIC").upper()
-    lines = _lines(payload, template)
+def _document(lines: list[str], primary: str | None, accent: str | None) -> bytes:
     y = 800
-    ops = ["BT", "/F1 11 Tf", "14 TL", _rgb(payload.get("primary_color"))]
+    ops = ["BT", "/F1 11 Tf", "14 TL", _rgb(primary)]
     for index, line in enumerate(lines):
         escaped = _escape(line)
         if index == 0:
             ops.append(f"/F1 16 Tf 50 {y} Td ({escaped}) Tj")
             ops.append("/F1 11 Tf")
-            ops.append(_rgb(payload.get("accent_color")))
+            ops.append(_rgb(accent))
         else:
             ops.append(f"0 -14 Td ({escaped}) Tj")
     ops.append("ET")
@@ -59,6 +57,36 @@ def build_payslip_pdf(payload: dict) -> bytes:
         f"trailer<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode()
     )
     return bytes(out)
+
+
+def build_payslip_pdf(payload: dict) -> bytes:
+    template = (payload.get("template_code") or "CLASSIC").upper()
+    return _document(_lines(payload, template), payload.get("primary_color"), payload.get("accent_color"))
+
+
+def build_form16_pdf(data: dict) -> bytes:
+    """A school copy of the Form 16 figures stored with the year's payslips."""
+    snap = data.get("snapshot") or {}
+    lines = [
+        "Sybeez School",
+        "Form 16",
+        f"Financial year {data.get('financial_year') or snap.get('financial_year') or ''}",
+        f"Employee: {snap.get('employee_name') or '-'}",
+        f"PAN: {snap.get('pan') or '-'}",
+        f"Regime: {snap.get('regime') or '-'}",
+        f"Gross salary: INR {snap.get('gross_salary') or data.get('gross') or '0'}",
+        f"Exempt HRA: INR {snap.get('exempt_hra') or '0'}",
+        f"Standard deduction: INR {snap.get('standard_deduction') or '0'}",
+        f"Professional tax: INR {snap.get('professional_tax') or '0'}",
+        f"Chapter VI-A: INR {snap.get('chapter_vi_a') or '0'}",
+        f"Taxable salary: INR {snap.get('taxable_salary') or '0'}",
+        f"Tax: INR {snap.get('tax') or '0'}",
+        f"Cess: INR {snap.get('cess') or '0'}",
+        f"Total tax: INR {snap.get('total_tax') or '0'}",
+        f"TDS deducted on payslips: INR {data.get('tds_deducted') or '0'}",
+        f"Payslips: {data.get('payslip_count') or 0}",
+    ]
+    return _document(lines, "#1B4F72", "#148F77")
 
 
 def _lines(payload: dict, template: str) -> list[str]:

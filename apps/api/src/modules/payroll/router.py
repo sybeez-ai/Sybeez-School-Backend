@@ -134,6 +134,11 @@ async def create_template(body: TemplateCreate, user: User, db: Db):
     return _bundle(await _svc(db, user).create_template(body.model_dump()))
 
 
+@router.get("/salary-assignments")
+async def list_salary_assignments(user: User, db: Db, employee_id: UUID | None = None):
+    return await _svc(db, user).list_assignments(employee_id)
+
+
 @router.post("/salary-assignments", status_code=201)
 async def assign_salary(body: SalaryAssign, user: User, db: Db):
     return dump(await _svc(db, user).assign_salary(body.model_dump()))
@@ -211,9 +216,19 @@ async def pause_loan(loan_id: UUID, body: LoanPause, user: User, db: Db):
     return dump(await _svc(db, user).pause_loan(loan_id, body.paused_until, body.reason))
 
 
+@router.get("/arrears")
+async def list_arrears(user: User, db: Db, employee_id: UUID | None = None, status: str | None = None):
+    return [dump(row) for row in await _svc(db, user).list_arrears(employee_id, status)]
+
+
 @router.post("/arrears", status_code=201)
 async def create_arrear(body: ArrearIn, user: User, db: Db):
     return dump(await _svc(db, user).create_arrear(body.model_dump()))
+
+
+@router.get("/reimbursements")
+async def list_reimbursements(user: User, db: Db, employee_id: UUID | None = None, status: str | None = None):
+    return [dump(row) for row in await _svc(db, user).list_reimbursements(employee_id, status)]
 
 
 @router.post("/reimbursements", status_code=201)
@@ -226,9 +241,25 @@ async def decide_reimbursement(item_id: UUID, body: DecisionIn, user: User, db: 
     return dump(await _svc(db, user).decide_reimbursement(item_id, body.approve, body.reason))
 
 
+@router.get("/me/declaration")
+async def get_my_declaration(user: User, db: Db, financial_year: str | None = Query(default=None, max_length=9)):
+    return dump(await _svc(db, user).my_declaration(financial_year))
+
+
 @router.put("/me/declaration")
 async def my_declaration(body: DeclarationIn, user: User, db: Db):
     return dump(await _svc(db, user).upsert_declaration(body.model_dump(), employee_id=None))
+
+
+@router.get("/declarations")
+async def list_declarations(
+    user: User,
+    db: Db,
+    financial_year: str | None = Query(default=None, max_length=9),
+    employee_id: UUID | None = None,
+    status: str | None = None,
+):
+    return [dump(row) for row in await _svc(db, user).list_declarations(financial_year, employee_id, status)]
 
 
 @router.put("/declarations")
@@ -344,6 +375,26 @@ async def esi_challan(run_id: UUID, user: User, db: Db):
     return await _svc(db, user).challan(run_id, "ESI")
 
 
+@router.get("/runs/{run_id}/pt-report")
+async def pt_report(run_id: UUID, user: User, db: Db):
+    body, mime = await _svc(db, user).pt_report(run_id)
+    return RawResponse(
+        content=body,
+        media_type=mime,
+        headers={"Content-Disposition": f'attachment; filename="pt-{run_id}.csv"'},
+    )
+
+
+@router.get("/runs/{run_id}/tds-24q")
+async def tds_24q(run_id: UUID, user: User, db: Db):
+    body, mime = await _svc(db, user).tds_24q_report(run_id)
+    return RawResponse(
+        content=body,
+        media_type=mime,
+        headers={"Content-Disposition": f'attachment; filename="tds-24q-{run_id}.csv"'},
+    )
+
+
 @router.get("/runs/{run_id}/bank-file")
 async def bank_file(run_id: UUID, user: User, db: Db):
     body, mime = await _svc(db, user).bank_file(run_id)
@@ -375,14 +426,44 @@ async def payslip_pdf(payslip_id: UUID, user: User, db: Db, intent: str = Query(
     )
 
 
+@router.get("/notifications")
+async def payslip_notifications(user: User, db: Db, limit: int = Query(default=50, ge=1, le=200)):
+    rows = await _svc(db, user).list_payslip_notifications(limit)
+    return [
+        {
+            "id": str(row.id),
+            "title": row.title,
+            "body": row.body,
+            "category": row.category,
+            "link_path": row.link_path,
+            "is_read": row.is_read,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+            "payslip_id": str(row.entity_id) if row.entity_id else None,
+        }
+        for row in rows
+    ]
+
+
 @router.get("/form16/me")
 async def my_form16(user: User, db: Db, financial_year: str = Query(min_length=9, max_length=9)):
     return await _svc(db, user).form16(None, financial_year)
 
 
+@router.get("/form16/me/pdf")
+async def my_form16_pdf(user: User, db: Db, financial_year: str = Query(min_length=9, max_length=9)):
+    content, name = await _svc(db, user).form16_pdf(None, financial_year)
+    return RawResponse(content=content, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
 @router.get("/form16/{employee_id}")
 async def employee_form16(employee_id: UUID, user: User, db: Db, financial_year: str = Query(min_length=9, max_length=9)):
     return await _svc(db, user).form16(employee_id, financial_year)
+
+
+@router.get("/form16/{employee_id}/pdf")
+async def employee_form16_pdf(employee_id: UUID, user: User, db: Db, financial_year: str = Query(min_length=9, max_length=9)):
+    content, name = await _svc(db, user).form16_pdf(employee_id, financial_year)
+    return RawResponse(content=content, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
 @router.post("/settlements", status_code=201)

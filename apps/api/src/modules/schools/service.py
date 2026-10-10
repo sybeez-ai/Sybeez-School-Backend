@@ -6,7 +6,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.exceptions import ConflictError, ForbiddenError, NotFoundError
-from src.db.models import School
+from src.db.models import EmployeeStatutoryProfile, School, SchoolHoliday, WeeklyOffRule
+from src.modules.payroll.reports import distinct_branches
 
 
 class SchoolsService:
@@ -21,6 +22,24 @@ class SchoolsService:
         if school is None:
             raise NotFoundError("School not found")
         return school
+
+    async def list_branches(self, school_id: UUID | None) -> list[str]:
+        """Branch names this school already uses on holidays, weekly offs, and staff profiles."""
+        if school_id is None:
+            raise ForbiddenError("School context required")
+        names: list[str | None] = []
+        for column, model in (
+            (WeeklyOffRule.branch_name, WeeklyOffRule),
+            (SchoolHoliday.branch_name, SchoolHoliday),
+            (EmployeeStatutoryProfile.branch_name, EmployeeStatutoryProfile),
+        ):
+            rows = (
+                await self.db.execute(
+                    select(column).where(model.school_id == school_id, column.is_not(None), column != "")
+                )
+            ).scalars()
+            names.extend(rows)
+        return distinct_branches(names)
 
     async def update_my_school(self, school_id: UUID | None, *, name: str | None = None) -> School:
         school = await self.get_my_school(school_id)

@@ -131,7 +131,7 @@ class AuthService:
     _PORTAL_ROLES = {
         "platform": {UserRole.PLATFORM_ADMIN},
         "school": {UserRole.SCHOOL_ADMIN},
-        "hrm": {UserRole.SCHOOL_ADMIN},
+        "hrm": {UserRole.SCHOOL_ADMIN, UserRole.HR_MANAGER, UserRole.PAYROLL_APPROVER},
         "teacher": {UserRole.TEACHER},
         "student": {UserRole.STUDENT},
         "parent": {UserRole.PARENT},
@@ -172,6 +172,14 @@ class AuthService:
             if role == UserRole.SCHOOL_ADMIN:
                 raise ForbiddenError(
                     "This account is a school admin. Sign in at /login/school only."
+                )
+            if role == UserRole.HR_MANAGER:
+                raise ForbiddenError(
+                    "This account is an HR manager. Sign in at /login/hrm only."
+                )
+            if role == UserRole.PAYROLL_APPROVER:
+                raise ForbiddenError(
+                    "This account is a payroll approver. Sign in at /login/hrm only."
                 )
             if role == UserRole.PLATFORM_ADMIN:
                 raise ForbiddenError(

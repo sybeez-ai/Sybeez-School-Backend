@@ -35,6 +35,7 @@ from src.db.models import (
     PayrollSchoolSettings,
     PayrollSettingRevision,
     PayrollSettlement,
+    Notification,
     PtSlabRule,
     SalaryComponent,
     SalaryTemplate,
@@ -73,7 +74,8 @@ from src.modules.payroll.calc import (
     working_days,
 )
 from src.modules.payroll.notify import notify_payslip_published
-from src.modules.payroll.pdf import build_payslip_pdf
+from src.modules.payroll.pdf import build_form16_pdf, build_payslip_pdf
+from src.modules.payroll.reports import professional_tax_csv, tds_24q_csv
 from src.modules.payroll.permissions import (
     APPROVE,
     ATTENDANCE_ADMIN,
@@ -85,7 +87,7 @@ from src.modules.payroll.permissions import (
     require_payroll,
 )
 from src.modules.payroll.text import check_account, check_ifsc, check_pan, clean, require_text
-from src.shared.enums import UserRole
+from src.shared.enums import NotificationType, UserRole
 
 logger = logging.getLogger("sybeez.payroll")
 VISIBLE = ("PUBLISHED", "PAID")
@@ -469,6 +471,26 @@ class PayrollService:
         await self.db.flush()
         return row
 
+    async def list_assignments(self, employee_id: UUID | None) -> list[dict]:
+        held = await self._allow(READ | {UserRole.TEACHER.value})
+        stmt = (
+            select(EmployeeSalaryAssignment, SalaryTemplate.name)
+            .join(SalaryTemplate, SalaryTemplate.id == EmployeeSalaryAssignment.template_id)
+            .where(EmployeeSalaryAssignment.school_id == self.school_id)
+        )
+        if held.isdisjoint(READ):
+            employee = await self._employee_for_user()
+            stmt = stmt.where(EmployeeSalaryAssignment.employee_id == employee.id)
+        elif employee_id is not None:
+            stmt = stmt.where(EmployeeSalaryAssignment.employee_id == employee_id)
+        rows = (await self.db.execute(stmt.order_by(EmployeeSalaryAssignment.effective_from.desc()))).all()
+        listed = []
+        for assignment, template_name in rows:
+            item = dump(assignment) or {}
+            item["template_name"] = template_name
+            listed.append(item)
+        return listed
+
     async def upsert_profile(self, employee_id: UUID, data: dict) -> EmployeeStatutoryProfile:
         await self._allow(PREPARE | SETTINGS_WRITE)
         employee = await self._employee(employee_id)
@@ -743,6 +765,18 @@ class PayrollService:
         await self.db.flush()
         return row
 
+    async def list_arrears(self, employee_id: UUID | None, status: str | None) -> list[PayrollArrear]:
+        held = await self._allow(READ | {UserRole.TEACHER.value})
+        stmt = select(PayrollArrear).where(PayrollArrear.school_id == self.school_id)
+        if held.isdisjoint(READ):
+            employee = await self._employee_for_user()
+            stmt = stmt.where(PayrollArrear.employee_id == employee.id)
+        elif employee_id is not None:
+            stmt = stmt.where(PayrollArrear.employee_id == employee_id)
+        if status:
+            stmt = stmt.where(PayrollArrear.status == status.upper())
+        return list((await self.db.execute(stmt.order_by(PayrollArrear.created_at.desc()))).scalars())
+
     async def create_reimbursement(self, data: dict) -> PayrollReimbursement:
         held = await self._allow(READ | PREPARE | {UserRole.TEACHER.value})
         if held.isdisjoint(PREPARE) or data.get("for_self"):
@@ -778,6 +812,18 @@ class PayrollService:
         await self._audit("reimbursement.decide", "reimbursement", row.id, {"status": "PENDING"}, {"status": row.status}, reason)
         return row
 
+    async def list_reimbursements(self, employee_id: UUID | None, status: str | None) -> list[PayrollReimbursement]:
+        held = await self._allow(READ | {UserRole.TEACHER.value})
+        stmt = select(PayrollReimbursement).where(PayrollReimbursement.school_id == self.school_id)
+        if held.isdisjoint(READ):
+            employee = await self._employee_for_user()
+            stmt = stmt.where(PayrollReimbursement.employee_id == employee.id)
+        elif employee_id is not None:
+            stmt = stmt.where(PayrollReimbursement.employee_id == employee_id)
+        if status:
+            stmt = stmt.where(PayrollReimbursement.status == status.upper())
+        return list((await self.db.execute(stmt.order_by(PayrollReimbursement.created_at.desc()))).scalars())
+
     async def upsert_declaration(self, data: dict, *, employee_id: UUID | None) -> TaxDeclaration:
         held = await self._allow(READ | {UserRole.TEACHER.value})
         if employee_id and not held.isdisjoint(PREPARE | SETTINGS_WRITE):
@@ -807,6 +853,35 @@ class PayrollService:
         await self._audit("declaration.save", "tax_declaration", row.id, None, {"fy": fy, "regime": regime}, data.get("reason"))
         await self.db.flush()
         return row
+
+    async def my_declaration(self, financial_year: str | None) -> TaxDeclaration:
+        await self._bind()
+        employee = await self._employee_for_user()
+        stmt = select(TaxDeclaration).where(
+            TaxDeclaration.school_id == self.school_id,
+            TaxDeclaration.employee_id == employee.id,
+        )
+        if financial_year:
+            stmt = stmt.where(TaxDeclaration.financial_year == financial_year.strip())
+        else:
+            stmt = stmt.order_by(TaxDeclaration.financial_year.desc())
+        row = (await self.db.execute(stmt)).scalars().first()
+        if row is None:
+            raise NotFoundError("No tax declaration has been saved")
+        return row
+
+    async def list_declarations(
+        self, financial_year: str | None, employee_id: UUID | None, status: str | None
+    ) -> list[TaxDeclaration]:
+        await self._allow(READ)
+        stmt = select(TaxDeclaration).where(TaxDeclaration.school_id == self.school_id)
+        if financial_year:
+            stmt = stmt.where(TaxDeclaration.financial_year == financial_year.strip())
+        if employee_id is not None:
+            stmt = stmt.where(TaxDeclaration.employee_id == employee_id)
+        if status:
+            stmt = stmt.where(TaxDeclaration.status == status.upper())
+        return list((await self.db.execute(stmt.order_by(TaxDeclaration.financial_year.desc()))).scalars())
 
     async def add_proof(self, declaration_id: UUID, data: dict, content: bytes | None) -> TaxDeclarationProof:
         held = await self._allow(READ | {UserRole.TEACHER.value})
@@ -1589,6 +1664,99 @@ class PayrollService:
             "tds_deducted": str(tds_total),
             "snapshot": latest,
         }
+
+    async def form16_pdf(self, employee_id: UUID | None, financial_year: str) -> tuple[bytes, str]:
+        data = await self.form16(employee_id, financial_year)
+        return build_form16_pdf(data), f"form16-{financial_year}.pdf"
+
+    async def list_payslip_notifications(self, limit: int = 50) -> list[Notification]:
+        await self._bind()
+        stmt = (
+            select(Notification)
+            .where(
+                Notification.school_id == self.school_id,
+                Notification.user_id == self.actor_id,
+                Notification.category == NotificationType.PAYSLIP_PUBLISHED.value,
+            )
+            .order_by(Notification.created_at.desc())
+            .limit(min(max(limit, 1), 200))
+        )
+        return list((await self.db.execute(stmt)).scalars())
+
+    async def _employee_label(self, employee: Employee | None) -> tuple[str, str | None]:
+        if employee is None:
+            return "Employee", None
+        name = employee.full_name or "Employee"
+        if employee.teacher_id:
+            teacher = await self.db.get(Teacher, employee.teacher_id)
+            if teacher and teacher.user_id:
+                user = await self.db.get(User, teacher.user_id)
+                if user and user.full_name:
+                    name = user.full_name
+        elif employee.user_id:
+            user = await self.db.get(User, employee.user_id)
+            if user and user.full_name:
+                name = user.full_name
+        return name, employee.employee_code
+
+    async def pt_report(self, run_id: UUID) -> tuple[str, str]:
+        detail = await self.get_run(run_id)
+        settings = await self.load_settings()
+        rows = []
+        for item in detail["payslips"]:
+            slip = item["payslip"]
+            if slip.status == "CANCELLED":
+                continue
+            employee = await self.db.get(Employee, slip.employee_id) if slip.employee_id else None
+            profile = None
+            if employee:
+                profile = (
+                    await self.db.execute(
+                        select(EmployeeStatutoryProfile).where(EmployeeStatutoryProfile.employee_id == employee.id)
+                    )
+                ).scalar_one_or_none()
+            name, code = await self._employee_label(employee)
+            amounts = {line.code: line.amount for line in item["lines"]}
+            rows.append(
+                {
+                    "employee_id": str(slip.employee_id) if slip.employee_id else None,
+                    "employee_name": name,
+                    "employee_code": code,
+                    "state": (profile.pt_state if profile and profile.pt_state else (settings.pt_state if settings else None)),
+                    "gender": profile.gender if profile else None,
+                    "pt_amount": str(amounts.get("PT", _ZERO)),
+                }
+            )
+        return professional_tax_csv(rows), "text/csv"
+
+    async def tds_24q_report(self, run_id: UUID) -> tuple[str, str]:
+        detail = await self.get_run(run_id)
+        rows = []
+        for item in detail["payslips"]:
+            slip = item["payslip"]
+            if slip.status == "CANCELLED":
+                continue
+            employee = await self.db.get(Employee, slip.employee_id) if slip.employee_id else None
+            profile = None
+            if employee:
+                profile = (
+                    await self.db.execute(
+                        select(EmployeeStatutoryProfile).where(EmployeeStatutoryProfile.employee_id == employee.id)
+                    )
+                ).scalar_one_or_none()
+            name, _code = await self._employee_label(employee)
+            amounts = {line.code: line.amount for line in item["lines"]}
+            rows.append(
+                {
+                    "employee_id": str(slip.employee_id) if slip.employee_id else None,
+                    "employee_name": name,
+                    "pan": profile.pan if profile else None,
+                    "gross_amount": str(slip.gross_amount),
+                    "tds_amount": str(amounts.get("TDS", _ZERO)),
+                    "tax_regime": slip.tax_regime,
+                }
+            )
+        return tds_24q_csv(rows), "text/csv"
 
     async def salary_register(self, run_id: UUID) -> list[dict]:
         detail = await self.get_run(run_id)

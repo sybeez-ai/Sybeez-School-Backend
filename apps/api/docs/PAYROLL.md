@@ -84,6 +84,7 @@ Prefix `/api/v1`. Errors are `{ "error": { "code", "message" } }`. Money is a de
 | POST | `/payroll/components/{id}/retire` | `{ reason }` | Component |
 | GET | `/payroll/salary-templates` |  | `[{ template, lines }]` |
 | POST | `/payroll/salary-templates` | `{ name, grade_code, lines: [{ component_id, amount, percent }], reason }` | `{ template, lines }` |
+| GET | `/payroll/salary-assignments?employee_id` |  | Assignments for the school, with `template_name`. An employee with no payroll role sees only their own. |
 | POST | `/payroll/salary-assignments` | `{ employee_id, template_id, effective_from, overrides, arrears_amount, reason }` | Assignment. Closes the previous open assignment. |
 | GET | `/payroll/employees/{employee_id}/profile` |  | Statutory profile or `{ employee_id }` |
 | PUT | `/payroll/employees/{employee_id}/profile` | `{ pan, uan, pf_number, esi_number, gender, tax_regime, metro, pt_state, branch_name, pf_enrolled, pf_wage_mode: CAPPED\|FULL_BASIC, pf_employee_rate, pf_employer_rate, pf_effective_from, pf_effective_to, vpf_rate, vpf_amount, esi_enrolled, esi_effective_from, esi_effective_to, reason }` | Profile |
@@ -99,10 +100,14 @@ Prefix `/api/v1`. Errors are `{ "error": { "code", "message" } }`. Money is a de
 | GET | `/payroll/loans?employee_id` |  | Loans |
 | POST | `/payroll/loans` | `{ employee_id, kind: LOAN\|ADVANCE, principal, emi, annual_rate, start_date, reason }` | Loan |
 | POST | `/payroll/loans/{id}/pause` | `{ paused_until, reason }` | Loan |
+| GET | `/payroll/arrears?employee_id&status` |  | Arrears. Staff see only their own. |
 | POST | `/payroll/arrears` | `{ employee_id, amount, reason }` | Arrear |
+| GET | `/payroll/reimbursements?employee_id&status` |  | Reimbursements. Staff see only their own. |
 | POST | `/payroll/reimbursements` | `{ employee_id, for_self, amount, note }` | Reimbursement. Staff omit `employee_id` or set `for_self`. |
 | POST | `/payroll/reimbursements/{id}/decide` | `{ approve, reason }` | Reimbursement |
+| GET | `/payroll/me/declaration?financial_year` |  | The caller's saved declaration. 404 when none is saved. Omit the year to get the latest. |
 | PUT | `/payroll/me/declaration` | `{ financial_year, regime, section_80c, section_80d, other_chapter_vi, annual_rent }` | Declaration |
+| GET | `/payroll/declarations?financial_year&employee_id&status` |  | Declarations in this school. Payroll read roles only. |
 | PUT | `/payroll/declarations` | same, plus `employee_id` | Declaration |
 | POST | `/payroll/declarations/{id}/proofs` | query `section`, `amount`, `note`; optional file | Proof |
 | POST | `/payroll/declarations/{id}/verify` | `{ reason }` | Declaration |
@@ -123,12 +128,17 @@ Prefix `/api/v1`. Errors are `{ "error": { "code", "message" } }`. Money is a de
 | GET | `/payroll/runs/{id}/register` |  | Salary register rows |
 | GET | `/payroll/runs/{id}/pf-challan` |  | PF challan rows |
 | GET | `/payroll/runs/{id}/esi-challan` |  | ESI challan rows |
+| GET | `/payroll/runs/{id}/pt-report` |  | Professional tax CSV for the run |
+| GET | `/payroll/runs/{id}/tds-24q` |  | Salary TDS CSV for the run (section 192, the salary part of Form 24Q) |
 | GET | `/payroll/runs/{id}/bank-file` |  | CSV attachment |
 | PATCH | `/payroll/payslips/{id}/payment` | `{ status: PENDING\|EXPORTED\|PAID\|FAILED, utr, failure_reason, reason }` | Payment. `PAID` sets the payslip paid date. |
 | GET | `/payroll/payslips/me?year` |  | Own published or paid payslips |
 | GET | `/payroll/payslips/{id}/pdf?intent=view\|download` |  | PDF. `intent=view` increments `view_count` for the owner. `download` increments `download_count`. |
+| GET | `/payroll/notifications?limit` |  | The caller's payslip notifications for this school only: `{ id, title, body, category, link_path, is_read, created_at, payslip_id }` |
 | GET | `/payroll/form16/me?financial_year` |  | Form 16 data, `YYYY-YYYY` |
-| GET | `/payroll/form16/{employee_id}?financial_year` |  | Same for one employee |
+| GET | `/payroll/form16/me/pdf?financial_year` |  | Form 16 PDF |
+| GET | `/payroll/form16/{employee_id}?financial_year` |  | Same data for one employee |
+| GET | `/payroll/form16/{employee_id}/pdf?financial_year` |  | Form 16 PDF for one employee |
 | POST | `/payroll/settlements` | `{ employee_id, last_working_day, leave_encashment_days, notice_recovery, reason }` | Full and final settlement |
 
 ### Staff self-attendance
@@ -152,3 +162,7 @@ Existing `/hr/attendance` daily, history, summary, mark, bulk, patch, and delete
 ### Internal
 
 `POST /internal/v1/payroll/generate` with `X-Internal-Token`. Body `{ school_id, period_start, period_end, locked_by, source }`. Response `{ run_id, created, skipped }`. The worker job type is `payroll_generate`.
+
+`GET /api/v1/schools/me/branches` returns `{ branches: [{ name }] }` for the signed-in school. Names come from weekly offs, holidays, and statutory profiles. Empty branch names are the whole school and are left out.
+
+The HRM login portal (`portal=hrm`) accepts school admin, HR manager, and payroll approver.

@@ -29,6 +29,20 @@ from src.modules.communication.service import CommunicationService, Notification
 from src.modules.hr_notifications.service import HR_ENTITY_TYPES
 from src.shared.enums import UserRole
 
+CAMPUS_ROLES = (
+    UserRole.STUDENT,
+    UserRole.PARENT,
+    UserRole.TEACHER,
+    UserRole.SCHOOL_ADMIN,
+)
+INBOX_ROLES = CAMPUS_ROLES + (
+    UserRole.HR_MANAGER,
+    UserRole.PAYROLL_ADMIN,
+    UserRole.PAYROLL_APPROVER,
+    UserRole.ACCOUNTANT,
+    UserRole.AUDITOR,
+)
+
 router = APIRouter(prefix="/communication", tags=["communication"])
 
 
@@ -58,12 +72,7 @@ async def list_notifications(
     user: Annotated[
         CurrentUser,
         Depends(
-            require_roles(
-                UserRole.STUDENT,
-                UserRole.PARENT,
-                UserRole.TEACHER,
-                UserRole.SCHOOL_ADMIN,
-            )
+            require_roles(*INBOX_ROLES)
         ),
     ],
     unread: bool | None = Query(None),
@@ -82,12 +91,7 @@ async def unread_count(
     user: Annotated[
         CurrentUser,
         Depends(
-            require_roles(
-                UserRole.STUDENT,
-                UserRole.PARENT,
-                UserRole.TEACHER,
-                UserRole.SCHOOL_ADMIN,
-            )
+            require_roles(*INBOX_ROLES)
         ),
     ],
     scope: Literal["hr"] | None = Query(None),
@@ -102,12 +106,7 @@ async def mark_notification_read(
     user: Annotated[
         CurrentUser,
         Depends(
-            require_roles(
-                UserRole.STUDENT,
-                UserRole.PARENT,
-                UserRole.TEACHER,
-                UserRole.SCHOOL_ADMIN,
-            )
+            require_roles(*INBOX_ROLES)
         ),
     ],
 ):
@@ -120,12 +119,7 @@ async def mark_all_read(
     user: Annotated[
         CurrentUser,
         Depends(
-            require_roles(
-                UserRole.STUDENT,
-                UserRole.PARENT,
-                UserRole.TEACHER,
-                UserRole.SCHOOL_ADMIN,
-            )
+            require_roles(*INBOX_ROLES)
         ),
     ],
     scope: Literal["hr"] | None = Query(None),
@@ -140,12 +134,7 @@ async def delete_notification(
     user: Annotated[
         CurrentUser,
         Depends(
-            require_roles(
-                UserRole.STUDENT,
-                UserRole.PARENT,
-                UserRole.TEACHER,
-                UserRole.SCHOOL_ADMIN,
-            )
+            require_roles(*INBOX_ROLES)
         ),
     ],
 ):
@@ -161,12 +150,7 @@ async def get_preferences(
     user: Annotated[
         CurrentUser,
         Depends(
-            require_roles(
-                UserRole.STUDENT,
-                UserRole.PARENT,
-                UserRole.TEACHER,
-                UserRole.SCHOOL_ADMIN,
-            )
+            require_roles(*CAMPUS_ROLES)
         ),
     ],
 ):
@@ -180,12 +164,7 @@ async def update_preferences(
     user: Annotated[
         CurrentUser,
         Depends(
-            require_roles(
-                UserRole.STUDENT,
-                UserRole.PARENT,
-                UserRole.TEACHER,
-                UserRole.SCHOOL_ADMIN,
-            )
+            require_roles(*CAMPUS_ROLES)
         ),
     ],
 ):
@@ -213,12 +192,7 @@ async def list_announcements(
     user: Annotated[
         CurrentUser,
         Depends(
-            require_roles(
-                UserRole.STUDENT,
-                UserRole.PARENT,
-                UserRole.TEACHER,
-                UserRole.SCHOOL_ADMIN,
-            )
+            require_roles(*CAMPUS_ROLES)
         ),
     ],
     status: str | None = Query(None),
@@ -272,12 +246,7 @@ async def get_announcement(
     user: Annotated[
         CurrentUser,
         Depends(
-            require_roles(
-                UserRole.STUDENT,
-                UserRole.PARENT,
-                UserRole.TEACHER,
-                UserRole.SCHOOL_ADMIN,
-            )
+            require_roles(*CAMPUS_ROLES)
         ),
     ],
 ):
@@ -336,12 +305,7 @@ async def list_conversations(
     user: Annotated[
         CurrentUser,
         Depends(
-            require_roles(
-                UserRole.STUDENT,
-                UserRole.PARENT,
-                UserRole.TEACHER,
-                UserRole.SCHOOL_ADMIN,
-            )
+            require_roles(*CAMPUS_ROLES)
         ),
     ],
 ):
@@ -354,12 +318,7 @@ async def list_message_contacts(
     user: Annotated[
         CurrentUser,
         Depends(
-            require_roles(
-                UserRole.STUDENT,
-                UserRole.PARENT,
-                UserRole.TEACHER,
-                UserRole.SCHOOL_ADMIN,
-            )
+            require_roles(*CAMPUS_ROLES)
         ),
     ],
 ):
@@ -375,12 +334,7 @@ async def start_conversation(
     user: Annotated[
         CurrentUser,
         Depends(
-            require_roles(
-                UserRole.STUDENT,
-                UserRole.PARENT,
-                UserRole.TEACHER,
-                UserRole.SCHOOL_ADMIN,
-            )
+            require_roles(*CAMPUS_ROLES)
         ),
     ],
 ):
@@ -396,12 +350,7 @@ async def list_messages(
     user: Annotated[
         CurrentUser,
         Depends(
-            require_roles(
-                UserRole.STUDENT,
-                UserRole.PARENT,
-                UserRole.TEACHER,
-                UserRole.SCHOOL_ADMIN,
-            )
+            require_roles(*CAMPUS_ROLES)
         ),
     ],
 ):
@@ -420,12 +369,7 @@ async def send_message(
     user: Annotated[
         CurrentUser,
         Depends(
-            require_roles(
-                UserRole.STUDENT,
-                UserRole.PARENT,
-                UserRole.TEACHER,
-                UserRole.SCHOOL_ADMIN,
-            )
+            require_roles(*CAMPUS_ROLES)
         ),
     ],
 ):
