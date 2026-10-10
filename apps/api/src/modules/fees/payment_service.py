@@ -275,7 +275,7 @@ class PaymentService:
         await set_rls_bypass(self.db, False)
         if not payment:
             raise NotFoundError("Payment not found for order")
-        await bind_tenant(self.db, payment.school_id)
+        await bind_tenant(self.db, payment.school_id, role="SERVICE")
 
         existing_event = (
             await self.db.execute(select(FeeWebhookEvent).where(FeeWebhookEvent.event_id == event_id))

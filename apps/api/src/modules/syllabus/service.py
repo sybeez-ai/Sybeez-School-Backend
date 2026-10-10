@@ -115,6 +115,7 @@ class SyllabusService:
             )
             order = count + 1
         topic = SyllabusTopic(
+            school_id=school_id,
             syllabus_id=syllabus.id,
             parent_topic_id=data.parent_topic_id,
             name=data.name.strip(),

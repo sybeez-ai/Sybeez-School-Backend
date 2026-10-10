@@ -44,6 +44,8 @@ async def _wipe(school_ids: list, user_ids: list) -> None:
             await db.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
         await db.execute(text("SET session_replication_role = origin"))
         await db.execute(text("SELECT set_config('app.school_id', '', false)"))
+        await db.execute(text("SELECT set_config('app.user_id', '', false)"))
+        await db.execute(text("SELECT set_config('app.role', '', false)"))
         await db.execute(text("SELECT set_config('app.rls_bypass', 'off', false)"))
         await db.commit()
 
@@ -143,6 +145,11 @@ async def test_rls_hides_other_schools_and_blocks_cross_writes():
             await db.execute(text("SET ROLE sybeez_app"))
             await db.execute(text("SELECT set_config('app.rls_bypass', 'off', false)"))
             await db.execute(
+                text("SELECT set_config('app.user_id', :uid, false)"),
+                {"uid": str(user_ids[0])},
+            )
+            await db.execute(text("SELECT set_config('app.role', 'SCHOOL_ADMIN', false)"))
+            await db.execute(
                 text("SELECT set_config('app.school_id', :sid, false)"),
                 {"sid": str(school_ids[0])},
             )
@@ -150,8 +157,16 @@ async def test_rls_hides_other_schools_and_blocks_cross_writes():
             assert visible
             assert set(visible) == {school_ids[0]}
 
+            await db.execute(text("SELECT set_config('app.role', '', false)"))
+            assert (await db.execute(select(FeeCategory.id))).scalars().all() == []
+            await db.execute(text("SELECT set_config('app.role', 'SCHOOL_ADMIN', false)"))
+
             await db.execute(text("SELECT set_config('app.school_id', '', false)"))
             assert (await db.execute(select(FeeCategory.id))).scalars().all() == []
+            await db.execute(
+                text("SELECT set_config('app.school_id', :sid, false)"),
+                {"sid": str(school_ids[0])},
+            )
 
             with pytest.raises(DBAPIError) as exc:
                 async with db.begin_nested():
@@ -169,6 +184,8 @@ async def test_rls_hides_other_schools_and_blocks_cross_writes():
             await db.rollback()
             await db.execute(text("RESET ROLE"))
             await db.execute(text("SELECT set_config('app.school_id', '', false)"))
+            await db.execute(text("SELECT set_config('app.user_id', '', false)"))
+            await db.execute(text("SELECT set_config('app.role', '', false)"))
             await db.execute(text("SELECT set_config('app.rls_bypass', 'off', false)"))
             await db.commit()
     finally:
