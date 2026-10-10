@@ -132,7 +132,12 @@ class AuthService:
         "school": {UserRole.SCHOOL_ADMIN},
         "hrm": {UserRole.SCHOOL_ADMIN},
         "payroll": {UserRole.SCHOOL_ADMIN},
-        "finance": {UserRole.SCHOOL_ADMIN},
+        "finance": {
+            UserRole.SCHOOL_ADMIN,
+            UserRole.ACCOUNTANT,
+            UserRole.CASHIER,
+            UserRole.AUDITOR,
+        },
         "teacher": {UserRole.TEACHER},
         "student": {UserRole.STUDENT},
         "parent": {UserRole.PARENT},

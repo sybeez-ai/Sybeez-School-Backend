@@ -23,6 +23,7 @@ def calculate_late_fee(
     calculation_type: str,
     amount: Decimal,
     maximum_amount: Decimal | None,
+    slabs: list | None = None,
 ) -> Decimal:
     """Return late fee amount (0 if not applicable)."""
     balance = money(balance)
@@ -39,6 +40,16 @@ def calculate_late_fee(
         fee = money(balance * money(amount) / Decimal("100"))
     elif calc == "PER_DAY":
         fee = money(money(amount) * days)
+    elif calc == "SLAB":
+        chosen = None
+        ordered = sorted(slabs or [], key=lambda s: int(s.get("upto_days") or 0))
+        for slab in ordered:
+            if days <= int(slab.get("upto_days") or 0):
+                chosen = slab
+                break
+        if chosen is None and ordered:
+            chosen = ordered[-1]
+        fee = money(chosen.get("amount")) if chosen else money(0)
     else:
         fee = money(0)
     if maximum_amount is not None and fee > money(maximum_amount):

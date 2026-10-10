@@ -20,6 +20,7 @@ from src.modules.bookstore.router import router as bookstore_router
 from src.modules.enrollments.router import router as enrollments_router
 from src.modules.exams.router import router as exams_router
 from src.modules.fees.router import router as fees_router
+from src.modules.finance.router import router as finance_router
 from src.modules.grades.router import router as grades_router
 from src.modules.health.router import router as health_router
 from src.modules.hr.router import router as hr_router
@@ -78,6 +79,7 @@ api_router.include_router(assignments_router, prefix=API_V1_PREFIX)
 api_router.include_router(attendance_router, prefix=API_V1_PREFIX)
 api_router.include_router(exams_router, prefix=API_V1_PREFIX)
 api_router.include_router(fees_router, prefix=API_V1_PREFIX)
+api_router.include_router(finance_router, prefix=API_V1_PREFIX)
 api_router.include_router(diary_router, prefix=API_V1_PREFIX)
 api_router.include_router(notes_router, prefix=API_V1_PREFIX)
 api_router.include_router(personal_life_router, prefix=API_V1_PREFIX)

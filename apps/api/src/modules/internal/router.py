@@ -72,7 +72,36 @@ async def internal_run_fee_reminders(
     school_id: UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    return await FeeService(db).send_invoice_reminders(school_id)
+    from src.modules.fees.tenant import bind_tenant
+
+    await bind_tenant(db, school_id)
+    reminders = await FeeService(db).send_invoice_reminders(school_id)
+    late = await FeeService(db).apply_late_fees(school_id, None)
+    return {"reminders": reminders, "late_fees_applied": late}
+
+
+@router.post(
+    "/fees/reminders/run-all",
+    dependencies=[Depends(require_internal_token)],
+)
+async def internal_run_all_fee_reminders(
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    from sqlalchemy import select
+
+    from src.db.models import School
+    from src.modules.fees.tenant import bind_tenant
+
+    school_ids = (await db.execute(select(School.id))).scalars().all()
+    results = []
+    for school_id in school_ids:
+        await bind_tenant(db, school_id)
+        reminders = await FeeService(db).send_invoice_reminders(school_id)
+        late = await FeeService(db).apply_late_fees(school_id, None)
+        results.append(
+            {"school_id": str(school_id), "reminders": reminders, "late_fees_applied": late}
+        )
+    return {"schools": len(results), "results": results}
 
 
 @router.post(
