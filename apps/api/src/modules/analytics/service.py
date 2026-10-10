@@ -129,7 +129,7 @@ class AnalyticsService:
         if not st:
             return "Student"
         u = await self.db.get(User, st.user_id)
-        return u.name if u else "Student"
+        return u.full_name if u else "Student"
 
     async def _class_name(self, class_id: UUID | None) -> str | None:
         if not class_id:

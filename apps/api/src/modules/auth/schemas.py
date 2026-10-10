@@ -7,7 +7,7 @@ class LoginRequest(BaseModel):
     email: EmailStr
     password: str
     school_id: UUID | None = None
-    # portal login page: platform | school | hrm | teacher | student | parent
+    # portal login page: platform | school | hrm | payroll | finance | teacher | student | parent
     portal: str | None = None
 
 

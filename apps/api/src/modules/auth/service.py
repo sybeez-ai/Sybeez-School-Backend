@@ -131,6 +131,8 @@ class AuthService:
         "platform": {UserRole.PLATFORM_ADMIN},
         "school": {UserRole.SCHOOL_ADMIN},
         "hrm": {UserRole.SCHOOL_ADMIN},
+        "payroll": {UserRole.SCHOOL_ADMIN},
+        "finance": {UserRole.SCHOOL_ADMIN},
         "teacher": {UserRole.TEACHER},
         "student": {UserRole.STUDENT},
         "parent": {UserRole.PARENT},
@@ -229,17 +231,17 @@ class AuthService:
                         await self._assert_portal_role(
                             existing, data.portal, school_id_hint=data.school_id
                         )
-                    elif data.portal and data.portal.strip().lower() not in {"school", "hrm"}:
+                    elif data.portal and data.portal.strip().lower() not in {
+                        "school",
+                        "hrm",
+                        "payroll",
+                        "finance",
+                    }:
                         # Platform-provisioned Cognito users without a local row yet
                         # are school-scoped first-login accounts.
                         raise ForbiddenError(
-                            "This account is a school admin. Sign in at /login/school or /hrm/login."
+                            "This account is a school admin. Sign in at /login/school, /hrm/login, /school/payroll/login, or /finance/login."
                         )
-                    return TokenResponse(
-                        challenge=cog.challenge,
-                        session=cog.session,
-                        email=cog.email,
-                    )
                 cognito_ok = True
                 user = await self._user_from_cognito(cog, email)
             except ForbiddenError:
