@@ -25,6 +25,7 @@ from src.shared.enums import UserRole
 router = APIRouter(prefix="/hr", tags=["hr"])
 
 LEAVE_STATUS_PATTERN = "(?i)^(PENDING|APPROVED|REJECTED|CANCELLED)$"
+PAYSLIP_STATUS_PATTERN = "(?i)^(DRAFT|PAID|CANCELLED)$"
 
 
 def _sid(u: CurrentUser) -> UUID:
@@ -141,12 +142,28 @@ async def update_payslip(
     return await HRService(db).update_payslip(_sid(user), payslip_id, body)
 
 
+@router.get("/payroll/payslips", response_model=list[PayrollPayslipOut])
+async def list_payslips(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    run_id: UUID | None = None,
+    status: str | None = Query(default=None, pattern=PAYSLIP_STATUS_PATTERN),
+    teacher_id: UUID | None = None,
+    year: int | None = Query(default=None, ge=2000, le=2100),
+    q: str | None = Query(default=None, max_length=200),
+):
+    return await HRService(db).list_payslips(
+        _sid(user), run_id=run_id, status=status, teacher_id=teacher_id, year=year, q=q
+    )
+
+
 @router.get("/payroll/payslips/me", response_model=list[PayrollPayslipOut])
 async def list_my_payslips(
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[CurrentUser, Depends(require_roles(UserRole.TEACHER))],
+    year: int | None = Query(default=None, ge=2000, le=2100),
 ):
-    return await HRService(db).list_my_payslips(_sid(user), user.id)
+    return await HRService(db).list_my_payslips(_sid(user), user.id, year=year)
 
 
 @router.get("/payroll/payslips/{payslip_id}/pdf")
@@ -156,7 +173,7 @@ async def payslip_pdf(
     user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN, UserRole.TEACHER))],
 ):
     is_admin = user.role == UserRole.SCHOOL_ADMIN
-    content = await HRService(db).build_payslip_pdf(
+    content, filename = await HRService(db).build_payslip_pdf(
         _sid(user),
         payslip_id,
         viewer_user_id=user.id,
@@ -165,6 +182,6 @@ async def payslip_pdf(
     return Response(
         content=content,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="payslip-{payslip_id}.pdf"'},
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 

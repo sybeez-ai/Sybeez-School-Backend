@@ -23,7 +23,7 @@ def build_payslip_pdf(payload: dict) -> bytes:
         f"Payroll run: {payload.get('run_label') or '-'}",
         f"Period: {payload.get('period') or '-'}",
         "",
-        f"Teacher: {payload.get('teacher_name') or '-'}",
+        f"Employee: {payload.get('teacher_name') or '-'}",
         f"Employee code: {payload.get('employee_code') or '-'}",
         "",
         f"Gross: INR {payload.get('gross_amount') or '0.00'}",

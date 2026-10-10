@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import date
 from decimal import Decimal
 from uuid import UUID, uuid4
@@ -40,6 +41,9 @@ from src.modules.hr_notifications.service import (
 )
 from src.modules.hr_settings.service import load_rules
 from src.shared.utils import utcnow
+
+# Payroll has no separate publish step: only PAID slips are final, so only they reach employees.
+EMPLOYEE_VISIBLE_PAYSLIP = "PAID"
 
 
 def _money(x: Decimal) -> Decimal:
@@ -268,26 +272,124 @@ class HRService:
     async def list_payroll_runs(self, school_id: UUID, limit: int = 50) -> list[PayrollRunOut]:
         rows = (
             await self.db.execute(
-                select(PayrollRun).where(PayrollRun.school_id == school_id).order_by(PayrollRun.created_at.desc()).limit(limit)
+                select(
+                    PayrollRun,
+                    func.count(PayrollPayslip.id).filter(PayrollPayslip.status != "CANCELLED"),
+                    func.count(PayrollPayslip.id).filter(PayrollPayslip.status == EMPLOYEE_VISIBLE_PAYSLIP),
+                )
+                .outerjoin(
+                    PayrollPayslip,
+                    and_(
+                        PayrollPayslip.payroll_run_id == PayrollRun.id,
+                        PayrollPayslip.school_id == PayrollRun.school_id,
+                    ),
+                )
+                .where(PayrollRun.school_id == school_id)
+                .group_by(PayrollRun.id)
+                .order_by(PayrollRun.period_start.desc(), PayrollRun.created_at.desc())
+                .limit(limit)
             )
-        ).scalars().all()
-        return [PayrollRunOut.model_validate(r) for r in rows]
+        ).all()
+        out: list[PayrollRunOut] = []
+        for run, total, paid in rows:
+            item = PayrollRunOut.model_validate(run)
+            item.payslip_count, item.paid_count = total, paid
+            out.append(item)
+        return out
 
     async def get_payroll_run(self, school_id: UUID, run_id: UUID) -> PayrollRunDetailOut:
         run = await self.db.get(PayrollRun, run_id)
         if not run or run.school_id != school_id:
             raise NotFoundError("Payroll run not found")
-        slips = (
+        rows = (
             await self.db.execute(
-                select(PayrollPayslip).where(
-                    PayrollPayslip.school_id == school_id, PayrollPayslip.payroll_run_id == run_id
-                ).order_by(PayrollPayslip.created_at.asc())
+                self._payslip_query(school_id)
+                .where(PayrollPayslip.payroll_run_id == run_id)
+                .order_by(func.lower(User.full_name), PayrollPayslip.created_at.asc())
             )
-        ).scalars().all()
+        ).all()
         return PayrollRunDetailOut(
             run=PayrollRunOut.model_validate(run),
-            payslips=[PayrollPayslipOut.model_validate(s) for s in slips],
+            payslips=[self._to_payslip_out(*r) for r in rows],
         )
+
+    def _payslip_query(self, school_id: UUID):
+        """Payslips of one school with the employee and payroll period they belong to."""
+        return (
+            select(
+                PayrollPayslip,
+                User.full_name,
+                func.coalesce(Teacher.employee_code, Teacher.teacher_code, Employee.employee_code),
+                Department.name,
+                PayrollRun,
+            )
+            .join(
+                PayrollRun,
+                and_(
+                    PayrollRun.id == PayrollPayslip.payroll_run_id,
+                    PayrollRun.school_id == PayrollPayslip.school_id,
+                ),
+            )
+            .join(Teacher, Teacher.id == PayrollPayslip.teacher_id)
+            .outerjoin(User, User.id == Teacher.user_id)
+            .outerjoin(Employee, Employee.teacher_id == Teacher.id)
+            .outerjoin(Department, Department.id == Employee.department_id)
+            .where(PayrollPayslip.school_id == school_id)
+        )
+
+    @staticmethod
+    def _to_payslip_out(
+        slip: PayrollPayslip,
+        name: str | None,
+        code: str | None,
+        department: str | None,
+        run: PayrollRun,
+    ) -> PayrollPayslipOut:
+        out = PayrollPayslipOut.model_validate(slip)
+        out.employee_name = name
+        out.employee_code = code
+        out.department_name = department
+        out.run_label = run.label
+        out.period_start = run.period_start
+        out.period_end = run.period_end
+        return out
+
+    async def list_payslips(
+        self,
+        school_id: UUID,
+        *,
+        run_id: UUID | None = None,
+        status: str | None = None,
+        teacher_id: UUID | None = None,
+        year: int | None = None,
+        q: str | None = None,
+        limit: int = 500,
+    ) -> list[PayrollPayslipOut]:
+        stmt = self._payslip_query(school_id)
+        if run_id:
+            stmt = stmt.where(PayrollPayslip.payroll_run_id == run_id)
+        if status:
+            stmt = stmt.where(PayrollPayslip.status == status.upper())
+        if teacher_id:
+            stmt = stmt.where(PayrollPayslip.teacher_id == teacher_id)
+        if year:
+            stmt = stmt.where(func.extract("year", PayrollRun.period_start) == year)
+        if q and q.strip():
+            like = f"%{q.strip().lower()}%"
+            stmt = stmt.where(
+                or_(
+                    func.lower(User.full_name).like(like),
+                    func.lower(func.coalesce(Teacher.employee_code, Teacher.teacher_code, "")).like(like),
+                )
+            )
+        rows = (
+            await self.db.execute(
+                stmt.order_by(
+                    PayrollRun.period_start.desc(), func.lower(User.full_name), PayrollPayslip.created_at.asc()
+                ).limit(limit)
+            )
+        ).all()
+        return [self._to_payslip_out(*r) for r in rows]
 
     async def create_payslip(
         self, school_id: UUID, run_id: UUID, data: PayrollPayslipCreate
@@ -368,47 +470,54 @@ class HRService:
                 raise ConflictError("This employee already has a payslip in this payroll run") from exc
             raise
 
-    async def list_my_payslips(self, school_id: UUID, user_id: UUID) -> list[PayrollPayslipOut]:
+    async def list_my_payslips(
+        self, school_id: UUID, user_id: UUID, *, year: int | None = None
+    ) -> list[PayrollPayslipOut]:
         teacher = await self._teacher_for_user(school_id, user_id)
+        stmt = self._payslip_query(school_id).where(
+            PayrollPayslip.teacher_id == teacher.id,
+            PayrollPayslip.status == EMPLOYEE_VISIBLE_PAYSLIP,
+        )
+        if year:
+            stmt = stmt.where(func.extract("year", PayrollRun.period_start) == year)
         rows = (
             await self.db.execute(
-                select(PayrollPayslip)
-                .where(PayrollPayslip.school_id == school_id, PayrollPayslip.teacher_id == teacher.id)
-                .order_by(PayrollPayslip.created_at.desc())
-                .limit(100)
+                stmt.order_by(PayrollRun.period_start.desc(), PayrollPayslip.created_at.desc()).limit(100)
             )
-        ).scalars().all()
-        return [PayrollPayslipOut.model_validate(r) for r in rows]
+        ).all()
+        return [self._to_payslip_out(*r) for r in rows]
 
-    async def build_payslip_pdf(self, school_id: UUID, payslip_id: UUID, *, viewer_user_id: UUID, viewer_is_admin: bool) -> bytes:
-        row = await self.db.get(PayrollPayslip, payslip_id)
-        if not row or row.school_id != school_id:
+    async def build_payslip_pdf(
+        self, school_id: UUID, payslip_id: UUID, *, viewer_user_id: UUID, viewer_is_admin: bool
+    ) -> tuple[bytes, str]:
+        row = (
+            await self.db.execute(self._payslip_query(school_id).where(PayrollPayslip.id == payslip_id))
+        ).first()
+        if row is None:
             raise NotFoundError("Payslip not found")
-        teacher = await self.db.get(Teacher, row.teacher_id)
-        if not teacher:
-            raise NotFoundError("Teacher not found")
+        slip, name, code, _dept, run = row
         if not viewer_is_admin:
-            if teacher.user_id != viewer_user_id:
+            teacher = await self.db.get(Teacher, slip.teacher_id)
+            if teacher is None or teacher.user_id != viewer_user_id:
                 raise ForbiddenError("Not allowed")
+            if slip.status != EMPLOYEE_VISIBLE_PAYSLIP:
+                raise NotFoundError("Payslip not found")
 
-        run = await self.db.get(PayrollRun, row.payroll_run_id)
         school = await self.db.get(School, school_id)
-        u = await self.db.get(User, teacher.user_id)
-        teacher_name = u.full_name if u else "Teacher"
-
-        period = f"{run.period_start} to {run.period_end}" if run else "-"
         payload = {
             "school_name": school.name if school else "School",
-            "run_label": run.label if run else "-",
-            "period": period,
-            "teacher_name": teacher_name,
-            "employee_code": teacher.employee_code,
-            "gross_amount": str(row.gross_amount),
-            "deductions_amount": str(row.deductions_amount),
-            "net_amount": str(row.net_amount),
-            "status": row.status,
-            "paid_on": str(row.paid_on) if row.paid_on else None,
-            "notes": row.notes,
+            "run_label": run.label,
+            "period": f"{_fmt_day(run.period_start)} to {_fmt_day(run.period_end)}",
+            "teacher_name": name or "Employee",
+            "employee_code": code,
+            "gross_amount": str(slip.gross_amount),
+            "deductions_amount": str(slip.deductions_amount),
+            "net_amount": str(slip.net_amount),
+            "status": slip.status,
+            "paid_on": _fmt_day(slip.paid_on) if slip.paid_on else None,
+            "notes": slip.notes,
         }
-        return build_payslip_pdf(payload)
+        safe_code = re.sub(r"[^A-Za-z0-9_-]+", "", code or "") or "employee"
+        filename = f"payslip-{safe_code}-{run.period_start:%Y-%m}.pdf"
+        return build_payslip_pdf(payload), filename
 

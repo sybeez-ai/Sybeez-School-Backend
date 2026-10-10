@@ -75,19 +75,22 @@ class PayrollRunOut(BaseModel):
     finalized_at: datetime | None
     created_at: datetime
     updated_at: datetime
+    payslip_count: int | None = None
+    paid_count: int | None = None
 
 
 class PayrollPayslipCreate(BaseModel):
     teacher_id: UUID
-    gross_amount: Decimal = Field(ge=0)
-    deductions_amount: Decimal = Field(default=Decimal("0.00"), ge=0)
+    # Payslip amounts are stored as Numeric(12, 2).
+    gross_amount: Decimal = Field(ge=0, max_digits=12, decimal_places=2)
+    deductions_amount: Decimal = Field(default=Decimal("0.00"), ge=0, max_digits=12, decimal_places=2)
     notes: str | None = None
 
 
 class PayrollPayslipUpdate(BaseModel):
-    gross_amount: Decimal | None = Field(default=None, ge=0)
-    deductions_amount: Decimal | None = Field(default=None, ge=0)
-    net_amount: Decimal | None = Field(default=None, ge=0)
+    gross_amount: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=2)
+    deductions_amount: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=2)
+    net_amount: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=2)
     status: str | None = Field(default=None, max_length=32)
     paid_on: date | None = None
     notes: str | None = None
@@ -118,6 +121,12 @@ class PayrollPayslipOut(BaseModel):
     notes: str | None
     created_at: datetime
     updated_at: datetime
+    employee_name: str | None = None
+    employee_code: str | None = None
+    department_name: str | None = None
+    run_label: str | None = None
+    period_start: date | None = None
+    period_end: date | None = None
 
 
 class PayrollRunDetailOut(BaseModel):

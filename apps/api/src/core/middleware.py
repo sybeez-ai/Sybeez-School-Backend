@@ -2,6 +2,7 @@ import logging
 import time
 import uuid
 
+from sqlalchemy.exc import IntegrityError
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -21,6 +22,24 @@ def internal_error_response(request: Request) -> JSONResponse:
                 "request_id": request_id,
             }
         },
+    )
+
+
+def database_error_response(request: Request, exc: Exception) -> JSONResponse:
+    """A constraint the service did not pre-check: a client-caused conflict, not a server fault."""
+    request_id = getattr(request.state, "request_id", None) or request.headers.get("X-Request-ID")
+    logger.warning(
+        "Database rejected a write: %s",
+        type(getattr(exc, "orig", exc)).__name__,
+        extra={"request_id": request_id, "path": str(request.url.path)},
+    )
+    if isinstance(exc, IntegrityError):
+        status, code, message = 409, "conflict", "This change conflicts with existing data."
+    else:
+        status, code, message = 422, "invalid_value", "One or more values are out of range or in the wrong format."
+    return JSONResponse(
+        status_code=status,
+        content={"error": {"code": code, "message": message, "request_id": request_id}},
     )
 
 

@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.database import get_db
 from src.core.exceptions import ForbiddenError, UnauthorizedError
 from src.core.security import decode_token
-from src.db.models import SchoolMembership, User
+from src.db.models import RefreshToken, SchoolMembership, User
 from src.shared.enums import MembershipStatus, PlatformRole, UserRole
 
 bearer = HTTPBearer(auto_error=False)
@@ -47,12 +47,42 @@ async def get_current_user(
     if user is None:
         raise UnauthorizedError("User not found")
 
+    # Access tokens carry the refresh session they were issued with; once that session is
+    # revoked (logout, rotation, password reset) the access token stops working too.
+    sid = payload.get("sid")
+    if sid is not None:
+        revoked = (
+            await db.execute(
+                select(RefreshToken.revoked).where(RefreshToken.jti == sid, RefreshToken.user_id == user_id)
+            )
+        ).scalar_one_or_none()
+        if revoked is None or revoked:
+            raise UnauthorizedError("Session has ended")
+
     role = UserRole(payload.get("role", UserRole.STUDENT.value))
     school_id = UUID(payload["school_id"]) if payload.get("school_id") else None
     membership_id = UUID(payload["membership_id"]) if payload.get("membership_id") else None
 
     if role == UserRole.PLATFORM_ADMIN and not user.is_platform_admin:
         raise UnauthorizedError("Not a platform admin")
+
+    # A suspended or removed membership loses access at once; a changed role needs a new token.
+    if membership_id is not None:
+        membership = (
+            await db.execute(
+                select(SchoolMembership.status, SchoolMembership.role, SchoolMembership.school_id).where(
+                    SchoolMembership.id == membership_id, SchoolMembership.user_id == user_id
+                )
+            )
+        ).one_or_none()
+        if (
+            membership is None
+            or membership.status != MembershipStatus.ACTIVE.value
+            or membership.school_id != school_id
+        ):
+            raise UnauthorizedError("School membership is not active")
+        if membership.role != role.value:
+            raise UnauthorizedError("Session has ended")
 
     return CurrentUser(
         id=user.id,

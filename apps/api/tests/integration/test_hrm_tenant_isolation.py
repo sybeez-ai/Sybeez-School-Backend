@@ -40,6 +40,10 @@ async def school_a(api, hr_world) -> SchoolAData:
         headers=hr_world.admin_a.headers,
     )
     assert (leave.status_code, run.status_code, slip.status_code) == (201, 201, 201)
+    paid = await api.patch(
+        f"{PAYSLIPS}/{slip.json()['id']}", json={"status": "PAID"}, headers=hr_world.admin_a.headers
+    )
+    assert paid.status_code == 200, paid.text
     return SchoolAData(
         leave_id=leave.json()["id"],
         run_id=run.json()["id"],
@@ -60,6 +64,8 @@ def _requests(d: SchoolAData):
         "update payslip": ("PATCH", f"{PAYSLIPS}/{d.payslip_id}", {"notes": "x"}),
         "payslip pdf": ("GET", f"{PAYSLIPS}/{d.payslip_id}/pdf", None),
         "my payslips": ("GET", f"{PAYSLIPS}/me", None),
+        "list payslips": ("GET", PAYSLIPS, None),
+        "list payslips by run": ("GET", f"{PAYSLIPS}?run_id={d.run_id}", None),
         "list employees": ("GET", TEACHERS, None),
         "get employee": ("GET", f"{TEACHERS}/{d.teacher_id}", None),
         "update employee": ("PATCH", f"{TEACHERS}/{d.teacher_id}", {"title": "Mx"}),
@@ -77,6 +83,8 @@ EXPECTED = {
         "add payslip": 404,
         "update payslip": 404,
         "payslip pdf": 404,
+        "list payslips": 200,
+        "list payslips by run": 200,
         "list employees": 200,
         "get employee": 404,
         "update employee": 404,
@@ -90,6 +98,7 @@ EXPECTED = {
         "cancel leave": 404,
         "my payslips": 200,
         "payslip pdf": 404,
+        "list payslips": 403,
         "get employee": 404,
         "list leave": 403,
         "decide leave": 403,
@@ -106,6 +115,7 @@ EXPECTED = {
         "cancel leave": 403,
         "my payslips": 200,
         "payslip pdf": 403,
+        "list payslips": 403,
         "get employee": 403,
         "list leave": 403,
         "decide leave": 403,

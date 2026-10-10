@@ -2,19 +2,23 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy.exc import DataError, IntegrityError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from src.api.router import api_router
 from src.core.config import get_settings
 from src.core.constants import APP_NAME, APP_VERSION
-from src.core.exceptions import AppError
+from src.core.exceptions import AppError, http_error_body, validation_error_body
 from src.core.logging import setup_logging
 from src.core.middleware import (
     RequestIdMiddleware,
     TimingMiddleware,
     UnhandledErrorMiddleware,
+    database_error_response,
     internal_error_response,
 )
 from src.core.redis import close_redis
@@ -51,6 +55,7 @@ def create_app() -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        expose_headers=["Content-Disposition", "X-Request-ID"],
     )
     app.add_middleware(RequestIdMiddleware)
     app.add_middleware(TimingMiddleware)
@@ -61,6 +66,23 @@ def create_app() -> FastAPI:
             status_code=exc.status_code,
             content={"error": {"code": exc.code, "message": exc.message}},
         )
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error_handler(_: Request, exc: RequestValidationError):
+        return JSONResponse(status_code=422, content=validation_error_body(list(exc.errors())))
+
+    @app.exception_handler(StarletteHTTPException)
+    async def http_error_handler(_: Request, exc: StarletteHTTPException):
+        return JSONResponse(
+            status_code=exc.status_code,
+            content=http_error_body(exc.status_code, exc.detail),
+            headers=getattr(exc, "headers", None),
+        )
+
+    @app.exception_handler(IntegrityError)
+    @app.exception_handler(DataError)
+    async def database_error_handler(request: Request, exc: Exception):
+        return database_error_response(request, exc)
 
     @app.exception_handler(Exception)
     async def unhandled_error_handler(request: Request, exc: Exception):

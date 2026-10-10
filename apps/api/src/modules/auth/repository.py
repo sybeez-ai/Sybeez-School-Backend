@@ -35,6 +35,9 @@ class AuthRepository:
         result = await self.db.execute(q.limit(1))
         return result.scalar_one_or_none()
 
+    async def get_membership_by_id(self, membership_id: UUID) -> SchoolMembership | None:
+        return await self.db.get(SchoolMembership, membership_id)
+
     async def get_membership_for_role(
         self,
         user_id: UUID,
