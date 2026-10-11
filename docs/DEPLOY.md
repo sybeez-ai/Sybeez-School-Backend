@@ -37,7 +37,7 @@ The OIDC role needs at least:
 2. Assume `AWS_BACKEND_ROLE_ARN` in `ap-south-1`.
 3. Build `infra/docker/api.Dockerfile` and `apps/worker/Dockerfile`. Push both to ECR tagged with the git SHA and `latest`.
 4. Render task definition `sybeez-school-migrate` with the new API image, run it once on `sybeez-school-cluster`, and wait until it stops. The deploy fails if the container exit code is not 0. The workflow overrides the container command to `alembic upgrade head` (working directory `/app`). Before any other DDL, that command restamps a legacy finance database (see below) or exits non-zero if the stamp is ambiguous.
-5. Render new task definitions for services `sybeez-school-api` and `sybeez-school-worker` with those images, update the services, and wait until they are stable.
+5. Render new task definitions for services `sybeez-school-api` and `sybeez-school-worker` with those images. Container names come from `AWS_BACKEND_API_CONTAINER` and `AWS_BACKEND_WORKER_CONTAINER` (`api` and `worker`). Update the services and wait until they are stable. If the API desired count is below 2, or the worker desired count is below 1, raise it to that floor and wait until the service is stable again.
 
 Images are non-root. The API process is `uvicorn` with `--proxy-headers`. Both images health-check `GET /health`. That endpoint returns HTTP 200 with `"status": "degraded"` when Redis is down. It does not fail the container for a temporary Redis outage.
 

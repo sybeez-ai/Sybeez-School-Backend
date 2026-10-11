@@ -213,3 +213,38 @@ jobs:
           service: sybeez-school-worker
           cluster: sybeez-school-cluster
           wait-for-service-stability: true
+
+      - name: Ensure minimum desired counts
+        env:
+          API_CONTAINER: ${{ vars.AWS_BACKEND_API_CONTAINER || 'sybeez-school-api' }}
+          WORKER_CONTAINER: ${{ vars.AWS_BACKEND_WORKER_CONTAINER || 'sybeez-school-worker' }}
+        run: |
+          set -euo pipefail
+          ensure() {
+            local service="$1"
+            local minimum="$2"
+            local container="$3"
+            local current task_def found after
+            current=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$service" \
+              --query 'services[0].desiredCount' --output text)
+            task_def=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$service" \
+              --query 'services[0].taskDefinition' --output text)
+            found=$(aws ecs describe-task-definition --task-definition "$task_def" \
+              --query "length(taskDefinition.containerDefinitions[?name=='${container}'])" --output text)
+            echo "$service container=$container desiredCount=$current minimum=$minimum task=$task_def"
+            if [ "$found" != "1" ]; then
+              echo "Container $container is not in $task_def"
+              exit 1
+            fi
+            if [ "$current" -lt "$minimum" ]; then
+              aws ecs update-service --cluster "$ECS_CLUSTER" --service "$service" \
+                --desired-count "$minimum" >/dev/null
+              aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$service"
+            fi
+            after=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$service" \
+              --query 'services[0].desiredCount' --output text)
+            echo "$service desiredCount=$after"
+            test "$after" -ge "$minimum"
+          }
+          ensure "$API_SERVICE" 2 "$API_CONTAINER"
+          ensure "$WORKER_SERVICE" 1 "$WORKER_CONTAINER"
