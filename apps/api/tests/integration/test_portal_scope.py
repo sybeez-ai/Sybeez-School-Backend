@@ -412,7 +412,15 @@ async def test_teacher_can_open_own_payslips_and_attendance(api, campus: Campus)
     assert sessions.json() == []
 
 
-async def test_teacher_rls_sees_only_own_employee_row():
+@pytest.fixture
+async def _dispose_app_pool():
+    yield
+    from src.core.database import engine
+
+    await engine.dispose()
+
+
+async def test_teacher_rls_sees_only_own_employee_row(_dispose_app_pool):
     """Under sybeez_app, a teacher can insert and read only their own staff row."""
     school_ids: list = []
     user_ids: list = []

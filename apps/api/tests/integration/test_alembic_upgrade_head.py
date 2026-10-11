@@ -39,7 +39,11 @@ async def test_upgrade_head_on_empty_postgres():
         conn = await asyncpg.connect(user="sybeez", password="sybeez", host="127.0.0.1", database=name)
         try:
             versions = await conn.fetch("SELECT version_num FROM alembic_version")
-            assert [row["version_num"] for row in versions] == ["0053"]
+            assert [row["version_num"] for row in versions] == ["0054"]
+            can_see = await conn.fetchval(
+                "SELECT pg_get_functiondef('app.can_see(text,uuid,uuid,uuid)'::regprocedure)"
+            )
+            assert "r = 'TEACHER' AND row_user IS NOT NULL AND row_user = uid" in can_see
             templates = await conn.fetchval(
                 "SELECT count(*) FROM alert_message_templates WHERE school_id IS NULL"
             )

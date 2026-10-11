@@ -35,17 +35,21 @@ async def sync_teacher_employees(
     Self-service calls pass ``only_user_id`` so a teacher provisions their own
     row and does not insert colleagues.
     """
-    await db.execute(
-        text(
-            "INSERT INTO employees (id, school_id, staff_type, teacher_id, user_id, status) "
-            "SELECT gen_random_uuid(), t.school_id, 'TEACHING', t.id, t.user_id, 'ACTIVE' "
-            "FROM teachers t WHERE t.school_id = :sid "
-            "AND (:uid IS NULL OR t.user_id = :uid) "
-            "AND NOT EXISTS (SELECT 1 FROM employees e WHERE e.teacher_id = t.id) "
-            "ON CONFLICT (teacher_id) DO NOTHING"
-        ),
-        {"sid": school_id, "uid": only_user_id},
+    sql = (
+        "INSERT INTO employees (id, school_id, staff_type, teacher_id, user_id, status) "
+        "SELECT gen_random_uuid(), t.school_id, 'TEACHING', t.id, t.user_id, 'ACTIVE' "
+        "FROM teachers t WHERE t.school_id = :sid "
     )
+    params: dict = {"sid": school_id}
+    if only_user_id is not None:
+        # Cast the bind. `IS NULL OR col = :uid` leaves asyncpg unable to infer the type.
+        sql += "AND t.user_id = CAST(:uid AS uuid) "
+        params["uid"] = only_user_id
+    sql += (
+        "AND NOT EXISTS (SELECT 1 FROM employees e WHERE e.teacher_id = t.id) "
+        "ON CONFLICT (teacher_id) DO NOTHING"
+    )
+    await db.execute(text(sql), params)
 
 
 def employee_name_expr():
