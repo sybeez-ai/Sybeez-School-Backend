@@ -18,6 +18,7 @@ def build_receipt_pdf(payload: dict) -> bytes:
         str(payload.get("school_name") or "School").upper(),
         "",
         "FEE RECEIPT",
+        str(payload.get("copy_label") or ""),
         "",
         f"Receipt: {payload.get('receipt_number') or '-'}",
         f"Payment: {payload.get('payment_number') or '-'}",

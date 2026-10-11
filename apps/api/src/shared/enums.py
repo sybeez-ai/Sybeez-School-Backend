@@ -9,6 +9,7 @@ class UserRole(StrEnum):
     PAYROLL_ADMIN = "PAYROLL_ADMIN"
     HR_MANAGER = "HR_MANAGER"
     ACCOUNTANT = "ACCOUNTANT"
+    CASHIER = "CASHIER"
     PAYROLL_APPROVER = "PAYROLL_APPROVER"
     AUDITOR = "AUDITOR"
     TEACHER = "TEACHER"
@@ -266,8 +267,11 @@ class PaymentMethod(StrEnum):
     CASH = "CASH"
     BANK_TRANSFER = "BANK_TRANSFER"
     CHEQUE = "CHEQUE"
+    DD = "DD"
     UPI = "UPI"
     CARD = "CARD"
+    NEFT = "NEFT"
+    SPLIT = "SPLIT"
     OTHER = "OTHER"
 
 
@@ -279,5 +283,78 @@ class LateFeeCalcType(StrEnum):
 
 class RefundStatus(StrEnum):
     PENDING = "PENDING"
+    PENDING_APPROVAL = "PENDING_APPROVAL"
+    PROCESSING = "PROCESSING"
     SUCCESS = "SUCCESS"
     FAILED = "FAILED"
+    REJECTED = "REJECTED"
+
+
+class StudentFeeCategory(StrEnum):
+    GENERAL = "GENERAL"
+    RTE = "RTE"
+    STAFF_WARD = "STAFF_WARD"
+    SIBLING = "SIBLING"
+
+
+class ConcessionRuleType(StrEnum):
+    SIBLING = "SIBLING"
+    STAFF_WARD = "STAFF_WARD"
+    RTE = "RTE"
+    SCHOLARSHIP = "SCHOLARSHIP"
+    ADHOC = "ADHOC"
+
+
+class ConcessionValueType(StrEnum):
+    PERCENT = "PERCENT"
+    FLAT = "FLAT"
+
+
+class ApprovalStatus(StrEnum):
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+
+
+class ReceiptStatus(StrEnum):
+    ACTIVE = "ACTIVE"
+    CANCELLED = "CANCELLED"
+    REVERSED = "REVERSED"
+    PARTIALLY_REVERSED = "PARTIALLY_REVERSED"
+
+
+class InstrumentStatus(StrEnum):
+    RECEIVED = "RECEIVED"
+    DEPOSITED = "DEPOSITED"
+    CLEARED = "CLEARED"
+    BOUNCED = "BOUNCED"
+    SETTLED = "SETTLED"
+
+
+class LedgerEntryType(StrEnum):
+    DEMAND = "DEMAND"
+    PAYMENT = "PAYMENT"
+    CONCESSION = "CONCESSION"
+    FINE = "FINE"
+    WAIVER = "WAIVER"
+    REVERSAL = "REVERSAL"
+    REFUND = "REFUND"
+    BOUNCE = "BOUNCE"
+
+
+class FinancialYearStatus(StrEnum):
+    OPEN = "OPEN"
+    CLOSED = "CLOSED"
+
+
+class DayCloseStatus(StrEnum):
+    SUBMITTED = "SUBMITTED"
+    VERIFIED = "VERIFIED"
+    REJECTED = "REJECTED"
+
+
+class FinanceApprovalType(StrEnum):
+    CONCESSION = "CONCESSION"
+    REFUND = "REFUND"
+    RECEIPT_CANCEL = "RECEIPT_CANCEL"
+    FINE_WAIVER = "FINE_WAIVER"

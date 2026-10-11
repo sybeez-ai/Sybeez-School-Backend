@@ -11,7 +11,20 @@ router = APIRouter(tags=["health"])
 
 @router.get("/health")
 async def health():
-    return {"status": "ok", "service": "sybeez-api"}
+    """Liveness. Redis being down is degraded, not a failed health check."""
+    redis_ok = False
+    try:
+        redis = await get_redis()
+        redis_ok = bool(await redis.ping())
+    except Exception:
+        redis_ok = False
+    return {
+        "status": "ok" if redis_ok else "degraded",
+        "service": "sybeez-api",
+        "dependencies": {
+            "redis": {"ok": redis_ok},
+        },
+    }
 
 
 @router.get("/ready")

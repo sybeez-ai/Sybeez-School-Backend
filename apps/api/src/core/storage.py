@@ -24,7 +24,7 @@ def put_object(*, key: str, data: bytes, content_type: str | None = None) -> str
     if bucket:
         import boto3
 
-        client = boto3.client("s3", region_name=settings.s3_region or None)
+        client = boto3.client("s3", region_name=settings.s3_region or settings.aws_region or None)
         client.put_object(
             Bucket=bucket,
             Key=cleaned,
@@ -52,6 +52,6 @@ def public_url(key: str | None) -> str | None:
         return f"{base.rstrip('/')}/{key}"
     bucket = (settings.s3_bucket or "").strip()
     if bucket:
-        region = settings.s3_region or "us-east-1"
+        region = settings.s3_region or settings.aws_region or "us-east-1"
         return f"https://{bucket}.s3.{region}.amazonaws.com/{key}"
     return key

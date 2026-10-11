@@ -38,8 +38,8 @@ async def test_upgrade_head_on_empty_postgres():
         assert completed.returncode == 0, completed.stdout + "\n" + completed.stderr
         conn = await asyncpg.connect(user="sybeez", password="sybeez", host="127.0.0.1", database=name)
         try:
-            version = await conn.fetchval("SELECT version_num FROM alembic_version")
-            assert version == "0040"
+            versions = await conn.fetch("SELECT version_num FROM alembic_version")
+            assert [row["version_num"] for row in versions] == ["0043"]
             created_by = await conn.fetchval(
                 "SELECT 1 FROM information_schema.columns WHERE table_name = 'schools' AND column_name = 'created_by_id'"
             )
@@ -52,6 +52,20 @@ async def test_upgrade_head_on_empty_postgres():
                 "SELECT relforcerowsecurity FROM pg_class WHERE relname = 'payroll_school_settings'"
             )
             assert forced is True
+            fee_forced = await conn.fetchval(
+                "SELECT relforcerowsecurity FROM pg_class WHERE relname = 'fee_ledger_entries'"
+            )
+            assert fee_forced is True
+            vector = await conn.fetchval("SELECT 1 FROM pg_extension WHERE extname = 'vector'")
+            assert vector == 1
+            payroll_policy = await conn.fetchval(
+                """
+                SELECT pg_get_expr(polqual, polrelid)
+                FROM pg_policy
+                WHERE polname = 'payroll_school_settings_role'
+                """
+            )
+            assert payroll_policy and "payroll_is_staff" in payroll_policy
             tables = await conn.fetchval(
                 "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'payroll_runs'"
             )

@@ -13,6 +13,7 @@ import httpx
 from src.core.exceptions import AppError
 from src.core.config import get_settings
 from src.modules.fees.calculations import money
+from src.modules.fees.crediting import classify_razorpay_event
 from src.modules.fees.gateways.base import GatewayOrder, GatewayRefundResult, GatewayVerifyResult
 
 
@@ -172,38 +173,29 @@ class RazorpayGateway:
                 currency="INR",
                 reference=str(sig),
                 raw=payload,
+                credit=False,
+                event=str(payload.get("event") or ""),
             )
 
-        order_id = str(
-            (payload.get("payload") or {}).get("payment", {}).get("entity", {}).get("order_id")
-            or payload.get("order_id")
-            or ""
-        )
-        payment_id = (
-            (payload.get("payload") or {}).get("payment", {}).get("entity", {}).get("id")
-            or payload.get("payment_id")
-        )
-        amount_paise = (
-            (payload.get("payload") or {}).get("payment", {}).get("entity", {}).get("amount")
-            or payload.get("amount")
-            or 0
-        )
+        entity = ((payload.get("payload") or {}).get("payment") or {}).get("entity") or {}
+        order_entity = ((payload.get("payload") or {}).get("order") or {}).get("entity") or {}
+        order_id = str(entity.get("order_id") or order_entity.get("id") or payload.get("order_id") or "")
+        payment_id = entity.get("id") or payload.get("payment_id")
+        amount_paise = entity.get("amount") or payload.get("amount") or 0
         try:
             amount = money(Decimal(str(int(amount_paise))) / Decimal("100"))
         except Exception:
             amount = money(0)
-        currency = str(
-            (payload.get("payload") or {}).get("payment", {}).get("entity", {}).get("currency")
-            or payload.get("currency")
-            or "INR"
-        )
-        ok = bool(order_id)
+        currency = str(entity.get("currency") or payload.get("currency") or "INR")
+        should_credit, event_name, _status = classify_razorpay_event(payload)
         return GatewayVerifyResult(
-            success=ok,
+            success=bool(order_id),
             order_id=order_id,
             payment_id=str(payment_id) if payment_id else None,
             amount=amount,
             currency=currency,
             reference=str(sig),
             raw=payload,
+            credit=should_credit,
+            event=event_name,
         )

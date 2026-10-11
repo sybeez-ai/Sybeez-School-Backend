@@ -7,6 +7,8 @@ from src.api.dependencies import CurrentUser, require_school_scope
 from src.core.database import get_db
 from src.core.exceptions import ForbiddenError
 from src.modules.audit.repository import AuditRepository
+from src.modules.fees.tenant import bind_tenant
+from src.modules.finance.service import FinanceService
 from src.modules.schools.schemas import BranchList, SchoolProfile, SchoolProfileUpdate
 from src.modules.schools.service import SchoolsService
 from src.shared.enums import UserRole
@@ -27,8 +29,30 @@ async def my_school_branches(
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[CurrentUser, Depends(require_school_scope)],
 ):
-    names = await SchoolsService(db).list_branches(user.school_id)
-    return BranchList(branches=[{"name": name} for name in names])
+    """Branches of the caller's school.
+
+    Payroll clients read `branches[].name` (holidays, weekly offs, staff profiles).
+    Finance campus rows are included with id and code so the fee desk can send
+    X-Branch-Id. Cashiers see only their assigned finance branches.
+    """
+    if user.school_id is None:
+        raise ForbiddenError("School context required")
+    await bind_tenant(db, user.school_id)
+    items: list[dict] = []
+    seen: set[str] = set()
+    if user.id is not None:
+        svc = await FinanceService(db, user.school_id, user.id, user.role.value).prepare()
+        for branch in await svc.list_branches():
+            payload = branch.model_dump()
+            items.append(payload)
+            seen.add(branch.name.strip().lower())
+    if user.role != UserRole.CASHIER:
+        for name in await SchoolsService(db).list_branches(user.school_id):
+            key = name.strip().lower()
+            if key not in seen:
+                items.append({"name": name})
+                seen.add(key)
+    return BranchList(branches=items)
 
 
 @router.patch("/me", response_model=SchoolProfile)

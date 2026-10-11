@@ -45,16 +45,30 @@ def create_access_token(
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
-def create_refresh_token_claims(*, subject: str | UUID, jti: str) -> dict[str, Any]:
+def create_refresh_token_claims(
+    *,
+    subject: str | UUID,
+    jti: str,
+    role: str | None = None,
+    school_id: str | UUID | None = None,
+    membership_id: str | UUID | None = None,
+) -> dict[str, Any]:
     settings = get_settings()
     now = utcnow()
-    return {
+    claims: dict[str, Any] = {
         "sub": str(subject),
         "type": "refresh",
         "jti": jti,
         "iat": int(now.timestamp()),
         "exp": int((now + timedelta(days=settings.refresh_token_expire_days)).timestamp()),
     }
+    if role is not None:
+        claims["role"] = role
+    if school_id is not None:
+        claims["school_id"] = str(school_id)
+    if membership_id is not None:
+        claims["membership_id"] = str(membership_id)
+    return claims
 
 
 def encode_token(claims: dict[str, Any]) -> str:

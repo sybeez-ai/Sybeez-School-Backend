@@ -8,7 +8,7 @@ Salary is calculated the day the period's staff attendance is locked, including 
 
 This branch adds Alembic revision `0040_payroll_production` with `down_revision = 0035_hr_settings`. Land it on `HRM` after `0035`.
 
-Finance PR #1 uses revision ids `0028`, `0029`, and `0030` for different files than HRM's `0028_hr_integrity`, `0029_hr_employees`, and `0030_hr_departments`. Do not reuse those ids. When finance merges, renumber its revisions so they are not `0028`–`0035` or `0040`, then point `0040` at the new head if finance must run first. If the `sybeez_definer` role exists at upgrade time, payroll `SECURITY DEFINER` functions are altered to that owner.
+Finance PR #1 used revision ids `0028`, `0029`, and `0030` for different files than HRM's `0028_hr_integrity`, `0029_hr_employees`, and `0030_hr_departments`. Those finance revisions are renumbered to `0041_finance_production` (`down_revision = 0040`), `0042_platform_rls`, and `0043_ai_shared_columns`. The chain is linear and ends at `0043`. Payroll policies from `0040` stay in place; `0042` still forces RLS on those tables. If the `sybeez_definer` role exists at upgrade time, payroll `SECURITY DEFINER` functions are altered to that owner.
 
 Production requires `S3_BUCKET`. The app stores object keys only and does not create AWS resources. Development writes under `apps/api/media` when the bucket is empty.
 
@@ -163,6 +163,6 @@ Existing `/hr/attendance` daily, history, summary, mark, bulk, patch, and delete
 
 `POST /internal/v1/payroll/generate` with `X-Internal-Token`. Body `{ school_id, period_start, period_end, locked_by, source }`. Response `{ run_id, created, skipped }`. The worker job type is `payroll_generate`.
 
-`GET /api/v1/schools/me/branches` returns `{ branches: [{ name }] }` for the signed-in school. Names come from weekly offs, holidays, and statutory profiles. Empty branch names are the whole school and are left out.
+`GET /api/v1/schools/me/branches` returns `{ branches: [{ name, id, code, address, active }] }` for the signed-in school. `name` comes from weekly offs, holidays, statutory profiles, and finance campus rows. Finance rows also include `id` and `code` so the fee desk can send `X-Branch-Id`. Cashiers see only assigned finance branches. Empty branch names are the whole school and are left out.
 
 The HRM login portal (`portal=hrm`) accepts school admin, HR manager, and payroll approver.

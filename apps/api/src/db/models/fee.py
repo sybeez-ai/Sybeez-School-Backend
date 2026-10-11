@@ -44,6 +44,9 @@ class FeeCategory(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     code: Mapped[str] = mapped_column(String(64), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    is_80c_eligible: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    gst_rate: Mapped[Decimal] = mapped_column(Numeric(6, 2), nullable=False, default=Decimal("0"))
+    tally_ledger: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
 
 class FeeStructure(Base, UUIDPrimaryKeyMixin, TimestampMixin):
@@ -276,6 +279,7 @@ class Payment(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     idempotency_key: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    branch_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
 
     allocations = relationship(
         "PaymentAllocation", back_populates="payment", cascade="all, delete-orphan"
@@ -317,6 +321,11 @@ class PaymentRefund(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     created_by: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
+    approved_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    idempotency_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    decision_note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class FeeReceipt(Base, UUIDPrimaryKeyMixin, TimestampMixin):
@@ -335,6 +344,15 @@ class FeeReceipt(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     pdf_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="ACTIVE")
+    cancel_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancelled_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    reprint_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    fy_label: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    branch_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
 
 
 class LateFeeRule(Base, UUIDPrimaryKeyMixin, TimestampMixin):
@@ -350,6 +368,7 @@ class LateFeeRule(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     calculation_type: Mapped[str] = mapped_column(String(32), nullable=False, default="FIXED")
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=Decimal("0"))
     maximum_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    slabs_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
 
@@ -374,7 +393,7 @@ class FeeSettings(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 class FeeSequence(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "fee_sequences"
     __table_args__ = (
-        UniqueConstraint("school_id", "seq_type", "year", name="uq_fee_sequence"),
+        UniqueConstraint("school_id", "seq_type", "fy_label", name="uq_fee_sequence_fy"),
     )
 
     school_id: Mapped[uuid.UUID] = mapped_column(
@@ -382,6 +401,7 @@ class FeeSequence(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
     seq_type: Mapped[str] = mapped_column(String(32), nullable=False)  # INVOICE|PAYMENT|RECEIPT
     year: Mapped[int] = mapped_column(Integer, nullable=False)
+    fy_label: Mapped[str] = mapped_column(String(16), nullable=False)
     last_value: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
 
@@ -400,3 +420,4 @@ class FeeAuditLog(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     old_values: Mapped[str | None] = mapped_column(Text, nullable=True)
     new_values: Mapped[str | None] = mapped_column(Text, nullable=True)
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)

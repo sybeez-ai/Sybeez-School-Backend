@@ -19,6 +19,96 @@ settings = get_settings()
 config.set_main_option("sqlalchemy.url", settings.database_url)
 
 
+def _install_idempotent_ops() -> None:
+    """0001 runs metadata.create_all() against the *current* models.
+
+    A fresh database therefore already has columns and tables that later
+    revisions also add. Those revisions must no-op when the object exists so
+    `alembic upgrade head` works on an empty database and on a database that
+    was migrated incrementally. Production upgrades still apply missing objects.
+    """
+    from alembic.operations import Operations
+    from sqlalchemy import inspect
+
+    orig_add_column = Operations.add_column
+
+    def add_column(self, table_name, column, *, schema=None, if_not_exists=None, **kw):
+        bind = self.get_bind()
+        existing = {c["name"] for c in inspect(bind).get_columns(table_name, schema=schema)}
+        if column.name in existing:
+            return None
+        return orig_add_column(
+            self,
+            table_name,
+            column,
+            schema=schema,
+            if_not_exists=if_not_exists,
+            **kw,
+        )
+
+    orig_create_index = Operations.create_index
+
+    def create_index(self, index_name, table_name, columns, *, schema=None, unique=False, if_not_exists=None, **kw):
+        return orig_create_index(
+            self,
+            index_name,
+            table_name,
+            columns,
+            schema=schema,
+            unique=unique,
+            if_not_exists=True if if_not_exists is None else if_not_exists,
+            **kw,
+        )
+
+    orig_create_table = Operations.create_table
+
+    def create_table(self, table_name, *columns, if_not_exists=None, **kw):
+        schema = kw.get("schema")
+        bind = self.get_bind()
+        if inspect(bind).has_table(table_name, schema=schema):
+            from sqlalchemy import MetaData, Table
+
+            return Table(table_name, MetaData(), schema=schema, autoload_with=bind)
+        return orig_create_table(self, table_name, *columns, if_not_exists=if_not_exists, **kw)
+
+    orig_unique = Operations.create_unique_constraint
+
+    def create_unique_constraint(self, constraint_name, table_name, columns, *, schema=None, **kw):
+        if _constraint_exists(self.get_bind(), constraint_name):
+            return None
+        return orig_unique(self, constraint_name, table_name, columns, schema=schema, **kw)
+
+    orig_fk = Operations.create_foreign_key
+
+    def create_foreign_key(self, constraint_name, source_table, referent_table, local_cols, remote_cols, **kw):
+        if _constraint_exists(self.get_bind(), constraint_name):
+            return None
+        return orig_fk(
+            self, constraint_name, source_table, referent_table, local_cols, remote_cols, **kw
+        )
+
+    Operations.add_column = add_column
+    Operations.create_index = create_index
+    Operations.create_table = create_table
+    Operations.create_unique_constraint = create_unique_constraint
+    Operations.create_foreign_key = create_foreign_key
+
+
+def _constraint_exists(bind, name: str | None) -> bool:
+    if not name:
+        return False
+    from sqlalchemy import text
+
+    row = bind.execute(
+        text("SELECT 1 FROM pg_constraint WHERE conname = :name"),
+        {"name": name},
+    ).first()
+    return row is not None
+
+
+_install_idempotent_ops()
+
+
 def run_migrations_offline() -> None:
     url = config.get_main_option("sqlalchemy.url")
     context.configure(url=url, target_metadata=target_metadata, literal_binds=True, compare_type=True)

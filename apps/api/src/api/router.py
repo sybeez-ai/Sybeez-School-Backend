@@ -21,6 +21,8 @@ from src.modules.employees.router import router as employees_router
 from src.modules.enrollments.router import router as enrollments_router
 from src.modules.exams.router import router as exams_router
 from src.modules.fees.router import router as fees_router
+from src.modules.finance.desk_router import desk as finance_desk_router
+from src.modules.finance.router import router as finance_router
 from src.modules.grades.router import router as grades_router
 from src.modules.health.router import router as health_router
 from src.modules.homework.router import router as homework_router
@@ -89,6 +91,8 @@ api_router.include_router(assignments_router, prefix=API_V1_PREFIX)
 api_router.include_router(attendance_router, prefix=API_V1_PREFIX)
 api_router.include_router(exams_router, prefix=API_V1_PREFIX)
 api_router.include_router(fees_router, prefix=API_V1_PREFIX)
+api_router.include_router(finance_router, prefix=API_V1_PREFIX)
+api_router.include_router(finance_desk_router, prefix=API_V1_PREFIX)
 api_router.include_router(diary_router, prefix=API_V1_PREFIX)
 api_router.include_router(notes_router, prefix=API_V1_PREFIX)
 api_router.include_router(personal_life_router, prefix=API_V1_PREFIX)

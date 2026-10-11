@@ -23,6 +23,9 @@ class GatewayVerifyResult:
     currency: str
     reference: str | None = None
     raw: dict | None = None
+    # None → follow `success` (mock). False → signature may be valid but do not credit.
+    credit: bool | None = None
+    event: str | None = None
 
 
 @dataclass

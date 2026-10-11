@@ -2,12 +2,14 @@ from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field
 
+from src.shared.enums import UserRole
+
 
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
     school_id: UUID | None = None
-    # portal login page: platform | school | hrm | teacher | student | parent
+    # portal login page: platform | school | hrm | payroll | finance | teacher | student | parent
     # hrm also accepts HR_MANAGER and PAYROLL_APPROVER
     portal: str | None = None
 
@@ -23,7 +25,10 @@ class TokenResponse(BaseModel):
     access_token: str | None = None
     refresh_token: str | None = None
     token_type: str = "bearer"
-    role: str | None = None
+    role: UserRole | None = Field(
+        default=None,
+        description="Role issued in this access token. Includes ACCOUNTANT, CASHIER, and AUDITOR.",
+    )
     school_id: UUID | None = None
     user_id: UUID | None = None
     full_name: str | None = None
@@ -66,11 +71,24 @@ class MeResponse(BaseModel):
     id: UUID
     email: EmailStr
     full_name: str
-    role: str
+    role: UserRole
     school_id: UUID | None
     is_platform_admin: bool
     platform_role: str | None = None
     is_active: bool = True
+
+
+class MembershipOut(BaseModel):
+    id: UUID
+    school_id: UUID
+    school_name: str
+    role: UserRole
+    status: str
+
+
+class SwitchSchoolRequest(BaseModel):
+    school_id: UUID
+    role: UserRole | None = None
 
 
 class MessageOut(BaseModel):

@@ -1,7 +1,6 @@
 import re
 import secrets
 from datetime import timedelta
-from pathlib import Path
 from uuid import UUID
 
 from fastapi import UploadFile
@@ -656,15 +655,13 @@ class PlatformService:
         if len(data) > 2_000_000:
             raise ConflictError("Logo too large (max 2MB)")
 
-        media_dir = Path(__file__).resolve().parents[3] / "media"
-        logo_dir = media_dir / "school-logos"
-        logo_dir.mkdir(parents=True, exist_ok=True)
+        from src.core.storage import put_object
 
-        filename = f"{school.id}{ext}"
-        path = logo_dir / filename
-        path.write_bytes(data)
-
-        school.logo_url = f"/media/school-logos/{filename}"
+        school.logo_url = put_object(
+            key=f"school-logos/{school.id}{ext}",
+            data=data,
+            content_type=content_type,
+        )
         await self.db.flush()
         await self.audit.write(
             action="platform.school.logo.update",

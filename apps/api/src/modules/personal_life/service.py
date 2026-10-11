@@ -105,6 +105,7 @@ class PersonalLifeService:
             self.db.add(
                 PersonalGoalMilestone(
                     id=uuid4(),
+                    school_id=school_id,
                     goal_id=goal.id,
                     label=m.label.strip(),
                     completed=m.completed,
@@ -162,6 +163,7 @@ class PersonalLifeService:
                 self.db.add(
                     PersonalGoalMilestone(
                         id=uuid4(),
+                        school_id=school_id,
                         goal_id=goal.id,
                         label=m["label"].strip() if isinstance(m, dict) else m.label.strip(),
                         completed=m["completed"] if isinstance(m, dict) else m.completed,
@@ -290,6 +292,7 @@ class PersonalLifeService:
             self.db.add(
                 PersonalHabitCheckin(
                     id=uuid4(),
+                    school_id=school_id,
                     habit_id=habit.id,
                     user_id=user_id,
                     checkin_date=day,

@@ -1,0 +1,188 @@
+name: Backend
+
+on:
+  pull_request:
+  push:
+    branches: [release]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: Lint and test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: sybeez
+          POSTGRES_PASSWORD: sybeez
+          POSTGRES_DB: sybeez_school
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sybeez -d sybeez_school"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      APP_ENV: development
+      DATABASE_URL: postgresql+asyncpg://sybeez:sybeez@127.0.0.1:5432/sybeez_school
+      DATABASE_URL_SYNC: postgresql://sybeez:sybeez@127.0.0.1:5432/sybeez_school
+      REDIS_URL: redis://127.0.0.1:6379/0
+      JOBS_BACKEND: redis
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e "apps/api[dev]"
+          pip install -e apps/worker
+      - name: Lint
+        run: ruff check --config pyproject.toml apps/api apps/worker packages
+      - name: Unit and integration tests
+        run: |
+          cd apps/api && pytest -q
+          cd ../worker && pytest -q
+
+  deploy:
+    name: Deploy release
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/release'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      AWS_REGION: ap-south-1
+      ECR_API: sybeez-school-api
+      ECR_WORKER: sybeez-school-worker
+      ECS_CLUSTER: sybeez-school-cluster
+      MIGRATE_FAMILY: sybeez-school-migrate
+      API_SERVICE: sybeez-school-api
+      WORKER_SERVICE: sybeez-school-worker
+      AWS_BACKEND_SUBNETS: ${{ vars.AWS_BACKEND_SUBNETS }}
+      AWS_BACKEND_SECURITY_GROUP: ${{ vars.AWS_BACKEND_SECURITY_GROUP }}
+      AWS_BACKEND_ASSIGN_PUBLIC_IP: ${{ vars.AWS_BACKEND_ASSIGN_PUBLIC_IP || 'DISABLED' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_BACKEND_ROLE_ARN }}
+          aws-region: ap-south-1
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push images
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          docker build -f infra/docker/api.Dockerfile \
+            -t "$REGISTRY/$ECR_API:$IMAGE_TAG" \
+            -t "$REGISTRY/$ECR_API:latest" .
+          docker build -f apps/worker/Dockerfile \
+            -t "$REGISTRY/$ECR_WORKER:$IMAGE_TAG" \
+            -t "$REGISTRY/$ECR_WORKER:latest" \
+            apps/worker
+          docker push "$REGISTRY/$ECR_API:$IMAGE_TAG"
+          docker push "$REGISTRY/$ECR_API:latest"
+          docker push "$REGISTRY/$ECR_WORKER:$IMAGE_TAG"
+          docker push "$REGISTRY/$ECR_WORKER:latest"
+
+      - name: Download current task definitions
+        run: |
+          set -euo pipefail
+          aws ecs describe-task-definition --task-definition sybeez-school-migrate --query taskDefinition > migrate-task.json
+          aws ecs describe-task-definition --task-definition sybeez-school-api --query taskDefinition > api-task.json
+          aws ecs describe-task-definition --task-definition sybeez-school-worker --query taskDefinition > worker-task.json
+
+      - name: Render migration task definition
+        id: render-migrate
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: migrate-task.json
+          container-name: ${{ vars.AWS_BACKEND_MIGRATE_CONTAINER || 'sybeez-school-migrate' }}
+          image: ${{ steps.login-ecr.outputs.registry }}/sybeez-school-api:${{ github.sha }}
+
+      - name: Run migrations and fail the deploy if they fail
+        run: |
+          set -euo pipefail
+          jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' \
+            "${{ steps.render-migrate.outputs.task-definition }}" > migrate-register.json
+          MIGRATE_ARN=$(aws ecs register-task-definition \
+            --cli-input-json file://migrate-register.json \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+          SUBNETS=$(printf '%s' "$AWS_BACKEND_SUBNETS" | tr -d ' ')
+          PUBLIC_IP=$(printf '%s' "${AWS_BACKEND_ASSIGN_PUBLIC_IP:-DISABLED}" | tr '[:lower:]' '[:upper:]')
+          TASK_ARN=$(aws ecs run-task \
+            --cluster "$ECS_CLUSTER" \
+            --task-definition "$MIGRATE_ARN" \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$AWS_BACKEND_SECURITY_GROUP],assignPublicIp=$PUBLIC_IP}" \
+            --query 'tasks[0].taskArn' --output text)
+          echo "Migration task: $TASK_ARN"
+          aws ecs wait tasks-stopped --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN"
+          aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN" \
+            --query 'tasks[0].{stoppedReason:stoppedReason,containers:containers[].{name:name,exitCode:exitCode,reason:reason}}' \
+            --output json
+          EXIT=$(aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN" \
+            --query 'tasks[0].containers[0].exitCode' --output text)
+          if [ "$EXIT" != "0" ]; then
+            echo "Migration task failed (exit=$EXIT)"
+            exit 1
+          fi
+
+      - name: Render API task definition
+        id: render-api
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: api-task.json
+          container-name: ${{ vars.AWS_BACKEND_API_CONTAINER || 'sybeez-school-api' }}
+          image: ${{ steps.login-ecr.outputs.registry }}/sybeez-school-api:${{ github.sha }}
+
+      - name: Deploy API
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render-api.outputs.task-definition }}
+          service: sybeez-school-api
+          cluster: sybeez-school-cluster
+          wait-for-service-stability: true
+
+      - name: Render worker task definition
+        id: render-worker
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: worker-task.json
+          container-name: ${{ vars.AWS_BACKEND_WORKER_CONTAINER || 'sybeez-school-worker' }}
+          image: ${{ steps.login-ecr.outputs.registry }}/sybeez-school-worker:${{ github.sha }}
+
+      - name: Deploy worker
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render-worker.outputs.task-definition }}
+          service: sybeez-school-worker
+          cluster: sybeez-school-cluster
+          wait-for-service-stability: true

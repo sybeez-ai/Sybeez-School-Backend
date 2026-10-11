@@ -4,7 +4,7 @@ from uuid import UUID, uuid4
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.config import get_settings
-from src.core.exceptions import ConflictError, ForbiddenError, NotFoundError, UnauthorizedError
+from src.core.exceptions import AppError, ConflictError, ForbiddenError, NotFoundError, UnauthorizedError
 from src.core.security import (
     create_access_token,
     create_refresh_token_claims,
@@ -12,10 +12,15 @@ from src.core.security import (
     hash_password,
     verify_password,
 )
-from src.db.models import RefreshToken, SchoolMembership, User
+from src.db.models import RefreshToken, School, SchoolMembership, User
 from src.modules.auth import cognito as cognito_svc
 from src.modules.auth.repository import AuthRepository, hash_token
-from src.modules.auth.schemas import AcceptInviteRequest, LoginRequest, TokenResponse
+from src.modules.auth.schemas import (
+    AcceptInviteRequest,
+    LoginRequest,
+    MembershipOut,
+    TokenResponse,
+)
 from src.shared.enums import InvitationStatus, MembershipStatus, PlatformRole, UserRole
 from src.shared.utils import utcnow
 
@@ -101,7 +106,13 @@ class AuthService:
             membership_id=membership_id,
             extra=extra,
         )
-        refresh = await self._issue_refresh(user.id, jti=jti, role=role, membership_id=membership_id)
+        refresh = await self._issue_refresh(
+            user.id,
+            jti=jti,
+            role=role,
+            school_id=school_id,
+            membership_id=membership_id,
+        )
         return self._token_response(
             user=user,
             role=role,
@@ -132,6 +143,20 @@ class AuthService:
         "platform": {UserRole.PLATFORM_ADMIN},
         "school": {UserRole.SCHOOL_ADMIN},
         "hrm": {UserRole.SCHOOL_ADMIN, UserRole.HR_MANAGER, UserRole.PAYROLL_APPROVER},
+        "payroll": {
+            UserRole.SCHOOL_ADMIN,
+            UserRole.PAYROLL_ADMIN,
+            UserRole.HR_MANAGER,
+            UserRole.ACCOUNTANT,
+            UserRole.PAYROLL_APPROVER,
+            UserRole.AUDITOR,
+        },
+        "finance": {
+            UserRole.SCHOOL_ADMIN,
+            UserRole.ACCOUNTANT,
+            UserRole.CASHIER,
+            UserRole.AUDITOR,
+        },
         "teacher": {UserRole.TEACHER},
         "student": {UserRole.STUDENT},
         "parent": {UserRole.PARENT},
@@ -238,11 +263,16 @@ class AuthService:
                         await self._assert_portal_role(
                             existing, data.portal, school_id_hint=data.school_id
                         )
-                    elif data.portal and data.portal.strip().lower() not in {"school", "hrm"}:
+                    elif data.portal and data.portal.strip().lower() not in {
+                        "school",
+                        "hrm",
+                        "payroll",
+                        "finance",
+                    }:
                         # Platform-provisioned Cognito users without a local row yet
                         # are school-scoped first-login accounts.
                         raise ForbiddenError(
-                            "This account is a school admin. Sign in at /login/school or /hrm/login."
+                            "This account is a school admin. Sign in at /login/school, /hrm/login, /school/payroll/login, or /finance/login."
                         )
                     return TokenResponse(
                         challenge=cog.challenge,
@@ -318,18 +348,38 @@ class AuthService:
         if user is None or not user.is_active:
             raise UnauthorizedError("Account disabled")
 
-        # Prefer platform session for company operators even if they also have a school membership.
+        # Prefer the school/role stamped on the refresh token (switch-school).
+        # Older refresh tokens omit it and fall back to the first membership.
         previous_role = payload.get("role")
         session_membership = payload.get("membership_id")
+        hinted_school = payload.get("school_id")
+        membership = None
         if session_membership:
-            membership = await self.repo.get_membership_by_id(UUID(session_membership))
+            membership = await self.repo.get_membership_by_id(UUID(str(session_membership)))
             if membership is None or membership.user_id != user.id:
                 raise UnauthorizedError("School membership is not active")
+            if membership.status != MembershipStatus.ACTIVE.value:
+                raise UnauthorizedError("School membership is not active")
+        elif hinted_school:
+            school_uuid = UUID(str(hinted_school))
+            if previous_role and previous_role != UserRole.PLATFORM_ADMIN.value:
+                membership = await self.repo.get_membership_for_role(
+                    user.id, previous_role, school_uuid
+                )
+            if membership is None:
+                membership = await self.repo.get_membership(user.id, school_uuid)
+            if membership is None or membership.status != MembershipStatus.ACTIVE.value:
+                raise ForbiddenError("School membership is no longer active")
+        elif user.is_platform_admin and (
+            previous_role == UserRole.PLATFORM_ADMIN.value or previous_role is None
+        ):
+            membership = await self.repo.get_membership(user.id)
+            if membership is None or previous_role == UserRole.PLATFORM_ADMIN.value:
+                membership = None
         else:
             membership = await self.repo.get_membership(user.id)
-        if user.is_platform_admin and (
-            membership is None or previous_role == UserRole.PLATFORM_ADMIN.value
-        ):
+
+        if membership is None and user.is_platform_admin and hinted_school is None:
             role, school_id, membership_id = UserRole.PLATFORM_ADMIN, None, None
         elif membership:
             if membership.status != MembershipStatus.ACTIVE.value:
@@ -353,7 +403,13 @@ class AuthService:
             membership_id=membership_id,
             extra=extra,
         )
-        refresh = await self._issue_refresh(user.id, jti=new_jti, role=role, membership_id=membership_id)
+        refresh = await self._issue_refresh(
+            user.id,
+            jti=new_jti,
+            role=role,
+            school_id=school_id,
+            membership_id=membership_id,
+        )
         return TokenResponse(
             access_token=access,
             refresh_token=refresh,
@@ -415,7 +471,13 @@ class AuthService:
             membership_id=membership.id,
             extra={"sid": jti},
         )
-        refresh = await self._issue_refresh(user.id, jti=jti, role=role, membership_id=membership.id)
+        refresh = await self._issue_refresh(
+            user.id,
+            jti=jti,
+            role=role,
+            school_id=inv.school_id,
+            membership_id=membership.id,
+        )
         return TokenResponse(
             access_token=access,
             refresh_token=refresh,
@@ -460,17 +522,91 @@ class AuthService:
         await self.db.flush()
         return user
 
+    async def list_memberships(self, user_id: UUID) -> list[MembershipOut]:
+        rows = await self.repo.list_memberships(user_id)
+        out: list[MembershipOut] = []
+        for membership in rows:
+            school = await self.db.get(School, membership.school_id)
+            out.append(
+                MembershipOut(
+                    id=membership.id,
+                    school_id=membership.school_id,
+                    school_name=school.name if school else "",
+                    role=UserRole(membership.role),
+                    status=membership.status,
+                )
+            )
+        out.sort(key=lambda row: (row.school_name.lower(), row.role.value))
+        return out
+
+    async def switch_school(
+        self, user_id: UUID, school_id: UUID, role: UserRole | None = None
+    ) -> TokenResponse:
+        user = await self.repo.get_user(user_id)
+        if user is None or not user.is_active:
+            raise UnauthorizedError("Account disabled")
+        matches = [
+            membership
+            for membership in await self.repo.list_memberships(user.id)
+            if membership.school_id == school_id
+            and membership.status == MembershipStatus.ACTIVE.value
+        ]
+        if role is not None:
+            matches = [membership for membership in matches if membership.role == role.value]
+        if not matches:
+            raise ForbiddenError("No active membership for that school")
+        if len(matches) > 1:
+            raise AppError(
+                "Specify role when you hold more than one membership at this school",
+                status_code=422,
+            )
+        membership = matches[0]
+        chosen = UserRole(membership.role)
+        jti = uuid4().hex
+        extra = {"sid": jti}
+        if user.is_platform_admin and user.platform_role:
+            extra["platform_role"] = user.platform_role
+        access = create_access_token(
+            subject=user.id,
+            role=chosen.value,
+            school_id=membership.school_id,
+            membership_id=membership.id,
+            extra=extra,
+        )
+        refresh = await self._issue_refresh(
+            user.id,
+            jti=jti,
+            role=chosen,
+            school_id=membership.school_id,
+            membership_id=membership.id,
+        )
+        return self._token_response(
+            user=user,
+            role=chosen,
+            school_id=membership.school_id,
+            membership_id=membership.id,
+            access=access,
+            refresh=refresh,
+        )
+
     async def _issue_refresh(
-        self, user_id, jti: str | None = None, *, role: UserRole | None = None, membership_id=None
+        self,
+        user_id,
+        jti: str | None = None,
+        *,
+        role: str | UserRole | None = None,
+        school_id=None,
+        membership_id=None,
     ) -> str:
         jti = jti or uuid4().hex
-        claims = create_refresh_token_claims(subject=user_id, jti=jti)
-        # Refresh must renew the same session (portal role + school membership), not whichever
-        # membership the user happens to have first.
-        if role is not None:
-            claims["role"] = role.value
-        if membership_id is not None:
-            claims["membership_id"] = str(membership_id)
+        role_value = role.value if isinstance(role, UserRole) else role
+        claims = create_refresh_token_claims(
+            subject=user_id,
+            jti=jti,
+            role=role_value,
+            school_id=school_id,
+            membership_id=membership_id,
+        )
         raw = encode_token(claims)
         self.db.add(
             RefreshToken(

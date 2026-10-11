@@ -57,6 +57,21 @@ from src.db.models.fee import (
     StudentFeeAccount,
 )
 from src.db.models.fee_reminder_log import FeeReminderLog
+from src.db.models.finance import (
+    FeeConcessionRequest,
+    FeeConcessionRule,
+    FeeDayClose,
+    FeeLedgerEntry,
+    FeePaymentTender,
+    FeeWebhookEvent,
+    FinanceApproval,
+    FinanceStaffScope,
+    FinancialYear,
+    FineWaiverRequest,
+    SchoolBranch,
+    SiblingGroup,
+    StudentFeeProfile,
+)
 from src.db.models.grade import Grade
 from src.db.models.homework import (
     Homework,
