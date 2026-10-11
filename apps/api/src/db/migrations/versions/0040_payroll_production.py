@@ -15,6 +15,8 @@ from typing import Sequence, Union
 
 from alembic import op
 
+from src.db.migrations.sqlutil import sql_statements
+
 revision: str = "0040"
 down_revision: Union[str, None] = "0035"
 branch_labels: Union[str, Sequence[str], None] = None
@@ -91,7 +93,9 @@ _NULLABLE_SCHOOL = {"pt_slab_rules"}
 def upgrade() -> None:
     op.execute(_SCHEMA_SQL)
     _extend_existing()
-    op.execute(_TABLES_SQL)
+    # asyncpg rejects several statements in one simple-query call.
+    for statement in sql_statements(_TABLES_SQL):
+        op.execute(statement)
     _rls_functions()
     _seed_pt()
     _policies()

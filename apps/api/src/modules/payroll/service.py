@@ -8,7 +8,7 @@ from decimal import Decimal
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import delete, false, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -1348,7 +1348,7 @@ class PayrollService:
                                 select(Teacher.user_id).where(Teacher.id == employee.teacher_id)
                             )
                             if employee.teacher_id
-                            else select(StaffLeaveRequest.user_id).where(StaffLeaveRequest.id.is_(None)),
+                            else false(),
                         ),
                     )
                 )
@@ -1500,6 +1500,8 @@ class PayrollService:
         await self._audit(f"run.{action}", "payroll_run", run.id, before, {"approval_status": run.approval_status}, reason)
         if action == "approve":
             await self._publish_run(run, settings, reason or "Approved")
+        await self.db.flush()
+        await self.db.refresh(run)
         return run
 
     async def _publish_run(self, run: PayrollRun, settings: PayrollSchoolSettings, reason: str) -> None:

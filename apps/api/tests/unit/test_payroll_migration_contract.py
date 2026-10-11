@@ -14,3 +14,5 @@ def test_migration_forces_rls_and_tracks_payslip_access():
     assert "download_count" in text
     assert "down_revision" in text and "0035" in text
     assert "DROP COLUMN IF EXISTS view_count" in text
+    assert "sql_statements(_TABLES_SQL)" in text
+    assert "op.execute(_TABLES_SQL)" not in text
