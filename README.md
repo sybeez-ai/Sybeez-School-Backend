@@ -30,15 +30,22 @@ make api
 
 API docs: http://localhost:8000/docs
 
-## Seeded credentials
+## Super admin
 
-| Role | Email | Password | Portal |
-|------|-------|----------|--------|
-| Platform Admin | `admin@sybeez.com` | `ChangeMe123!` | `/platform` |
-| School Admin (Green Valley) | `admin@greenvalley.edu` | `SchoolAdmin123!` | `/school` |
+The platform super admin is `SUPERADMIN_EMAIL` (default `admin@sybeez.ai`). The API bootstraps that account on startup when a password is available. Set `SUPERADMIN_INITIAL_PASSWORD` only for local development, or store it in AWS Secrets Manager as secret `sybeez-school/superadmin` (JSON key `SUPERADMIN_INITIAL_PASSWORD`). The password is not committed.
+
+`/api/v1/platform/*` accepts only that super admin. Set `AUTH_PROVIDER=cognito` plus `COGNITO_USER_POOL_ID` and `COGNITO_CLIENT_ID` to create the super admin in Cognito instead of storing a local password hash. Cognito and Secrets Manager need `boto3` in the API image.
+
+The super admin can create or invite internal staff and grant portals (`platform`, `finance`, `payroll`, `hrm`, `school_admin`) plus extra permission codes. Staff pick a school with `X-School-Id`. The `platform` portal does not open `/platform` routes.
+
+Sessions use `httpOnly` `SameSite` cookies (`sybeez_access`, `sybeez_refresh`). School admin, finance, HR, payroll, platform staff, and the super admin have an absolute 24 hour refresh cap. Teacher, student, and parent refresh tokens rotate for 30 days. Override hours with `SESSION_TTL_HOURS`. `COOKIE_SECURE=auto` sets `Secure` when `APP_ENV=production`.
+
+## Demo seed
+
+Demo data does not load in production. It runs only when `SEED_DEMO_DATA=true`, and it reads `DEMO_PLATFORM_PASSWORD` and `DEMO_SCHOOL_ADMIN_PASSWORD` from the environment.
 
 ```bash
-cd apps/api && PYTHONPATH=. python -m src.db.seed
+SEED_DEMO_DATA=true DEMO_PLATFORM_PASSWORD=... DEMO_SCHOOL_ADMIN_PASSWORD=... make seed
 ```
 
 Database: `sybeez_school` (dedicated local DB).

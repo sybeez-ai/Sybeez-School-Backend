@@ -13,6 +13,10 @@ _DIRECTORY = {UserRole.PLATFORM_ADMIN, UserRole.SCHOOL_ADMIN, UserRole.FINANCE}
 _CLASS_DIRECTORY = {UserRole.PLATFORM_ADMIN, UserRole.SCHOOL_ADMIN, UserRole.FINANCE, UserRole.HR}
 
 
+def _staff_portals(user: CurrentUser, names: set[str]) -> bool:
+    return user.role == UserRole.PLATFORM_STAFF and bool(names.intersection(user.portals))
+
+
 def _teacher_class_ids(user_id: UUID, school_id: UUID):
     return (
         select(TeacherAssignment.class_id)
@@ -63,7 +67,7 @@ def _teacher_student_ids(user_id: UUID, school_id: UUID):
 
 
 def restrict_students(stmt: Select, user: CurrentUser, school_id: UUID) -> Select:
-    if user.role in _DIRECTORY:
+    if user.role in _DIRECTORY or _staff_portals(user, {"finance", "school_admin"}):
         return stmt
     if user.role == UserRole.STUDENT:
         return stmt.where(Student.user_id == user.id)
@@ -75,7 +79,7 @@ def restrict_students(stmt: Select, user: CurrentUser, school_id: UUID) -> Selec
 
 
 def restrict_classes(stmt: Select, user: CurrentUser, school_id: UUID, class_column) -> Select:
-    if user.role in _CLASS_DIRECTORY:
+    if user.role in _CLASS_DIRECTORY or _staff_portals(user, {"finance", "hrm", "school_admin"}):
         return stmt
     if user.role == UserRole.TEACHER:
         return stmt.where(class_column.in_(_teacher_class_ids(user.id, school_id)))
@@ -87,7 +91,7 @@ def restrict_classes(stmt: Select, user: CurrentUser, school_id: UUID, class_col
 
 
 def restrict_student_rows(stmt: Select, user: CurrentUser, school_id: UUID, student_column) -> Select:
-    if user.role in {UserRole.PLATFORM_ADMIN, UserRole.SCHOOL_ADMIN}:
+    if user.role in {UserRole.PLATFORM_ADMIN, UserRole.SCHOOL_ADMIN} or _staff_portals(user, {"school_admin"}):
         return stmt
     if user.role == UserRole.TEACHER:
         return stmt.where(student_column.in_(_teacher_student_ids(user.id, school_id)))

@@ -29,6 +29,13 @@ def _permission_codes(dependant) -> set[str]:
     return codes
 
 
+def _marked(dependant, attribute: str) -> bool:
+    call = getattr(dependant, "call", None)
+    if getattr(call, attribute, False):
+        return True
+    return any(_marked(child, attribute) for child in getattr(dependant, "dependencies", []) or [])
+
+
 def test_every_endpoint_declares_an_access_mode():
     routes = [(path, route) for path, route in _walk(app.router) if path not in _SKIP]
     assert len(routes) > 40
@@ -38,7 +45,8 @@ def test_every_endpoint_declares_an_access_mode():
         public = getattr(endpoint, "__public__", False)
         service = getattr(endpoint, "__service_auth__", False)
         codes = _permission_codes(route.dependant)
-        if public or service or codes:
+        super_admin = _marked(route.dependant, "__super_admin__")
+        if public or service or codes or super_admin:
             continue
         missing.append(f"{sorted(route.methods)} {path}")
     assert missing == []
@@ -52,7 +60,9 @@ def test_public_routes_are_only_health_and_auth_entry():
     )
     assert public == [
         "/api/v1/auth/accept-invitation",
+        "/api/v1/auth/accept-staff-invitation",
         "/api/v1/auth/login",
+        "/api/v1/auth/logout",
         "/api/v1/auth/refresh",
         "/health",
         "/ready",

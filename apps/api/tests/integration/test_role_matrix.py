@@ -7,6 +7,7 @@ import psycopg2
 import pytest
 from fastapi.testclient import TestClient
 
+from src.core.config import get_settings
 from src.core.security import hash_password
 from src.main import app
 from src.modules.access.catalog import permissions_for
@@ -28,7 +29,15 @@ def _ids(response) -> list[str]:
     return [item["id"] for item in response.json()["items"]]
 
 
-def _rls_count(table: str, *, user_id: str, school_id: str, role: str, membership_id: str | None) -> int:
+def _rls_count(
+    table: str,
+    *,
+    user_id: str,
+    school_id: str,
+    role: str,
+    membership_id: str | None,
+    portals: str = "",
+) -> int:
     conn = psycopg2.connect(DSN)
     try:
         cur = conn.cursor()
@@ -37,6 +46,7 @@ def _rls_count(table: str, *, user_id: str, school_id: str, role: str, membershi
         cur.execute("SELECT set_config('app.role', %s, true)", (role,))
         cur.execute("SELECT set_config('app.membership_id', %s, true)", (membership_id or "",))
         cur.execute("SELECT set_config('app.lookup_email', '', true)")
+        cur.execute("SELECT set_config('app.portals', %s, true)", (portals,))
         cur.execute("SET LOCAL ROLE sybeez_app")
         cur.execute(f"SELECT count(*) FROM {table}")
         return int(cur.fetchone()[0])
@@ -54,16 +64,27 @@ def client():
 @pytest.fixture(scope="module")
 def world(client: TestClient):
     suffix = uuid.uuid4().hex[:8]
-    platform_email = f"platform-{suffix}@example.com"
+    platform_email = get_settings().superadmin_email
     conn = psycopg2.connect(DSN)
     conn.autocommit = True
-    conn.cursor().execute(
+    cur = conn.cursor()
+    cur.execute(
         """
-        INSERT INTO users (id, email, password_hash, full_name, status, is_active, is_platform_admin)
-        VALUES (%s, %s, %s, 'Platform Admin', 'ACTIVE', true, true)
+        UPDATE users
+        SET password_hash = %s, full_name = 'Platform Admin', status = 'ACTIVE',
+            is_active = true, is_platform_admin = true
+        WHERE email = %s
         """,
-        (str(uuid.uuid4()), platform_email, hash_password(PASSWORD)),
+        (hash_password(PASSWORD), platform_email),
     )
+    if cur.rowcount == 0:
+        cur.execute(
+            """
+            INSERT INTO users (id, email, password_hash, full_name, status, is_active, is_platform_admin)
+            VALUES (%s, %s, %s, 'Platform Admin', 'ACTIVE', true, true)
+            """,
+            (str(uuid.uuid4()), platform_email, hash_password(PASSWORD)),
+        )
     conn.close()
 
     platform = _auth(client, platform_email)
@@ -571,3 +592,237 @@ def test_grants_revokes_and_self_lockout_are_audited(client: TestClient, world):
     audit = client.get("/api/v1/audit?page_size=100", headers=admin)
     actions = {item["action"] for item in audit.json()["items"]}
     assert {"role.grant", "role.revoke", "permission.grant", "permission.revoke"} <= actions
+
+
+def _cookie_headers(response) -> list[str]:
+    return response.headers.get_list("set-cookie")
+
+
+def test_login_sets_httponly_samesite_cookies(client: TestClient, world):
+    response = client.post(
+        "/api/v1/auth/login",
+        json={"email": f"teacher-{world['suffix']}@example.com", "password": PASSWORD},
+    )
+    assert response.status_code == 200, response.text
+    headers = _cookie_headers(response)
+    blob = "\n".join(headers)
+    assert any(part.startswith("sybeez_access=") for part in headers)
+    assert any(part.startswith("sybeez_refresh=") for part in headers)
+    assert "HttpOnly" in blob
+    assert "SameSite=lax" in blob
+    assert "Path=/api/v1/auth" in blob
+    for header in headers:
+        attributes = [piece.strip().lower() for piece in header.split(";")]
+        assert "secure" not in attributes
+
+
+def test_refresh_cookie_rotates_and_daily_cap_does_not_extend(client: TestClient, world):
+    teacher = client.post(
+        "/api/v1/auth/login",
+        json={"email": f"teacher-{world['suffix']}@example.com", "password": PASSWORD},
+    )
+    assert teacher.status_code == 200, teacher.text
+    teacher_body = teacher.json()
+    assert teacher_body["refresh_expires_in"] > 29 * 24 * 3600
+    rotated = client.post("/api/v1/auth/refresh", json={})
+    assert rotated.status_code == 200, rotated.text
+    assert rotated.json()["refresh_token"] != teacher_body["refresh_token"]
+    assert rotated.json()["refresh_expires_in"] > 29 * 24 * 3600
+
+    admin_email = f"north-admin-{world['suffix']}@example.com"
+    admin = client.post("/api/v1/auth/login", json={"email": admin_email, "password": PASSWORD})
+    assert admin.status_code == 200, admin.text
+    admin_body = admin.json()
+    assert admin_body["refresh_expires_in"] <= 24 * 3600
+    conn = psycopg2.connect(DSN)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT family_expires_at FROM refresh_tokens
+        WHERE user_id = %s AND revoked = false
+        ORDER BY created_at DESC LIMIT 1
+        """,
+        (admin_body["user_id"],),
+    )
+    original_family = cur.fetchone()[0]
+    conn.close()
+
+    kept = client.post("/api/v1/auth/refresh", json={})
+    assert kept.status_code == 200, kept.text
+    conn = psycopg2.connect(DSN)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT family_expires_at FROM refresh_tokens
+        WHERE user_id = %s AND revoked = false
+        ORDER BY created_at DESC LIMIT 1
+        """,
+        (admin_body["user_id"],),
+    )
+    assert cur.fetchone()[0] == original_family
+    cur.execute(
+        """
+        UPDATE refresh_tokens
+        SET family_expires_at = now() - interval '1 minute'
+        WHERE user_id = %s AND revoked = false
+        """,
+        (admin_body["user_id"],),
+    )
+    conn.commit()
+    conn.close()
+    expired = client.post("/api/v1/auth/refresh", json={})
+    assert expired.status_code == 401, expired.text
+    assert "Sign in again" in expired.json()["error"]["message"]
+
+
+def test_logout_revokes_the_refresh_cookie(client: TestClient, world):
+    logged_in = client.post(
+        "/api/v1/auth/login",
+        json={"email": f"parent-{world['suffix']}@example.com", "password": PASSWORD},
+    )
+    assert logged_in.status_code == 200, logged_in.text
+    gone = client.post("/api/v1/auth/logout", json={})
+    assert gone.status_code == 200, gone.text
+    assert client.post("/api/v1/auth/refresh", json={}).status_code == 401
+
+
+def test_super_admin_staff_portals_are_audited_and_school_scoped(client: TestClient, world):
+    platform = world["roles"]["PLATFORM_ADMIN"]
+    suffix = world["suffix"]
+    rejected = client.post(
+        "/api/v1/platform/staff",
+        headers=platform,
+        json={
+            "email": f"denied-{suffix}@example.com",
+            "full_name": "Denied Staff",
+            "password": PASSWORD,
+            "portals": ["finance"],
+            "permissions": ["platform.manage"],
+        },
+    )
+    assert rejected.status_code == 403, rejected.text
+
+    created = client.post(
+        "/api/v1/platform/staff",
+        headers=platform,
+        json={
+            "email": f"staff-{suffix}@example.com",
+            "full_name": "Finance Staff",
+            "password": PASSWORD,
+            "portals": ["finance"],
+            "permissions": ["reports.read"],
+        },
+    )
+    assert created.status_code == 201, created.text
+    body = created.json()
+    assert body["portals"] == ["finance"]
+    assert body["permissions"] == ["reports.read"]
+
+    staff = _auth(client, f"staff-{suffix}@example.com")
+    assert client.get("/api/v1/platform/schools", headers=staff).status_code == 403
+    assert client.get("/api/v1/students", headers=staff).status_code == 403
+    school_id = world["schools"]["north"]["id"]
+    scoped = {**staff, "X-School-Id": school_id}
+    students = client.get("/api/v1/students", headers=scoped)
+    assert students.status_code == 200, students.text
+    assert set(_ids(students)) == {world["student_a"]["id"], world["student_b"]["id"]}
+    assert client.get("/api/v1/results", headers=scoped).status_code == 403
+    health = client.get("/api/v1/reports/health", headers=scoped)
+    assert health.status_code == 200, health.text
+
+    assert (
+        _rls_count(
+            "students",
+            user_id=body["user_id"],
+            school_id=school_id,
+            role="PLATFORM_STAFF",
+            membership_id=None,
+            portals="finance",
+        )
+        == 2
+    )
+    assert (
+        _rls_count(
+            "results",
+            user_id=body["user_id"],
+            school_id=school_id,
+            role="PLATFORM_STAFF",
+            membership_id=None,
+            portals="finance",
+        )
+        == 0
+    )
+    assert (
+        _rls_count(
+            "students",
+            user_id=body["user_id"],
+            school_id="",
+            role="PLATFORM_STAFF",
+            membership_id=None,
+            portals="finance",
+        )
+        == 0
+    )
+
+    audit = client.get("/api/v1/platform/audit", headers=platform, params={"action": "staff.grant"})
+    assert audit.status_code == 200, audit.text
+    assert any(item["action"] == "staff.grant" for item in audit.json()["items"])
+
+    invited = client.post(
+        "/api/v1/platform/staff-invitations",
+        headers=platform,
+        json={"email": f"invite-staff-{suffix}@example.com", "portals": ["hrm"], "permissions": []},
+    )
+    assert invited.status_code == 201, invited.text
+    accepted = client.post(
+        "/api/v1/auth/accept-staff-invitation",
+        json={
+            "token": invited.json()["invite_token"],
+            "password": PASSWORD,
+            "full_name": "HR Staff",
+        },
+    )
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["role"] == "PLATFORM_STAFF"
+
+
+def test_only_the_bootstrapped_email_can_call_platform(client: TestClient, world):
+    suffix = world["suffix"]
+    email = f"ops-{suffix}@example.com"
+    conn = psycopg2.connect(DSN)
+    conn.autocommit = True
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO users (id, email, password_hash, full_name, status, is_active, is_platform_admin)
+        VALUES (%s, %s, %s, 'Other Admin', 'ACTIVE', true, true)
+        """,
+        (str(uuid.uuid4()), email, hash_password(PASSWORD)),
+    )
+    conn.close()
+    other = _auth(client, email)
+    assert client.get("/api/v1/platform/schools", headers=other).status_code == 403
+
+
+def test_school_admin_role_change_applies_before_the_token_expires(client: TestClient, world):
+    suffix = world["suffix"]
+    admin = world["roles"]["SCHOOL_ADMIN"]
+    email = f"clerk-{suffix}@example.com"
+    granted = client.post(
+        "/api/v1/access/role-grants",
+        headers=admin,
+        json={"email": email, "full_name": "Clerk", "password": PASSWORD, "role": "STUDENT"},
+    )
+    assert granted.status_code == 201, granted.text
+    clerk = _auth(client, email)
+    assert client.get("/api/v1/results", headers=clerk).status_code == 200
+    changed = client.post(
+        f"/api/v1/access/memberships/{granted.json()['id']}/role",
+        headers=admin,
+        json={"role": "FINANCE"},
+    )
+    assert changed.status_code == 200, changed.text
+    assert client.get("/api/v1/results", headers=clerk).status_code == 403
+    students = client.get("/api/v1/students", headers=clerk)
+    assert students.status_code == 200, students.text
+    assert world["student_a"]["id"] in _ids(students)

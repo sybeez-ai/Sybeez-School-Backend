@@ -234,8 +234,58 @@ _PAYROLL = frozenset(
     }
 )
 
+# Internal staff portals. These are not school-admin defaults. The platform portal
+# does not open /platform routes; those stay limited to the bootstrapped super admin.
+PORTALS: dict[str, frozenset[str]] = {
+    "platform": frozenset({"session.read"}),
+    "finance": frozenset(
+        {
+            "session.read",
+            "schools.read",
+            "notifications.read",
+            "announcements.read",
+            "students.read",
+            "parents.read",
+            "classes.read",
+            "finance.read",
+            "finance.manage",
+            "payroll.read",
+        }
+    ),
+    "payroll": frozenset(
+        {
+            "session.read",
+            "schools.read",
+            "notifications.read",
+            "announcements.read",
+            "teachers.read",
+            "payroll.read",
+            "payroll.approve",
+        }
+    ),
+    "hrm": frozenset(
+        {
+            "session.read",
+            "schools.read",
+            "notifications.read",
+            "announcements.read",
+            "users.read",
+            "teachers.read",
+            "teachers.write",
+            "classes.read",
+            "academic_years.read",
+            "timetable.read",
+            "hr.read",
+            "hr.manage",
+            "payroll.read",
+        }
+    ),
+    "school_admin": _SCHOOL_ADMIN,
+}
+
 ROLE_PERMISSIONS: dict[UserRole, frozenset[str]] = {
     UserRole.PLATFORM_ADMIN: ALL_PERMISSIONS,
+    UserRole.PLATFORM_STAFF: frozenset(),
     UserRole.SCHOOL_ADMIN: _SCHOOL_ADMIN,
     UserRole.TEACHER: _TEACHER,
     UserRole.STUDENT: _STUDENT,

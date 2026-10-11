@@ -18,6 +18,7 @@ async def apply_rls(
     school_id: UUID | None,
     role: str,
     membership_id: UUID | None,
+    portals: list[str] | None = None,
 ) -> None:
     await session.execute(text("SELECT set_config('app.user_id', :v, true)"), {"v": str(user_id)})
     await session.execute(
@@ -28,6 +29,10 @@ async def apply_rls(
     await session.execute(
         text("SELECT set_config('app.membership_id', :v, true)"),
         {"v": "" if membership_id is None else str(membership_id)},
+    )
+    await session.execute(
+        text("SELECT set_config('app.portals', :v, true)"),
+        {"v": ",".join(portals or [])},
     )
     await session.execute(text("SELECT set_config('app.lookup_email', '', true)"))
     connection = await session.connection()

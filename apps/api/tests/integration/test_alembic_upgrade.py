@@ -1,4 +1,4 @@
-"""Migrations 0001 → 9001 → 9002 apply on an empty Postgres 16 database."""
+"""Migrations 0001 → 9001 → 9002 → 9003 apply on an empty Postgres 16 database."""
 
 import os
 import subprocess
@@ -46,7 +46,7 @@ def test_upgrade_head_on_empty_database():
     conn = psycopg2.connect(APP_DSN)
     cur = conn.cursor()
     cur.execute("SELECT version_num FROM alembic_version")
-    assert cur.fetchone()[0] == "9002"
+    assert cur.fetchone()[0] == "9003"
     cur.execute("SELECT current_setting('server_version_num')")
     assert int(cur.fetchone()[0]) >= 160000
 
@@ -81,4 +81,29 @@ def test_upgrade_head_on_empty_database():
     assert cur.fetchone()[0] == "rls_protect_new_table"
     cur.execute("SELECT rolbypassrls FROM pg_roles WHERE rolname = 'sybeez_app'")
     assert cur.fetchone()[0] is False
+
+    cur.execute(
+        """
+        SELECT relrowsecurity AND relforcerowsecurity
+        FROM pg_class
+        WHERE relname = 'platform_staff'
+        """
+    )
+    assert cur.fetchone()[0] is True
+    cur.execute(
+        """
+        SELECT column_name FROM information_schema.columns
+        WHERE table_name = 'refresh_tokens' AND column_name IN ('family_expires_at', 'absolute_session')
+        """
+    )
+    assert {row[0] for row in cur.fetchall()} == {"family_expires_at", "absolute_session"}
+    cur.execute(
+        """
+        SELECT pg_get_expr(pol.polqual, pol.polrelid)
+        FROM pg_policy pol
+        JOIN pg_class c ON c.oid = pol.polrelid
+        WHERE c.relname = 'students' AND pol.polname = 'actor_scope'
+        """
+    )
+    assert "rls_has(" in cur.fetchone()[0]
     conn.close()

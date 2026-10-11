@@ -1,11 +1,15 @@
-"""Seed platform admin + demo school admin for local development.
+"""Optional demo school for local development. Never runs unless SEED_DEMO_DATA=true.
 
-Usage: python -m src.db.seed
+Demo passwords are read from DEMO_PLATFORM_PASSWORD and DEMO_SCHOOL_ADMIN_PASSWORD.
+They are not stored in this file. The production super admin is bootstrapped
+separately from SUPERADMIN_EMAIL and Secrets Manager, not from this seed.
 """
 
 from __future__ import annotations
 
 import asyncio
+import os
+import sys
 
 from sqlalchemy import select, text
 
@@ -22,12 +26,13 @@ from src.db.models import (
 from src.shared.enums import MembershipStatus, SchoolStatus, SubscriptionStatus, UserRole
 from src.shared.utils import utcnow
 
-PLATFORM_EMAIL = "admin@sybeez.com"
-PLATFORM_PASSWORD = "ChangeMe123!"
-
-SCHOOL_ADMIN_EMAIL = "admin@greenvalley.edu"
-SCHOOL_ADMIN_PASSWORD = "SchoolAdmin123!"
+DEMO_PLATFORM_EMAIL = "admin@sybeez.com"
+DEMO_SCHOOL_ADMIN_EMAIL = "admin@greenvalley.edu"
 SCHOOL_SLUG = "green-valley"
+
+
+def _enabled() -> bool:
+    return os.environ.get("SEED_DEMO_DATA", "").strip().lower() in {"1", "true", "yes"}
 
 
 async def ensure_schema() -> None:
@@ -37,6 +42,7 @@ async def ensure_schema() -> None:
         await conn.execute(text('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"'))
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pgcrypto"))
         await conn.run_sync(Base.metadata.create_all)
+
 
 async def upsert_user(
     db,
@@ -67,14 +73,25 @@ async def upsert_user(
 
 
 async def seed() -> None:
+    if not _enabled():
+        raise SystemExit(
+            "Refusing to load demo data. Set SEED_DEMO_DATA=true to seed a local development school."
+        )
+    platform_password = os.environ.get("DEMO_PLATFORM_PASSWORD", "").strip()
+    school_password = os.environ.get("DEMO_SCHOOL_ADMIN_PASSWORD", "").strip()
+    if not platform_password or not school_password:
+        raise SystemExit(
+            "DEMO_PLATFORM_PASSWORD and DEMO_SCHOOL_ADMIN_PASSWORD are required when SEED_DEMO_DATA=true."
+        )
+
     await ensure_schema()
 
     async with AsyncSessionLocal() as db:
         platform = await upsert_user(
             db,
-            email=PLATFORM_EMAIL,
+            email=DEMO_PLATFORM_EMAIL,
             full_name="Sybeez Platform Admin",
-            password=PLATFORM_PASSWORD,
+            password=platform_password,
             is_platform_admin=True,
         )
 
@@ -104,9 +121,9 @@ async def seed() -> None:
 
         school_admin = await upsert_user(
             db,
-            email=SCHOOL_ADMIN_EMAIL,
+            email=DEMO_SCHOOL_ADMIN_EMAIL,
             full_name="Priya Nair",
-            password=SCHOOL_ADMIN_PASSWORD,
+            password=school_password,
             is_platform_admin=False,
         )
 
@@ -133,13 +150,18 @@ async def seed() -> None:
 
         await db.commit()
 
-        print("Seed complete.")
-        print(f"  Platform admin : {PLATFORM_EMAIL} / {PLATFORM_PASSWORD}")
-        print(f"  School         : {school.name} ({school.slug})")
-        print(f"  School admin   : {SCHOOL_ADMIN_EMAIL} / {SCHOOL_ADMIN_PASSWORD}")
-        print(f"  Platform user  : {platform.id}")
-        print(f"  School id      : {school.id}")
+        print("Demo seed complete. Passwords were taken from the environment and are not printed.")
+        print(f"  Demo platform admin email : {DEMO_PLATFORM_EMAIL}")
+        print(f"  Demo school               : {school.name} ({school.slug})")
+        print(f"  Demo school admin email   : {DEMO_SCHOOL_ADMIN_EMAIL}")
+        print(f"  Platform user             : {platform.id}")
+        print(f"  School id                 : {school.id}")
+        print("  Production super admin is bootstrapped from SUPERADMIN_EMAIL, not this seed.")
 
 
 if __name__ == "__main__":
-    asyncio.run(seed())
+    try:
+        asyncio.run(seed())
+    except SystemExit as exc:
+        print(exc, file=sys.stderr)
+        raise
