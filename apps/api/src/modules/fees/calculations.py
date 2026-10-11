@@ -30,9 +30,10 @@ def calculate_late_fee(
     if balance <= 0:
         return money(0)
     start = due_date + timedelta(days=max(grace_days, 0))
-    if as_of < start:
+    # Paying on the due date (or within the grace window) is not late.
+    if as_of <= start:
         return money(0)
-    days = (as_of - start).days + 1
+    days = (as_of - start).days
     calc = (calculation_type or "FIXED").upper()
     if calc == "FIXED":
         fee = money(amount)
@@ -63,6 +64,9 @@ def invoice_status_after_payment(
     total = money(total)
     paid = money(paid)
     today = as_of or date.today()
+    if total <= 0:
+        # Fully concessed / waived invoices have nothing outstanding.
+        return "PAID"
     if paid <= 0:
         if today > due_date:
             return "OVERDUE"

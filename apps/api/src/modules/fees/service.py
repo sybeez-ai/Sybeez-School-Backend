@@ -1029,9 +1029,9 @@ class FeeService:
                     select(FeeInvoiceItem).where(
                         FeeInvoiceItem.invoice_id == inv.id,
                         FeeInvoiceItem.description.ilike("%late fee%"),
-                    )
+                    ).limit(1)
                 )
-            ).scalar_one_or_none()
+            ).scalars().first()
             if existing_late:
                 continue
             rule = rules[0]
