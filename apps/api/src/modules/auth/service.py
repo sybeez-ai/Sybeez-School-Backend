@@ -80,6 +80,8 @@ class AuthService:
     async def _platform_staff(self, user_id: UUID):
         from src.db.models import PlatformStaff
 
+        await self.repo._bind_user(user_id)
+
         return (
             await self.db.execute(
                 select(PlatformStaff).where(
@@ -270,6 +272,7 @@ class AuthService:
         """Granted portals for an active platform staff member with no school membership."""
         from src.db.models import PlatformStaffPortal
 
+        await self.repo._bind_user(user_id)
         staff = await self._platform_staff(user_id)
         if staff is None or await self._active_memberships(user_id):
             return None
