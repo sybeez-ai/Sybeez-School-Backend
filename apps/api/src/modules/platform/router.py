@@ -126,7 +126,7 @@ async def platform_audit(
 @router.get("/schools", response_model=Page[SchoolOut])
 async def list_schools(
     db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_platform_member)],
+    user: Annotated[CurrentUser, Depends(require_super_admin)],
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=100),
     q: str | None = Query(default=None),
