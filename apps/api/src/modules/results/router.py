@@ -12,6 +12,7 @@ from src.modules.exams.pdf import build_report_card_pdf
 from src.modules.exams.schemas import ChildBriefOut, StudentResultOut
 from src.modules.exams.service import ExamService
 from src.shared.enums import UserRole
+from src.modules.access.deps import public
 
 router = APIRouter(prefix="/results", tags=["results"])
 
@@ -23,6 +24,7 @@ def _sid(u: CurrentUser) -> UUID:
 
 
 @router.get("/health")
+@public
 async def results_health():
     return {"module": "results", "status": "ok"}
 

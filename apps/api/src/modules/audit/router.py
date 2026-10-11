@@ -9,11 +9,13 @@ from src.core.database import get_db
 from src.modules.audit.schemas import AuditLogOut
 from src.modules.audit.service import AuditService
 from src.shared.enums import PlatformRole, UserRole
+from src.modules.access.deps import public
 
 router = APIRouter(prefix="/audit", tags=["audit"])
 
 
 @router.get("/health")
+@public
 async def audit_health():
     return {"module": "audit", "status": "ok"}
 

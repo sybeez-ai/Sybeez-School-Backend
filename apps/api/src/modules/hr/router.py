@@ -22,6 +22,7 @@ from src.modules.hr.schemas import (
 )
 from src.modules.hr.service import HRService
 from src.shared.enums import UserRole
+from src.modules.access.deps import public
 
 router = APIRouter(prefix="/hr", tags=["hr"])
 
@@ -36,6 +37,7 @@ def _sid(u: CurrentUser) -> UUID:
 
 
 @router.get("/health")
+@public
 async def hr_health():
     return {"module": "hr", "status": "ok"}
 

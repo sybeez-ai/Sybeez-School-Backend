@@ -58,6 +58,7 @@ from src.modules.finance.schemas import (
 )
 from src.modules.finance.service import FinanceService
 from src.shared.enums import UserRole
+from src.modules.access.deps import public
 
 router = APIRouter(prefix="/finance", tags=["finance"])
 
@@ -113,6 +114,7 @@ def _export(rows: list[dict], columns: list[str], fmt: str, filename: str, title
 
 
 @router.get("/health")
+@public
 async def finance_health():
     return {"module": "finance", "status": "ok"}
 

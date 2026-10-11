@@ -10,6 +10,7 @@ from src.core.exceptions import ForbiddenError
 from src.modules.notes.schemas import NoteCreate, NoteOut, NoteUpdate
 from src.modules.notes.service import NotesService
 from src.shared.enums import UserRole
+from src.modules.access.deps import public
 
 router = APIRouter(prefix="/notes", tags=["notes"])
 
@@ -21,6 +22,7 @@ def _sid(u: CurrentUser) -> UUID:
 
 
 @router.get("/health")
+@public
 async def notes_health():
     return {"module": "notes", "status": "ok"}
 

@@ -190,6 +190,17 @@ async def ensure_membership(db, *, user_id, school_id, role: UserRole) -> School
 
 
 async def seed() -> None:
+    global PLATFORM_SUPER_ADMIN_PASSWORD, SCHOOL_ADMIN_PASSWORD
+    if not _enabled():
+        raise SystemExit("Refusing to seed without SEED_DEMO_DATA=true")
+    platform_password = os.environ.get("DEMO_PLATFORM_PASSWORD", "").strip()
+    school_password = os.environ.get("DEMO_SCHOOL_ADMIN_PASSWORD", "").strip()
+    if not platform_password:
+        raise SystemExit("DEMO_PLATFORM_PASSWORD is required")
+    if not school_password:
+        raise SystemExit("DEMO_SCHOOL_ADMIN_PASSWORD is required")
+    PLATFORM_SUPER_ADMIN_PASSWORD = platform_password
+    SCHOOL_ADMIN_PASSWORD = school_password
     _assert_safe_to_seed()
     await ensure_schema()
 

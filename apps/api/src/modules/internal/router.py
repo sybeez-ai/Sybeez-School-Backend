@@ -31,6 +31,9 @@ async def require_internal_token(
         raise UnauthorizedError("Invalid internal token")
 
 
+require_internal_token.__service_auth__ = True
+
+
 @router.get("/students/ai-context", response_model=AIContextResponse, dependencies=[Depends(require_internal_token)])
 @service_auth
 async def student_ai_context(

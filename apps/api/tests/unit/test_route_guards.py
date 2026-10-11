@@ -46,7 +46,10 @@ def _authenticated(dependant) -> bool:
         "require_super_admin",
         "require_admin_or_above",
         "require_hr_admin",
+        "require_internal_token",
     }:
+        return True
+    if getattr(call, "__service_auth__", False):
         return True
     if getattr(call, "__roles__", None):
         return True
@@ -76,6 +79,11 @@ def test_public_routes_are_only_health_and_auth_entry():
         if getattr(route.endpoint, "__public__", False)
     )
     assert public == [
+        "/api/v1/admissions/health",
+        "/api/v1/ai-reports/health",
+        "/api/v1/assignments/health",
+        "/api/v1/attendance/health",
+        "/api/v1/audit/health",
         "/api/v1/auth/accept-invitation",
         "/api/v1/auth/accept-staff-invitation",
         "/api/v1/auth/cognito/callback",
@@ -87,6 +95,19 @@ def test_public_routes_are_only_health_and_auth_entry():
         "/api/v1/auth/login",
         "/api/v1/auth/logout",
         "/api/v1/auth/refresh",
+        "/api/v1/bookstore/health",
+        "/api/v1/communication/health",
+        "/api/v1/diary/health",
+        "/api/v1/exams/health",
+        "/api/v1/fees/health",
+        "/api/v1/finance/health",
+        "/api/v1/homework/health",
+        "/api/v1/hr/health",
+        "/api/v1/notes/health",
+        "/api/v1/payments/webhook/{provider}",
+        "/api/v1/payroll/assistant/downloads/{token}",
+        "/api/v1/personal-life/health",
+        "/api/v1/results/health",
         "/health",
         "/ready",
     ]

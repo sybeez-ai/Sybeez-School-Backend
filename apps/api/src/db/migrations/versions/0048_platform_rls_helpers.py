@@ -20,44 +20,50 @@ down_revision: Union[str, None] = "0047"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-_FUNCTIONS = r"""
-CREATE OR REPLACE FUNCTION rls_role() RETURNS text
-LANGUAGE sql STABLE AS $$
-  SELECT COALESCE(current_setting('app.role', true), '')
-$$;
-
-CREATE OR REPLACE FUNCTION rls_uid() RETURNS uuid
-LANGUAGE sql STABLE AS $$
-  SELECT NULLIF(current_setting('app.user_id', true), '')::uuid
-$$;
-
-CREATE OR REPLACE FUNCTION rls_school() RETURNS uuid
-LANGUAGE sql STABLE AS $$
-  SELECT NULLIF(current_setting('app.school_id', true), '')::uuid
-$$;
-
-CREATE OR REPLACE FUNCTION rls_membership() RETURNS uuid
-LANGUAGE sql STABLE AS $$
-  SELECT NULLIF(current_setting('app.membership_id', true), '')::uuid
-$$;
-
-CREATE OR REPLACE FUNCTION rls_tenant(row_school uuid) RETURNS boolean
-LANGUAGE sql STABLE AS $$
-  SELECT rls_role() = 'PLATFORM_ADMIN'
-     OR (rls_school() IS NOT NULL AND row_school IS NOT NULL AND row_school = rls_school())
-$$;
-
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'sybeez_app') THEN
-        CREATE ROLE sybeez_app NOLOGIN NOSUPERUSER NOBYPASSRLS;
-    END IF;
-END $$;
-"""
-
-
 def upgrade() -> None:
-    op.execute(_FUNCTIONS)
+    statements = [
+        """
+        CREATE OR REPLACE FUNCTION rls_role() RETURNS text
+        LANGUAGE sql STABLE AS $$
+          SELECT COALESCE(current_setting('app.role', true), '')
+        $$
+        """,
+        """
+        CREATE OR REPLACE FUNCTION rls_uid() RETURNS uuid
+        LANGUAGE sql STABLE AS $$
+          SELECT NULLIF(current_setting('app.user_id', true), '')::uuid
+        $$
+        """,
+        """
+        CREATE OR REPLACE FUNCTION rls_school() RETURNS uuid
+        LANGUAGE sql STABLE AS $$
+          SELECT NULLIF(current_setting('app.school_id', true), '')::uuid
+        $$
+        """,
+        """
+        CREATE OR REPLACE FUNCTION rls_membership() RETURNS uuid
+        LANGUAGE sql STABLE AS $$
+          SELECT NULLIF(current_setting('app.membership_id', true), '')::uuid
+        $$
+        """,
+        """
+        CREATE OR REPLACE FUNCTION rls_tenant(row_school uuid) RETURNS boolean
+        LANGUAGE sql STABLE AS $$
+          SELECT rls_role() = 'PLATFORM_ADMIN'
+             OR (rls_school() IS NOT NULL AND row_school IS NOT NULL AND row_school = rls_school())
+        $$
+        """,
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'sybeez_app') THEN
+                CREATE ROLE sybeez_app NOLOGIN NOSUPERUSER NOBYPASSRLS;
+            END IF;
+        END $$
+        """,
+    ]
+    for statement in statements:
+        op.execute(statement)
     op.execute("ALTER TABLE membership_permission_overrides ENABLE ROW LEVEL SECURITY")
     op.execute("ALTER TABLE membership_permission_overrides FORCE ROW LEVEL SECURITY")
     op.execute("DROP POLICY IF EXISTS tenant_isolation ON membership_permission_overrides")

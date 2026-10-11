@@ -28,6 +28,7 @@ from src.modules.communication.schemas import (
 from src.modules.communication.service import CommunicationService, NotificationScope
 from src.modules.hr_notifications.service import HR_ENTITY_TYPES
 from src.shared.enums import UserRole
+from src.modules.access.deps import public
 
 CAMPUS_ROLES = (
     UserRole.STUDENT,
@@ -59,6 +60,7 @@ def _scope(u: CurrentUser, scope: str | None) -> NotificationScope | None:
 
 
 @router.get("/health")
+@public
 async def communication_health():
     return {"module": "communication", "status": "ok"}
 

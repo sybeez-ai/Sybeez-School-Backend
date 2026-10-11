@@ -43,6 +43,7 @@ from src.modules.fees.schemas import (
 from src.modules.fees.service import FeeService
 from src.modules.finance.service import FinanceService
 from src.shared.enums import UserRole
+from src.modules.access.deps import public
 
 router = APIRouter(tags=["fees"])
 
@@ -68,6 +69,7 @@ def _staff(user: CurrentUser) -> bool:
 
 
 @router.get("/fees/health")
+@public
 async def fees_health():
     return {"module": "fees", "status": "ok"}
 
@@ -421,6 +423,7 @@ async def verify_payment(
 
 
 @router.post("/payments/webhook/{provider}")
+@public
 async def payment_webhook(
     provider: str,
     request: Request,

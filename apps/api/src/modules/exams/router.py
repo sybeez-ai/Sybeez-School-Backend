@@ -40,6 +40,7 @@ from src.modules.exams.schemas import (
 )
 from src.modules.exams.service import ExamService
 from src.shared.enums import UserRole
+from src.modules.access.deps import public
 
 router = APIRouter(prefix="/exams", tags=["exams"])
 
@@ -51,6 +52,7 @@ def _sid(u: CurrentUser) -> UUID:
 
 
 @router.get("/health")
+@public
 async def exams_health():
     return {"module": "exams", "status": "ok"}
 

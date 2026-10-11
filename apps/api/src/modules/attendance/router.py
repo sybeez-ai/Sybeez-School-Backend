@@ -30,6 +30,7 @@ from src.modules.attendance.schemas import (
 from src.modules.attendance.service import AttendanceService
 from src.modules.reports.exporters import rows_to_csv
 from src.shared.enums import UserRole
+from src.modules.access.deps import public
 
 router = APIRouter(prefix="/attendance", tags=["attendance"])
 
@@ -41,6 +42,7 @@ def _sid(u: CurrentUser) -> UUID:
 
 
 @router.get("/health")
+@public
 async def attendance_health():
     return {"module": "attendance", "status": "ok"}
 
