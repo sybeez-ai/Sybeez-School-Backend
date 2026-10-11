@@ -163,6 +163,22 @@ jobs:
             --query 'tasks[0].containers[0].exitCode' --output text)
           if [ "$EXIT" != "0" ]; then
             echo "Migration task failed (exit=$EXIT)"
+            LOG_GROUP=$(jq -r --arg name "$MIGRATE_CONTAINER" \
+              '.containerDefinitions[] | select(.name==$name) | .logConfiguration.options["awslogs-group"] // empty' \
+              migrate-register.json)
+            LOG_PREFIX=$(jq -r --arg name "$MIGRATE_CONTAINER" \
+              '.containerDefinitions[] | select(.name==$name) | .logConfiguration.options["awslogs-stream-prefix"] // empty' \
+              migrate-register.json)
+            TASK_ID="${TASK_ARN##*/}"
+            if [ -n "$LOG_GROUP" ] && [ -n "$LOG_PREFIX" ]; then
+              echo "CloudWatch: $LOG_GROUP ${LOG_PREFIX}/${MIGRATE_CONTAINER}/${TASK_ID}"
+              aws logs get-log-events \
+                --log-group-name "$LOG_GROUP" \
+                --log-stream-name "${LOG_PREFIX}/${MIGRATE_CONTAINER}/${TASK_ID}" \
+                --limit 200 \
+                --query 'events[].message' \
+                --output text || true
+            fi
             exit 1
           fi
 
