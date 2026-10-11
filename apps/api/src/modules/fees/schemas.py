@@ -221,6 +221,9 @@ class PaymentOrderOut(BaseModel):
     currency: str
     gateway: str
     public_key: str | None = None
+    platform_fee_amount: Decimal | None = None
+    transfer_amount: Decimal | None = None
+    route_account_id: str | None = None
 
 
 class PaymentLinkIn(BaseModel):
@@ -255,6 +258,10 @@ class OnlinePaymentRow(BaseModel):
     paid_at: datetime | None = None
     created_at: datetime
     payment_link: bool = False
+    transfer_status: str | None = None
+    transfer_amount: Decimal | None = None
+    platform_fee_amount: Decimal | None = None
+    settlement_id: str | None = None
 
 
 class PaymentVerifyIn(BaseModel):
@@ -367,6 +374,16 @@ class FeeSettingsOut(BaseModel):
     invoice_prefix: str
     receipt_prefix: str
     payment_prefix: str
+    linked_account_id: str | None = None
+    route_status: str = "not_started"
+    platform_fee_percent: Decimal = Decimal("0")
+    platform_fee_fixed: Decimal | None = None
+    settlement_on_hold: bool = False
+    allow_platform_settlement: bool = False
+    bank_account_last4: str | None = None
+    bank_ifsc: str | None = None
+    beneficiary_name: str | None = None
+    legal_business_name: str | None = None
 
 
 class FeeSettingsUpdate(BaseModel):

@@ -388,6 +388,22 @@ class FeeSettings(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     invoice_prefix: Mapped[str] = mapped_column(String(16), nullable=False, default="INV")
     receipt_prefix: Mapped[str] = mapped_column(String(16), nullable=False, default="REC")
     payment_prefix: Mapped[str] = mapped_column(String(16), nullable=False, default="PAY")
+    linked_account_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    route_product_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    stakeholder_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    route_status: Mapped[str] = mapped_column(String(32), nullable=False, default="not_started")
+    platform_fee_percent: Mapped[Decimal] = mapped_column(
+        Numeric(7, 4), nullable=False, default=Decimal("0")
+    )
+    platform_fee_fixed: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    settlement_on_hold: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    settlement_hold_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    allow_platform_settlement: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    bank_account_last4: Mapped[str | None] = mapped_column(String(4), nullable=True)
+    bank_account_ciphertext: Mapped[str | None] = mapped_column(Text, nullable=True)
+    bank_ifsc: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    beneficiary_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    legal_business_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
 
 class FeeSequence(Base, UUIDPrimaryKeyMixin, TimestampMixin):

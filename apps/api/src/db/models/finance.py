@@ -6,7 +6,7 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Date, DateTime, ForeignKey, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -143,6 +143,33 @@ class FeeWebhookEvent(Base, UUIDPrimaryKeyMixin):
     payload: Mapped[str | None] = mapped_column(Text, nullable=True)
     processed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class FeeRouteTransfer(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """School share of a Razorpay Route payment. One row per fee payment."""
+
+    __tablename__ = "fee_route_transfers"
+    __table_args__ = (UniqueConstraint("payment_id", name="uq_fee_route_transfer_payment"),)
+
+    school_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    payment_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("fee_payments.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    linked_account_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    gateway_order_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    gateway_payment_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    gateway_transfer_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    currency: Mapped[str] = mapped_column(String(8), nullable=False, default="INR")
+    payment_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    transfer_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    platform_fee_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=Decimal("0"))
+    on_hold: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="created", index=True)
+    failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    settlement_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    settled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class FeePaymentTender(Base, UUIDPrimaryKeyMixin, TimestampMixin):

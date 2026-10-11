@@ -13,14 +13,23 @@ class MockGateway:
     name = "mock"
 
     async def create_order(
-        self, *, amount: Decimal, currency: str, receipt: str, notes: dict | None = None
+        self,
+        *,
+        amount: Decimal,
+        currency: str,
+        receipt: str,
+        notes: dict | None = None,
+        transfers: list[dict] | None = None,
     ) -> GatewayOrder:
+        meta = {"receipt": receipt, **(notes or {})}
+        if transfers:
+            meta["transfers"] = transfers
         return GatewayOrder(
             order_id=f"mock_order_{uuid4().hex[:12]}",
             amount=money(amount),
             currency=currency,
             provider=self.name,
-            meta={"receipt": receipt, **(notes or {})},
+            meta=meta,
         )
 
     async def verify_payment(
@@ -44,7 +53,10 @@ class MockGateway:
             raw={"provider": self.name},
         )
 
-    async def refund(self, *, payment_id: str, amount: Decimal) -> GatewayRefundResult:
+    async def refund(
+        self, *, payment_id: str, amount: Decimal, reverse_all: bool = False
+    ) -> GatewayRefundResult:
+        del reverse_all
         return GatewayRefundResult(
             success=True,
             refund_id=f"mock_rfnd_{uuid4().hex[:10]}",

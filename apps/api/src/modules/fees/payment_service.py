@@ -26,13 +26,16 @@ from src.db.models import (
     User,
 )
 from src.db.models.fee import StudentFeeAccount
-from src.db.models.finance import FeeWebhookEvent, FinanceApproval
+from src.db.models.finance import FeeRouteTransfer, FeeWebhookEvent, FinanceApproval
 from src.modules.fees.calculations import invoice_status_after_payment, money
 from src.modules.fees.crediting import assert_distinct_checker, is_failure_event, webhook_should_credit
 from src.modules.fees.gateways import get_gateway
 from src.modules.fees.ledger import post_ledger_entry
 from src.modules.fees.numbering import indian_financial_year
 from src.modules.fees.permissions import FINANCE_COLLECT_VALUES, FINANCE_VIEW_VALUES
+from src.modules.fees.route_money import PlatformFeeError, plan_razorpay_transfers
+from src.modules.fees.route_state import merge_transfer_status
+from src.modules.fees.route_webhooks import attach_captured_transfer, maybe_handle_route
 from src.modules.fees.receipt_pdf import build_receipt_pdf
 from src.modules.fees.reversal import reverse_payment_amount
 from src.modules.fees.schemas import (
@@ -179,11 +182,19 @@ class PaymentService:
 
         gateway = get_gateway(settings.gateway_provider)
         number = await self.fees.next_number(school_id, "PAYMENT", settings.payment_prefix)
+        order_notes = {"invoice_id": str(inv.id), "school_id": str(school_id), "payment_number": number}
+        try:
+            transfers, split = plan_razorpay_transfers(
+                settings, amount, inv.currency or settings.currency, order_notes
+            )
+        except PlatformFeeError as exc:
+            raise AppError(str(exc), status_code=422) from exc
         order = await gateway.create_order(
             amount=amount,
             currency=inv.currency or settings.currency,
             receipt=number,
-            notes={"invoice_id": str(inv.id)},
+            notes=order_notes,
+            transfers=transfers,
         )
         payment = Payment(
             id=uuid4(),
@@ -201,6 +212,23 @@ class PaymentService:
             notes=notes,
         )
         self.db.add(payment)
+        await self.db.flush()
+        if split is not None and transfers:
+            self.db.add(
+                FeeRouteTransfer(
+                    id=uuid4(),
+                    school_id=school_id,
+                    payment_id=payment.id,
+                    linked_account_id=transfers[0]["account"],
+                    gateway_order_id=order.order_id,
+                    currency=payment.currency,
+                    payment_amount=amount,
+                    transfer_amount=split.transfer_amount,
+                    platform_fee_amount=split.fee_amount,
+                    on_hold=bool(transfers[0].get("on_hold")),
+                    status="created",
+                )
+            )
         await self.db.commit()
         await self.db.refresh(payment)
         return PaymentOrderOut(
@@ -211,6 +239,9 @@ class PaymentService:
             currency=payment.currency,
             gateway=gateway.name,
             public_key=settings.gateway_public_key,
+            platform_fee_amount=split.fee_amount if split else None,
+            transfer_amount=split.transfer_amount if split else None,
+            route_account_id=transfers[0]["account"] if transfers else None,
         )
 
     async def create_payment_link(
@@ -261,6 +292,12 @@ class PaymentService:
         payments = (
             await self.db.execute(q.order_by(Payment.created_at.desc()))
         ).scalars().all()
+        transfer_rows = (
+            await self.db.execute(
+                select(FeeRouteTransfer).where(FeeRouteTransfer.school_id == school_id)
+            )
+        ).scalars().all()
+        transfers = {row.payment_id: row for row in transfer_rows}
         out: list[OnlinePaymentRow] = []
         for payment in payments:
             if payment.school_id != school_id:
@@ -290,6 +327,12 @@ class PaymentService:
                     paid_at=payment.paid_at,
                     created_at=payment.created_at,
                     payment_link=payment.notes == "payment_link",
+                    transfer_status=transfers[payment.id].status if payment.id in transfers else None,
+                    transfer_amount=money(transfers[payment.id].transfer_amount) if payment.id in transfers else None,
+                    platform_fee_amount=(
+                        money(transfers[payment.id].platform_fee_amount) if payment.id in transfers else None
+                    ),
+                    settlement_id=transfers[payment.id].settlement_id if payment.id in transfers else None,
                 )
             )
         return out
@@ -352,10 +395,15 @@ class PaymentService:
             raise AppError("Mock webhooks are disabled in production", status_code=403)
         gateway = get_gateway(provider)
         result = await gateway.handle_webhook(payload=payload, headers=headers, raw_body=raw_body)
-        if not result.success or not result.order_id:
+        if not result.success:
             raise AppError("Invalid webhook", status_code=400)
 
         event_id = self._event_id(headers, raw_body, payload)
+        routed = await maybe_handle_route(self, result, event_id, payload)
+        if routed is not None:
+            return routed
+        if not result.order_id:
+            raise AppError("Invalid webhook", status_code=400)
         # Order ids are global at the gateway. Bypass RLS only for this lookup.
         await set_rls_bypass(self.db, True)
         payment = (
@@ -625,6 +673,7 @@ class PaymentService:
             )
             self.db.add(receipt)
 
+        await attach_captured_transfer(self, payment)
         await self.fees._audit(
             payment.school_id,
             actor_user_id,
@@ -892,12 +941,21 @@ class PaymentService:
             and bool(payment.gateway_payment_id)
             and not refund.gateway_refund_id
         )
+        transfer = (
+            await self.db.execute(
+                select(FeeRouteTransfer).where(
+                    FeeRouteTransfer.school_id == school_id,
+                    FeeRouteTransfer.payment_id == payment.id,
+                )
+            )
+        ).scalar_one_or_none()
         if needs_gateway:
             gateway = get_gateway(payment.gateway or "mock")
             try:
                 result = await gateway.refund(
                     payment_id=payment.gateway_payment_id or payment.payment_number,
                     amount=money(refund.amount),
+                    reverse_all=transfer is not None,
                 )
             except Exception:
                 await bind_tenant(self.db, school_id)
@@ -943,6 +1001,16 @@ class PaymentService:
         refund.status = RefundStatus.SUCCESS.value
         refund.approved_by = user_id
         refund.decision_note = note
+        transfer = (
+            await self.db.execute(
+                select(FeeRouteTransfer).where(
+                    FeeRouteTransfer.school_id == school_id,
+                    FeeRouteTransfer.payment_id == payment.id,
+                )
+            )
+        ).scalar_one_or_none()
+        if transfer is not None:
+            transfer.status = merge_transfer_status(transfer.status, "reversed")
         approval = (
             await self.db.execute(
                 select(FinanceApproval).where(

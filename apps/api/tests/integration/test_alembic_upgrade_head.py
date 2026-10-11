@@ -39,7 +39,7 @@ async def test_upgrade_head_on_empty_postgres():
         conn = await asyncpg.connect(user="sybeez", password="sybeez", host="127.0.0.1", database=name)
         try:
             versions = await conn.fetch("SELECT version_num FROM alembic_version")
-            assert [row["version_num"] for row in versions] == ["0053"]
+            assert [row["version_num"] for row in versions] == ["0054"]
             templates = await conn.fetchval(
                 "SELECT count(*) FROM alert_message_templates WHERE school_id IS NULL"
             )

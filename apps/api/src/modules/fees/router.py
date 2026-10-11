@@ -40,6 +40,17 @@ from src.modules.fees.schemas import (
     RefundOut,
     StructureItemIn,
 )
+from src.modules.fees.route_reports import RouteReportService
+from src.modules.fees.route_schemas import (
+    PlatformFeeReportOut,
+    ReconciliationRowOut,
+    RouteAccountIn,
+    RouteSettlementIn,
+    RouteStakeholderIn,
+    RouteStatusOut,
+    TransferRowOut,
+)
+from src.modules.fees.route_service import RouteService
 from src.modules.fees.service import FeeService
 from src.modules.finance.service import FinanceService
 from src.shared.enums import UserRole
@@ -671,3 +682,90 @@ async def report_overdue(
 ):
     rows = await FeeService(db).report_outstanding(_sid(user))
     return [r for r in rows if r.days_overdue > 0]
+
+
+def _ip(request: Request) -> str | None:
+    return request.client.host if request.client else None
+
+
+@router.get("/fees/route", response_model=RouteStatusOut)
+async def get_route_status(
+    db: Annotated[AsyncSession, Depends(scoped_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(*FINANCE_VIEW))],
+):
+    return await RouteService(db).status(_sid(user))
+
+
+@router.post("/fees/route/account", response_model=RouteStatusOut)
+async def create_route_account(
+    body: RouteAccountIn,
+    request: Request,
+    db: Annotated[AsyncSession, Depends(scoped_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(*FINANCE_SETUP))],
+):
+    return await RouteService(db).create_account(_sid(user), user.id, body, ip=_ip(request))
+
+
+@router.post("/fees/route/stakeholder", response_model=RouteStatusOut)
+async def create_route_stakeholder(
+    body: RouteStakeholderIn,
+    request: Request,
+    db: Annotated[AsyncSession, Depends(scoped_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(*FINANCE_SETUP))],
+):
+    return await RouteService(db).add_stakeholder(_sid(user), user.id, body, ip=_ip(request))
+
+
+@router.post("/fees/route/settlement", response_model=RouteStatusOut)
+async def configure_route_settlement(
+    body: RouteSettlementIn,
+    request: Request,
+    db: Annotated[AsyncSession, Depends(scoped_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(*FINANCE_SETUP))],
+):
+    return await RouteService(db).configure_settlement(_sid(user), user.id, body, ip=_ip(request))
+
+
+@router.post("/fees/route/refresh", response_model=RouteStatusOut)
+async def refresh_route_status(
+    request: Request,
+    db: Annotated[AsyncSession, Depends(scoped_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(*FINANCE_SETUP))],
+):
+    return await RouteService(db).refresh(_sid(user), user.id, ip=_ip(request))
+
+
+@router.get("/fees/route/reports/transfers", response_model=list[TransferRowOut])
+async def route_transfers(
+    db: Annotated[AsyncSession, Depends(scoped_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(*FINANCE_VIEW))],
+    status: str | None = None,
+):
+    return await RouteReportService(db).transfers(_sid(user), status)
+
+
+@router.get("/fees/route/reports/failed-transfers", response_model=list[TransferRowOut])
+async def route_failed_transfers(
+    db: Annotated[AsyncSession, Depends(scoped_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(*FINANCE_VIEW))],
+):
+    return await RouteReportService(db).failed_transfers(_sid(user))
+
+
+@router.get("/fees/route/reports/platform-fees", response_model=PlatformFeeReportOut)
+async def route_platform_fees(
+    db: Annotated[AsyncSession, Depends(scoped_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(*FINANCE_VIEW))],
+):
+    return await RouteReportService(db).platform_fees(_sid(user))
+
+
+@router.get("/fees/route/reports/reconciliation", response_model=list[ReconciliationRowOut])
+async def route_reconciliation(
+    db: Annotated[AsyncSession, Depends(scoped_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(*FINANCE_VIEW))],
+):
+    settings = await FeeService(db).get_or_create_settings(_sid(user))
+    return await RouteReportService(db).reconciliation(
+        _sid(user), allow_platform_settlement=bool(settings.allow_platform_settlement)
+    )

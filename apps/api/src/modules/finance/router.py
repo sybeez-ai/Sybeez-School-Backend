@@ -6,7 +6,7 @@ from datetime import date
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, Query
+from fastapi import APIRouter, Depends, Header, Query, Request
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +14,18 @@ from src.api.dependencies import CurrentUser, get_current_user, require_roles
 from src.core.database import get_db
 from src.core.exceptions import ForbiddenError
 from src.modules.fees.payment_service import PaymentService
+from src.modules.fees.route_reports import RouteReportService
+from src.modules.fees.route_schemas import (
+    PlatformFeeReportOut,
+    ReconciliationRowOut,
+    RouteAccountIn,
+    RouteSettlementIn,
+    RouteStakeholderIn,
+    RouteStatusOut,
+    TransferRowOut,
+)
+from src.modules.fees.route_service import RouteService
+from src.modules.fees.service import FeeService
 from src.modules.fees.permissions import FINANCE_VIEW
 from src.modules.fees.schemas import ReceiptOut, RefundIn, RefundOut
 from src.modules.fees.tenant import bind_tenant
@@ -545,3 +557,72 @@ async def audit_log(svc: Annotated[FinanceService, Depends(_svc)]):
 async def schedule_reminders(svc: Annotated[FinanceService, Depends(_svc)]):
     assert_finance(svc.role, "reminders.run")
     return await svc.schedule_reminders()
+
+
+def _ip(request: Request) -> str | None:
+    return request.client.host if request.client else None
+
+
+@router.get("/route", response_model=RouteStatusOut)
+async def finance_route_status(svc: Annotated[FinanceService, Depends(_svc)]):
+    assert_finance(svc.role, "reports.read")
+    return await RouteService(svc.db).status(svc.school_id)
+
+
+@router.post("/route/account", response_model=RouteStatusOut)
+async def finance_route_account(
+    body: RouteAccountIn, request: Request, svc: Annotated[FinanceService, Depends(_svc)]
+):
+    assert_finance(svc.role, "route.manage")
+    return await RouteService(svc.db).create_account(svc.school_id, svc.user_id, body, ip=_ip(request))
+
+
+@router.post("/route/stakeholder", response_model=RouteStatusOut)
+async def finance_route_stakeholder(
+    body: RouteStakeholderIn, request: Request, svc: Annotated[FinanceService, Depends(_svc)]
+):
+    assert_finance(svc.role, "route.manage")
+    return await RouteService(svc.db).add_stakeholder(svc.school_id, svc.user_id, body, ip=_ip(request))
+
+
+@router.post("/route/settlement", response_model=RouteStatusOut)
+async def finance_route_settlement(
+    body: RouteSettlementIn, request: Request, svc: Annotated[FinanceService, Depends(_svc)]
+):
+    assert_finance(svc.role, "route.manage")
+    return await RouteService(svc.db).configure_settlement(svc.school_id, svc.user_id, body, ip=_ip(request))
+
+
+@router.post("/route/refresh", response_model=RouteStatusOut)
+async def finance_route_refresh(request: Request, svc: Annotated[FinanceService, Depends(_svc)]):
+    assert_finance(svc.role, "route.manage")
+    return await RouteService(svc.db).refresh(svc.school_id, svc.user_id, ip=_ip(request))
+
+
+@router.get("/route/reports/transfers", response_model=list[TransferRowOut])
+async def finance_route_transfers(
+    svc: Annotated[FinanceService, Depends(_svc)], status: str | None = None
+):
+    assert_finance(svc.role, "reports.read")
+    return await RouteReportService(svc.db).transfers(svc.school_id, status)
+
+
+@router.get("/route/reports/failed-transfers", response_model=list[TransferRowOut])
+async def finance_route_failed(svc: Annotated[FinanceService, Depends(_svc)]):
+    assert_finance(svc.role, "reports.read")
+    return await RouteReportService(svc.db).failed_transfers(svc.school_id)
+
+
+@router.get("/route/reports/platform-fees", response_model=PlatformFeeReportOut)
+async def finance_route_platform_fees(svc: Annotated[FinanceService, Depends(_svc)]):
+    assert_finance(svc.role, "reports.read")
+    return await RouteReportService(svc.db).platform_fees(svc.school_id)
+
+
+@router.get("/route/reports/reconciliation", response_model=list[ReconciliationRowOut])
+async def finance_route_reconciliation(svc: Annotated[FinanceService, Depends(_svc)]):
+    assert_finance(svc.role, "reports.read")
+    settings = await FeeService(svc.db).get_or_create_settings(svc.school_id)
+    return await RouteReportService(svc.db).reconciliation(
+        svc.school_id, allow_platform_settlement=bool(settings.allow_platform_settlement)
+    )

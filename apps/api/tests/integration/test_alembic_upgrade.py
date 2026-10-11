@@ -1,4 +1,4 @@
-"""Migrations apply through 0053 on an empty Postgres 16 database."""
+"""Migrations apply through 0054 on an empty Postgres 16 database."""
 
 import os
 import subprocess
@@ -46,7 +46,7 @@ def test_upgrade_head_on_empty_database():
     conn = psycopg2.connect(APP_DSN)
     cur = conn.cursor()
     cur.execute("SELECT version_num FROM alembic_version")
-    assert cur.fetchone()[0] == "0053"
+    assert cur.fetchone()[0] == "0054"
     cur.execute("SELECT count(*) FROM alert_message_templates WHERE school_id IS NULL")
     assert cur.fetchone()[0] == 33
     cur.execute(
@@ -115,4 +115,17 @@ def test_upgrade_head_on_empty_database():
         """
     )
     assert {row[0] for row in cur.fetchall()} == {"rls_role", "rls_has", "rls_tenant", "rls_staff_portal"}
+    cur.execute(
+        """
+        SELECT column_name FROM information_schema.columns
+        WHERE table_name = 'fee_settings' AND column_name = 'linked_account_id'
+        """
+    )
+    assert cur.fetchone()[0] == "linked_account_id"
+    cur.execute(
+        """
+        SELECT relforcerowsecurity FROM pg_class WHERE relname = 'fee_route_transfers'
+        """
+    )
+    assert cur.fetchone()[0] is True
     conn.close()
