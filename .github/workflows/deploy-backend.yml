@@ -366,7 +366,8 @@ jobs:
             # was removed from seed.py in 5f2b87f; recover that deleted line,
             # mask it, and do not print it. Later runs prefer the Actions secret.
             echo "Actions secret is unset; recovering the removed seed constant"
-            git fetch --depth=1 origin 5f2b87f
+            # A 7-character SHA is a ref name. GitHub serves the full object id.
+            git fetch --depth=1 origin 5f2b87f3ec9e68a659b7e3e19f97949661a333ae
             python3 .github/scripts/recover_superadmin_password.py
             SUPERADMIN_INITIAL_PASSWORD="$(cat provision-password.txt)"
             rm -f provision-password.txt
