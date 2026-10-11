@@ -352,23 +352,103 @@ jobs:
         run: |
           set -euo pipefail
           umask 077
-          cleanup() { rm -f provision-overrides.json; }
+          cleanup() { rm -f provision-overrides.json provision-password.txt superadmin-secret.json cognito-err.txt sm-err.txt; }
           trap cleanup EXIT
           if [ -z "${TASK_DEF:-}" ]; then
             echo "API task definition ARN is missing"
             exit 1
           fi
-          if [ -n "${SUPERADMIN_INITIAL_PASSWORD:-}" ]; then
-            echo "Passing the super admin password from the GitHub Actions secret"
-            jq -n --arg name "$API_CONTAINER" --arg pw "$SUPERADMIN_INITIAL_PASSWORD" \
-              '{containerOverrides:[{name:$name,command:["python","-m","src.modules.platform.provision_superadmin"],environment:[{name:"SUPERADMIN_INITIAL_PASSWORD",value:$pw}]}]}' \
-              > provision-overrides.json
+          if [ -z "${SUPERADMIN_INITIAL_PASSWORD:-}" ]; then
+            # The Actions token cannot write repository secrets. The password
+            # was removed from seed.py in 5f2b87f; recover that deleted line,
+            # mask it, and do not print it. Later runs prefer the Actions secret.
+            echo "Actions secret is unset; recovering the removed seed constant"
+            git fetch --depth=1 origin 5f2b87f
+            python3 .github/scripts/recover_superadmin_password.py
+            SUPERADMIN_INITIAL_PASSWORD="$(cat provision-password.txt)"
+            rm -f provision-password.txt
+            if [ -z "$SUPERADMIN_INITIAL_PASSWORD" ]; then
+              echo "Could not recover the super admin password"
+              exit 1
+            fi
+            echo "::add-mask::$SUPERADMIN_INITIAL_PASSWORD"
+            echo "Recovered the super admin password and masked it"
           else
-            echo "SUPERADMIN_INITIAL_PASSWORD is unset; the task will read Secrets Manager"
-            jq -n --arg name "$API_CONTAINER" \
-              '{containerOverrides:[{name:$name,command:["python","-m","src.modules.platform.provision_superadmin"]}]}' \
-              > provision-overrides.json
+            echo "Using the super admin password from the GitHub Actions secret"
           fi
+          AUTH_MODE=$(aws ecs describe-task-definition --task-definition "$TASK_DEF" \
+            --query "taskDefinition.containerDefinitions[?name=='${API_CONTAINER}'].environment[?name=='AUTH_MODE'].value | [0][0]" \
+            --output text)
+          COGNITO_REGION=$(aws ecs describe-task-definition --task-definition "$TASK_DEF" \
+            --query "taskDefinition.containerDefinitions[?name=='${API_CONTAINER}'].environment[?name=='COGNITO_REGION'].value | [0][0]" \
+            --output text)
+          POOL=$(aws ecs describe-task-definition --task-definition "$TASK_DEF" \
+            --query "taskDefinition.containerDefinitions[?name=='${API_CONTAINER}'].environment[?name=='COGNITO_USER_POOL_ID'].value | [0][0]" \
+            --output text)
+          echo "AUTH_MODE=$AUTH_MODE COGNITO_REGION=$COGNITO_REGION pool_configured=$([ -n "$POOL" ] && [ "$POOL" != "None" ] && echo yes || echo no)"
+          jq -n --arg pw "$SUPERADMIN_INITIAL_PASSWORD" '{SUPERADMIN_INITIAL_PASSWORD:$pw}' > superadmin-secret.json
+          if aws secretsmanager put-secret-value --secret-id sybeez-school/superadmin --secret-string file://superadmin-secret.json >/dev/null 2>sm-err.txt; then
+            echo "Updated Secrets Manager secret sybeez-school/superadmin"
+          else
+            echo "Secrets Manager update was not applied ($(python3 .github/scripts/aws_error_code.py < sm-err.txt))"
+          fi
+          rm -f superadmin-secret.json sm-err.txt
+          if [ -n "$POOL" ] && [ "$POOL" != "None" ]; then
+            cognito_code() {
+              python3 .github/scripts/aws_error_code.py
+            }
+            set +e
+            aws cognito-idp admin-get-user --region "$COGNITO_REGION" --user-pool-id "$POOL" --username admin@sybeez.ai >/dev/null 2>cognito-err.txt
+            get_code=$?
+            set -e
+            if [ "$get_code" -ne 0 ]; then
+              echo "Cognito admin-get-user admin@sybeez.ai $(cognito_code < cognito-err.txt)"
+              set +e
+              aws cognito-idp admin-create-user --region "$COGNITO_REGION" --user-pool-id "$POOL" \
+                --username admin@sybeez.ai --message-action SUPPRESS \
+                --user-attributes Name=email,Value=admin@sybeez.ai Name=email_verified,Value=true \
+                >/dev/null 2>cognito-err.txt
+              create_code=$?
+              set -e
+              if [ "$create_code" -ne 0 ]; then
+                echo "Cognito admin-create-user admin@sybeez.ai $(cognito_code < cognito-err.txt)"
+              else
+                echo "Cognito admin-create-user admin@sybeez.ai ok"
+              fi
+            else
+              echo "Cognito admin-get-user admin@sybeez.ai ok"
+            fi
+            set +e
+            aws cognito-idp admin-set-user-password --region "$COGNITO_REGION" --user-pool-id "$POOL" \
+              --username admin@sybeez.ai --password "$SUPERADMIN_INITIAL_PASSWORD" --permanent \
+              >/dev/null 2>cognito-err.txt
+            set_code=$?
+            set -e
+            if [ "$set_code" -ne 0 ]; then
+              echo "Cognito admin-set-user-password admin@sybeez.ai $(cognito_code < cognito-err.txt)"
+            else
+              echo "Cognito admin-set-user-password admin@sybeez.ai ok"
+              aws cognito-idp admin-enable-user --region "$COGNITO_REGION" --user-pool-id "$POOL" \
+                --username admin@sybeez.ai >/dev/null 2>cognito-err.txt || true
+            fi
+            set +e
+            aws cognito-idp admin-disable-user --region "$COGNITO_REGION" --user-pool-id "$POOL" \
+              --username admin@cybis.ai >/dev/null 2>cognito-err.txt
+            disable_code=$?
+            aws cognito-idp admin-delete-user --region "$COGNITO_REGION" --user-pool-id "$POOL" \
+              --username admin@cybis.ai >/dev/null 2>cognito-err.txt
+            delete_code=$?
+            set -e
+            if [ "$delete_code" -eq 0 ]; then
+              echo "Cognito admin-delete-user admin@cybis.ai ok"
+            else
+              echo "Cognito admin-delete-user admin@cybis.ai $(cognito_code < cognito-err.txt) disable_exit=$disable_code"
+            fi
+            rm -f cognito-err.txt
+          fi
+          jq -n --arg name "$API_CONTAINER" --arg pw "$SUPERADMIN_INITIAL_PASSWORD" \
+            '{containerOverrides:[{name:$name,command:["python","-m","src.modules.platform.provision_superadmin"],environment:[{name:"SUPERADMIN_INITIAL_PASSWORD",value:$pw}]}]}' \
+            > provision-overrides.json
           SUBNETS=$(printf '%s' "$AWS_BACKEND_SUBNETS" | tr -d ' ')
           PUBLIC_IP=$(printf '%s' "${AWS_BACKEND_ASSIGN_PUBLIC_IP:-DISABLED}" | tr '[:lower:]' '[:upper:]')
           TASK_ARN=$(aws ecs run-task \

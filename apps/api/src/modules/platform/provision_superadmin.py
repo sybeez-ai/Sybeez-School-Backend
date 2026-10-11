@@ -82,6 +82,7 @@ async def upsert_superadmin(db: AsyncSession, *, email: str, password: str) -> s
         await db.flush()
         logger.info("Created super admin %s", email)
         return "created"
+    user.email = email
     apply_superadmin(user, password_hash=password_hash)
     await db.flush()
     logger.info("Reset super admin %s", email)
@@ -132,7 +133,8 @@ async def provision() -> int:
     except Exception as exc:
         code = cognito_error_code(exc)
         cognito_state = "denied" if cognito_admin_denied(exc) else "failed"
-        cognito_ok = cognito_state != "failed"
+        if cognito_state == "failed":
+            cognito_ok = False
         logger.error("Cognito password set failed for %s (%s)", email, code)
     try:
         retired_cognito = retire_cognito_user(retired)
