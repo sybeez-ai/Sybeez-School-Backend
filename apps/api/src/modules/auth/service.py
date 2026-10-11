@@ -236,7 +236,7 @@ class AuthService:
     _PORTAL_ROLES = {
         "platform": {UserRole.PLATFORM_ADMIN},
         "school": {UserRole.SCHOOL_ADMIN},
-        "hrm": {UserRole.SCHOOL_ADMIN, UserRole.HR_MANAGER, UserRole.PAYROLL_APPROVER},
+        "hrm": {UserRole.SCHOOL_ADMIN, UserRole.HR, UserRole.HR_MANAGER, UserRole.PAYROLL_APPROVER},
         "payroll": {
             UserRole.SCHOOL_ADMIN,
             UserRole.PAYROLL_ADMIN,
@@ -254,6 +254,7 @@ class AuthService:
         "teacher": {UserRole.TEACHER},
         "student": {UserRole.STUDENT},
         "parent": {UserRole.PARENT},
+        "staff": {UserRole.STAFF},
     }
 
     async def _assert_portal_role(self, user: User, portal: str | None, *, school_id_hint=None) -> None:
@@ -292,6 +293,10 @@ class AuthService:
                 raise ForbiddenError(
                     "This account is a school admin. Sign in at /login/school only."
                 )
+            if role == UserRole.HR:
+                raise ForbiddenError(
+                    "This account is an HR user. Sign in at /login/hrm only."
+                )
             if role == UserRole.HR_MANAGER:
                 raise ForbiddenError(
                     "This account is an HR manager. Sign in at /login/hrm only."
@@ -315,6 +320,10 @@ class AuthService:
             if role == UserRole.PARENT:
                 raise ForbiddenError(
                     "This account is a parent. Sign in at /login/parent only."
+                )
+            if role == UserRole.STAFF:
+                raise ForbiddenError(
+                    "This account is a staff member. Sign in at /login/staff only."
                 )
             raise ForbiddenError(
                 f"This account cannot sign in on the {key} portal."

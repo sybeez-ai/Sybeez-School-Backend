@@ -94,8 +94,10 @@ def _align(connection: Connection) -> str:
         f"Restamped alembic_version to {STAMP_TARGET}. "
         "upgrade will apply HRM 0028 through payroll 0040, then idempotent finance 0041-0043, "
         "then payroll 0044-0046, then platform access 0047-0049, then role aliases 0050, "
-        "then WhatsApp alerts 0053, then teacher staff row 0054. "
-        "Revisions 0051 and 0052 are reserved for hrm-integration.",
+        "then WhatsApp alerts 0053, then a teacher's own staff row 0054, "
+        "then Razorpay Route 0055, then HR constraint names 0056, HR specification 0057, "
+        "and HR operations 0058. "
+        "Revisions 0051 and 0052 stay unused so they are not inserted ahead of the applied 0053 stamp.",
         file=sys.stderr,
         flush=True,
     )

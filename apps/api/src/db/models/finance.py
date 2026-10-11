@@ -6,7 +6,19 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Date, DateTime, ForeignKey, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    Date,
+    DateTime,
+    ForeignKey,
+    Index,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -145,6 +157,33 @@ class FeeWebhookEvent(Base, UUIDPrimaryKeyMixin):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class FeeRouteTransfer(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """School share of a Razorpay Route payment. One row per fee payment."""
+
+    __tablename__ = "fee_route_transfers"
+    __table_args__ = (UniqueConstraint("payment_id", name="uq_fee_route_transfer_payment"),)
+
+    school_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    payment_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("fee_payments.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    linked_account_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    gateway_order_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    gateway_payment_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    gateway_transfer_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    currency: Mapped[str] = mapped_column(String(8), nullable=False, default="INR")
+    payment_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    transfer_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    platform_fee_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=Decimal("0"))
+    on_hold: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="created", index=True)
+    failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    settlement_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    settled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class FeePaymentTender(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "fee_payment_tenders"
 
@@ -239,3 +278,75 @@ class FineWaiverRequest(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     approved_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     decision_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class ExpenseHead(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """A school expense account, such as electricity or stationery."""
+
+    __tablename__ = "expense_heads"
+    __table_args__ = (
+        Index(
+            "uq_expense_heads_school_code",
+            "school_id",
+            text("lower(code)"),
+            unique=True,
+        ),
+    )
+
+    school_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    code: Mapped[str] = mapped_column(String(32), nullable=False)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+
+class SchoolExpense(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """A vendor bill. GST is stored so the voucher can be filed."""
+
+    __tablename__ = "school_expenses"
+    __table_args__ = (
+        UniqueConstraint("school_id", "voucher_no", name="uq_school_expenses_voucher"),
+        CheckConstraint(
+            "status IN ('DRAFT', 'SUBMITTED', 'APPROVED', 'REJECTED', 'PAID')",
+            name="status_allowed",
+        ),
+        CheckConstraint("taxable_amount >= 0 AND gst_amount >= 0 AND total_amount >= 0", name="amounts_non_negative"),
+        CheckConstraint("gst_rate >= 0 AND gst_rate <= 100", name="gst_rate_range"),
+        CheckConstraint("status <> 'PAID' OR paid_on IS NOT NULL", name="paid_has_date"),
+    )
+
+    school_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    head_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    voucher_no: Mapped[str] = mapped_column(String(32), nullable=False)
+    vendor_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    vendor_gstin: Mapped[str | None] = mapped_column(String(15), nullable=True)
+    invoice_number: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    invoice_date: Mapped[date] = mapped_column(Date, nullable=False)
+    taxable_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    gst_rate: Mapped[Decimal] = mapped_column(Numeric(6, 2), nullable=False, default=Decimal("0"))
+    gst_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=Decimal("0"))
+    total_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    payment_mode: Mapped[str] = mapped_column(String(16), nullable=False, default="BANK")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="DRAFT", index=True)
+    narration: Mapped[str | None] = mapped_column(Text, nullable=True)
+    branch_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
+    requested_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    approved_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    paid_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    decision_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class ExpenseLedgerEntry(Base, UUIDPrimaryKeyMixin):
+    """Append-only lines posted when an expense is approved and when it is paid."""
+
+    __tablename__ = "expense_ledger_entries"
+
+    school_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    expense_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    entry_date: Mapped[date] = mapped_column(Date, nullable=False)
+    account: Mapped[str] = mapped_column(String(32), nullable=False)
+    debit: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=Decimal("0"))
+    credit: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=Decimal("0"))
+    narration: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

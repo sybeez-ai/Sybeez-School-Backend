@@ -1540,12 +1540,11 @@ class PayrollService(PayrollFlow):
                 raise AppError("Could not store the payslip PDF", status_code=500) from exc
             slip.status = "PUBLISHED"
             slip.published_at = _now()
-            user_id = None
-            if employee and employee.user_id:
-                user_id = employee.user_id
-            elif employee and employee.teacher_id:
+            if employee and employee.user_id is None and employee.teacher_id:
                 teacher = await self.db.get(Teacher, employee.teacher_id)
-                user_id = teacher.user_id if teacher else None
+                if teacher and teacher.user_id:
+                    employee.user_id = teacher.user_id
+            user_id = employee.user_id if employee else None
             await notify_payslip_published(
                 self.db,
                 school_id=self.school_id,
@@ -1578,12 +1577,20 @@ class PayrollService(PayrollFlow):
         )
         await self._audit("run.publish", "payroll_run", run.id, None, {"payslips": len(slips)}, reason)
 
+    def _owns_payslip(self, slip: PayrollPayslip, employee: Employee) -> bool:
+        if slip.employee_id == employee.id:
+            return True
+        return employee.teacher_id is not None and slip.teacher_id == employee.teacher_id
+
     async def my_payslips(self, year: int | None) -> list[PayrollPayslip]:
         await self._bind()
         employee = await self._employee_for_user()
+        owned = [PayrollPayslip.employee_id == employee.id]
+        if employee.teacher_id is not None:
+            owned.append(PayrollPayslip.teacher_id == employee.teacher_id)
         stmt = select(PayrollPayslip).where(
             PayrollPayslip.school_id == self.school_id,
-            PayrollPayslip.employee_id == employee.id,
+            or_(*owned),
             PayrollPayslip.status.in_(VISIBLE),
         )
         if year:
@@ -1603,13 +1610,13 @@ class PayrollService(PayrollFlow):
         owns = False
         if held.isdisjoint(READ):
             employee = await self._employee_for_user()
-            if slip.employee_id != employee.id or slip.status not in VISIBLE:
+            if not self._owns_payslip(slip, employee) or slip.status not in VISIBLE:
                 raise NotFoundError("Payslip not found")
             owns = True
         else:
             try:
                 me = await self._employee_for_user()
-                owns = slip.employee_id == me.id
+                owns = self._owns_payslip(slip, me)
             except NotFoundError:
                 owns = False
         if owns:

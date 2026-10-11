@@ -11,6 +11,7 @@ ROLE_HIERARCHY: dict[UserRole, int] = {
     UserRole.HR_MANAGER: 68,
     UserRole.PAYROLL_APPROVER: 64,
     UserRole.TEACHER: 60,
+    UserRole.STAFF: 55,
     UserRole.PARENT: 40,
     UserRole.STUDENT: 20,
 }
@@ -30,6 +31,7 @@ SCHOOL_ROLES = {
     UserRole.FINANCE,
     UserRole.HR,
     UserRole.PAYROLL_APPROVER,
+    UserRole.STAFF,
 }
 
 

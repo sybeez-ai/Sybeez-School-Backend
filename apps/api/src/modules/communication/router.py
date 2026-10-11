@@ -34,14 +34,19 @@ CAMPUS_ROLES = (
     UserRole.STUDENT,
     UserRole.PARENT,
     UserRole.TEACHER,
+    UserRole.STAFF,
     UserRole.SCHOOL_ADMIN,
 )
+# Release inbox roles, plus non-teaching STAFF and the HR membership role.
 INBOX_ROLES = CAMPUS_ROLES + (
+    UserRole.HR,
     UserRole.HR_MANAGER,
     UserRole.PAYROLL_ADMIN,
     UserRole.PAYROLL_APPROVER,
     UserRole.ACCOUNTANT,
+    UserRole.CASHIER,
     UserRole.AUDITOR,
+    UserRole.FINANCE,
 )
 
 router = APIRouter(prefix="/communication", tags=["communication"])
@@ -73,9 +78,7 @@ async def list_notifications(
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[
         CurrentUser,
-        Depends(
-            require_roles(*INBOX_ROLES)
-        ),
+        Depends(require_roles(*INBOX_ROLES)),
     ],
     unread: bool | None = Query(None),
     page: int = Query(1, ge=1),
@@ -92,9 +95,7 @@ async def unread_count(
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[
         CurrentUser,
-        Depends(
-            require_roles(*INBOX_ROLES)
-        ),
+        Depends(require_roles(*INBOX_ROLES)),
     ],
     scope: Literal["hr"] | None = Query(None),
 ):
@@ -107,9 +108,7 @@ async def mark_notification_read(
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[
         CurrentUser,
-        Depends(
-            require_roles(*INBOX_ROLES)
-        ),
+        Depends(require_roles(*INBOX_ROLES)),
     ],
 ):
     return await CommunicationService(db).mark_read(user.id, notification_id)
@@ -120,9 +119,7 @@ async def mark_all_read(
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[
         CurrentUser,
-        Depends(
-            require_roles(*INBOX_ROLES)
-        ),
+        Depends(require_roles(*INBOX_ROLES)),
     ],
     scope: Literal["hr"] | None = Query(None),
 ):
@@ -135,9 +132,7 @@ async def delete_notification(
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[
         CurrentUser,
-        Depends(
-            require_roles(*INBOX_ROLES)
-        ),
+        Depends(require_roles(*INBOX_ROLES)),
     ],
 ):
     await CommunicationService(db).delete_notification(user.id, notification_id)
@@ -151,9 +146,7 @@ async def get_preferences(
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[
         CurrentUser,
-        Depends(
-            require_roles(*CAMPUS_ROLES)
-        ),
+        Depends(require_roles(*INBOX_ROLES)),
     ],
 ):
     return await CommunicationService(db).get_preferences(user.id, user.school_id)
@@ -165,9 +158,7 @@ async def update_preferences(
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[
         CurrentUser,
-        Depends(
-            require_roles(*CAMPUS_ROLES)
-        ),
+        Depends(require_roles(*INBOX_ROLES)),
     ],
 ):
     return await CommunicationService(db).update_preferences(user.id, user.school_id, body)

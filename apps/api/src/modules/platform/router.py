@@ -7,9 +7,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import CurrentUser, require_admin_or_above, require_roles, require_super_admin
 from src.core.database import get_db
-from src.db.models import User
+from src.db.models import School, User
 from src.modules.audit.schemas import AuditLogOut
 from src.modules.audit.service import AuditService
+from src.modules.fees.route_schemas import PlatformRouteUpdate, RouteSchoolOut
+from src.modules.fees.route_service import RouteService
 from src.modules.platform.saas_service import PlatformSaasService
 from src.modules.platform.schemas import (
     InvitationCreate,
@@ -584,6 +586,26 @@ async def invite_staff(
         "expires_at": inv.expires_at.isoformat(),
         "invite_token": raw,
     }
+
+
+@router.get("/route/accounts", response_model=list[RouteSchoolOut])
+async def list_route_accounts(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _: Annotated[CurrentUser, Depends(require_super_admin)],
+):
+    return await RouteService(db).list_schools()
+
+
+@router.patch("/schools/{school_id}/route", response_model=RouteSchoolOut)
+async def update_school_route(
+    school_id: UUID,
+    body: PlatformRouteUpdate,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_super_admin)],
+):
+    status = await RouteService(db).update_platform_fees(school_id, user.id, body)
+    school = await db.get(School, school_id)
+    return RouteSchoolOut(school_name=school.name if school else "", **status.model_dump())
 
 
 @router.get("/ai/usage", response_model=PlatformAiOverview)

@@ -1,4 +1,4 @@
-"""Migrations apply through 0054 on an empty Postgres 16 database."""
+"""Migrations apply through 0060 on an empty Postgres 16 database."""
 
 import os
 import subprocess
@@ -46,7 +46,7 @@ def test_upgrade_head_on_empty_database():
     conn = psycopg2.connect(APP_DSN)
     cur = conn.cursor()
     cur.execute("SELECT version_num FROM alembic_version")
-    assert cur.fetchone()[0] == "0054"
+    assert cur.fetchone()[0] == "0060"
     cur.execute("SELECT pg_get_functiondef('app.can_see(text,uuid,uuid,uuid)'::regprocedure)")
     assert "r = 'TEACHER' AND row_user IS NOT NULL AND row_user = uid" in cur.fetchone()[0]
     cur.execute("SELECT count(*) FROM alert_message_templates WHERE school_id IS NULL")
@@ -64,6 +64,12 @@ def test_upgrade_head_on_empty_database():
         "alert_message_templates": True,
         "school_alert_settings": True,
     }
+    cur.execute("SELECT to_regclass('public.hr_probations')")
+    assert cur.fetchone()[0] == "hr_probations"
+    cur.execute("SELECT to_regclass('public.fee_route_transfers')")
+    assert cur.fetchone()[0] == "fee_route_transfers"
+    cur.execute("SELECT to_regclass('public.expense_heads')")
+    assert cur.fetchone()[0] == "expense_heads"
     cur.execute("SELECT current_setting('server_version_num')")
     assert int(cur.fetchone()[0]) >= 160000
 
@@ -117,4 +123,17 @@ def test_upgrade_head_on_empty_database():
         """
     )
     assert {row[0] for row in cur.fetchall()} == {"rls_role", "rls_has", "rls_tenant", "rls_staff_portal"}
+    cur.execute(
+        """
+        SELECT column_name FROM information_schema.columns
+        WHERE table_name = 'fee_settings' AND column_name = 'linked_account_id'
+        """
+    )
+    assert cur.fetchone()[0] == "linked_account_id"
+    cur.execute(
+        """
+        SELECT relforcerowsecurity FROM pg_class WHERE relname = 'fee_route_transfers'
+        """
+    )
+    assert cur.fetchone()[0] is True
     conn.close()

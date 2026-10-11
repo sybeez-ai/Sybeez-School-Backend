@@ -3,7 +3,6 @@ from functools import lru_cache
 from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-
 _INSECURE_DEFAULTS: set[str] = {
     "",
     "change-me-in-production",
@@ -62,7 +61,7 @@ class Settings(BaseSettings):
     session_ttl_hours: str = (
         "PLATFORM_ADMIN:24,PLATFORM_STAFF:24,SCHOOL_ADMIN:24,FINANCE:24,HR:24,"
         "HR_MANAGER:24,ACCOUNTANT:24,CASHIER:24,AUDITOR:24,PAYROLL_ADMIN:24,"
-        "PAYROLL_APPROVER:24,TEACHER:720,STUDENT:720,PARENT:720"
+        "PAYROLL_APPROVER:24,TEACHER:720,STUDENT:720,PARENT:720,STAFF:720"
     )
 
     superadmin_email: str = "admin@sybeez.ai"
@@ -143,6 +142,12 @@ class Settings(BaseSettings):
     payroll_assistant_base_url: str = "https://api.openai.com/v1"
     payroll_assistant_secret_id: str = ""
     payroll_assistant_rate_limit_per_minute: int = 20
+    # Private HR files. Production refuses to start when this is empty (no local-disk fallback).
+    # Region falls back to the existing S3_REGION / AWS_REGION settings.
+    hr_files_s3_bucket: str = ""
+    hr_files_s3_region: str = ""
+    hr_files_s3_prefix: str = "hr-files"
+    hr_files_link_ttl_seconds: int = Field(default=120, ge=10, le=3600)
 
     @model_validator(mode="after")
     def _overlay_secrets(self) -> "Settings":
@@ -233,6 +238,11 @@ class Settings(BaseSettings):
                 missing.append("WEB_APP_URL")
             if missing:
                 problems.append(f"Missing Cognito settings: {', '.join(missing)}")
+
+        # HR files use HR_FILES_S3_BUCKET when it is set, and the school S3_BUCKET
+        # otherwise. S3_BUCKET is already required above, so a second bucket is optional.
+        if not (self.hr_files_s3_bucket or "").strip() and not (self.s3_bucket or "").strip():
+            problems.append("HR_FILES_S3_BUCKET")
 
         if problems:
             raise RuntimeError(

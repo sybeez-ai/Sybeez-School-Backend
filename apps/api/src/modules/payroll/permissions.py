@@ -49,6 +49,7 @@ READ = PREPARE | APPROVE | {
 ATTENDANCE_ADMIN = {
     UserRole.SCHOOL_ADMIN.value,
     UserRole.PLATFORM_ADMIN.value,
+    UserRole.HR.value,
     UserRole.HR_MANAGER.value,
     UserRole.PAYROLL_ADMIN.value,
 }

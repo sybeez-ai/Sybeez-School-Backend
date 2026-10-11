@@ -1658,6 +1658,7 @@ class FinanceService:
             collector = await self.db.get(User, payment.received_by) if payment.received_by else None
             out.append(
                 {
+                    "kind": "fee_receipt",
                     "receipt": receipt.receipt_number,
                     "status": receipt.status,
                     "student": name,
@@ -1667,6 +1668,9 @@ class FinanceService:
                     "time": receipt.issued_at.isoformat(),
                 }
             )
+        from src.modules.finance.expenses import expense_day_book
+
+        out.extend(await expense_day_book(self.db, self.school_id, on, branch_id))
         return out
 
     async def report_head_wise(self, from_date: date | None, to_date: date | None) -> list[dict]:
