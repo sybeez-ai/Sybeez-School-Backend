@@ -64,7 +64,31 @@ async def test_fresh_database_upgrades_to_head_and_matches_models(empty_database
     # predates this branch. The tables introduced here must not add to it.
     check = _alembic(empty_database, "check")
     drift = check.stdout + check.stderr
-    for table in ("hr_leave_types", "hr_holidays", "hr_letter_templates", "employee_history"):
+    introduced = (
+        "hr_leave_types",
+        "hr_holidays",
+        "hr_letter_templates",
+        "employee_history",
+        "hr_report_exports",
+        "hr_probations",
+        "hr_appraisal_cycles",
+        "hr_appraisal_goals",
+        "hr_appraisals",
+        "hr_appraisal_reviews",
+        "hr_job_openings",
+        "hr_applications",
+        "hr_interviews",
+        "hr_offers",
+        "hr_training_programs",
+        "hr_training_records",
+        "hr_shifts",
+        "hr_roster_entries",
+        "hr_assets",
+        "hr_asset_issues",
+        "hr_exit_cases",
+        "hr_settlement_lines",
+    )
+    for table in introduced:
         assert table not in drift, drift[-4000:]
 
     downgrade = _alembic(empty_database, "downgrade", "-1")
@@ -73,5 +97,5 @@ async def test_fresh_database_upgrades_to_head_and_matches_models(empty_database
     assert reupgrade.returncode == 0, reupgrade.stderr[-4000:]
     again = _alembic(empty_database, "check")
     again_drift = again.stdout + again.stderr
-    for table in ("hr_leave_types", "hr_holidays", "hr_letter_templates", "employee_history"):
+    for table in introduced:
         assert table not in again_drift, again_drift[-4000:]

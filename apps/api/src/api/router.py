@@ -32,6 +32,7 @@ from src.modules.hr_dashboard.router import router as hr_dashboard_router
 from src.modules.hr_files.router import router as hr_files_router
 from src.modules.hr_leave_policy.router import router as hr_leave_policy_router
 from src.modules.hr_letters.router import router as hr_letters_router
+from src.modules.hr_operations.router import router as hr_operations_router
 from src.modules.hr_org.router import router as hr_org_router
 from src.modules.hr_requests.router import router as hr_requests_router
 from src.modules.hr_settings.router import router as hr_settings_router
@@ -124,6 +125,7 @@ api_router.include_router(hr_requests_router, prefix=API_V1_PREFIX)
 api_router.include_router(hr_settings_router, prefix=API_V1_PREFIX)
 api_router.include_router(hr_leave_policy_router, prefix=API_V1_PREFIX)
 api_router.include_router(hr_dashboard_router, prefix=API_V1_PREFIX)
+api_router.include_router(hr_operations_router, prefix=API_V1_PREFIX)
 api_router.include_router(intelligence_router, prefix=API_V1_PREFIX)
 api_router.include_router(announcements_router, prefix=API_V1_PREFIX)
 api_router.include_router(messaging_router, prefix=API_V1_PREFIX)
