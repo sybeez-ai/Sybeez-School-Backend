@@ -4,31 +4,65 @@ Sybeez sends business-initiated WhatsApp messages with Meta-approved UTILITY tem
 
 Platform default templates are seeded for locales `en`, `ta`, and `hi`. A school can override a template. Both channels stay off until a school admin enables them.
 
-## What Silver must provide
+Silver already has a dedicated number, a WhatsApp Business account on the mobile app, a Meta developer account, and a created app. Meta Business verification is still pending, so there is no access token and no app secret yet. The API and the worker start cleanly in that state. `GET /api/v1/alerts/status` returns `whatsapp_status: "WhatsApp not configured"` and the sender stays on the mock provider. Nothing is posted to Meta or MSG91, and a missing secret does not crash the process.
 
-Nothing in this repository contains a live token. Put these in the API and worker environment, or in one JSON secret referenced by `ALERTS_SECRETS_ARN` or `WHATSAPP_SECRETS_ARN`. Environment variables win when both are set.
+## Where credentials are read
 
-| Approval | What to give the platform | Environment variable |
-| --- | --- | --- |
-| Meta Business verification | Verified Meta Business Manager for Sybeez School, with the WhatsApp Business Account linked | — |
-| WhatsApp number | A display phone number registered on that WhatsApp Business Account, and its Cloud API phone number id | `WHATSAPP_PHONE_NUMBER_ID` |
-| Permanent token | A system-user token with `whatsapp_business_messaging` and `whatsapp_business_management` | `WHATSAPP_ACCESS_TOKEN` |
-| App secret | The Meta app secret used to check `X-Hub-Signature-256` | `WHATSAPP_APP_SECRET` |
-| Verify token | The string you type into the Meta webhook subscription | `WHATSAPP_VERIFY_TOKEN` |
-| Template approvals | Submit every JSON object below in category UTILITY. Wait until each name is approved before enabling WhatsApp for a school. Names must match exactly. | stored per template as `whatsapp_template_name` |
-| MSG91 auth key | Auth key for the Flow API | `MSG91_AUTH_KEY` |
-| MSG91 sender id | Six-character DLT-approved header | `MSG91_SENDER_ID` |
-| DLT registration | Register each SMS text below as a transactional/service template. Copy the returned template id onto the school template as `sms_dlt_template_id`. `{#var#}` is one variable, in the order listed. | `sms_dlt_template_id` on each template |
-| MSG91 webhook token | Shared secret the MSG91 callback sends in `X-Msg91-Token` | `MSG91_WEBHOOK_TOKEN` |
+Every credential is read from the process environment, or from one JSON secret in AWS Secrets Manager referenced by `ALERTS_SECRETS_ARN` or `WHATSAPP_SECRETS_ARN`. Environment variables win when both are set. The repository does not contain a live token.
 
-Also set:
+| Credential | Environment variable |
+| --- | --- |
+| Permanent token | `WHATSAPP_ACCESS_TOKEN` (`WHATSAPP_CLOUD_ACCESS_TOKEN` is still accepted) |
+| Cloud API phone number id | `WHATSAPP_PHONE_NUMBER_ID` (`WHATSAPP_CLOUD_PHONE_NUMBER_ID` is still accepted) |
+| WhatsApp Business Account id | `WHATSAPP_BUSINESS_ACCOUNT_ID` |
+| Meta app secret | `WHATSAPP_APP_SECRET` |
+| Webhook verify token | `WHATSAPP_VERIFY_TOKEN` |
+| MSG91 auth key | `MSG91_AUTH_KEY` |
+| MSG91 sender id | `MSG91_SENDER_ID` |
+| MSG91 default template id | `MSG91_TEMPLATE_ID` |
+| MSG91 webhook token | `MSG91_WEBHOOK_TOKEN` |
+
+`whatsapp_status` stays `WhatsApp not configured` until the access token, phone number id, business account id, app secret, and verify token are all present. `sms_status` stays `SMS not configured` until `MSG91_AUTH_KEY` and `MSG91_SENDER_ID` are present. Setting `WHATSAPP_PROVIDER=meta_cloud` or `SMS_PROVIDER=msg91` before those values exist still sends through mock. After the values exist, set:
 
 ```
 WHATSAPP_PROVIDER=meta_cloud
 SMS_PROVIDER=msg91
 ```
 
-`WHATSAPP_CLOUD_ACCESS_TOKEN` and `WHATSAPP_CLOUD_PHONE_NUMBER_ID` are still accepted. `gupshup` and `twilio` are stub adapters and do not send. Unset provider stays `mock`, which records a delivery and does not call Meta or MSG91.
+`gupshup` and `twilio` are stub adapters and do not send.
+
+## Business verification
+
+The legal name on the Meta Business account is **Sybis Technology Private Limited**. Meta compares that name with the public website. Put the same legal name, spelled the same way, on the website footer, the contact page, and the privacy page. A marketing name alone on those pages is a common reason verification stays pending. Verification has to finish before Meta issues a permanent system-user token or shows a production app secret for this WhatsApp Business Account.
+
+## Cloud API number
+
+The dedicated number is on the WhatsApp Business mobile app today. The Cloud API cannot send from a number that stays only on that app. Before `WHATSAPP_PHONE_NUMBER_ID` exists, do one of these:
+
+- Migrate the number off the WhatsApp Business app and onto the Cloud API. The handset loses the WhatsApp Business app for that number.
+- Complete Meta coexistence onboarding so the same number stays on the WhatsApp Business app and on the Cloud API.
+
+After either step, copy the Cloud API phone number id into `WHATSAPP_PHONE_NUMBER_ID` and the WhatsApp Business Account id into `WHATSAPP_BUSINESS_ACCOUNT_ID`.
+
+## SMS is a separate MSG91 account
+
+WhatsApp credentials do not send SMS. SMS needs its own MSG91 account. On the DLT portal, register the principal entity (Sybis Technology Private Limited), a six-character sender id, and each SMS text in the template section below. Copy each returned DLT template id onto `sms_dlt_template_id`. `{#var#}` is one variable, in the order listed on that template.
+
+## What to give the platform after approval
+
+| Approval | What to give the platform | Environment variable |
+| --- | --- | --- |
+| Meta Business verification | Verified Meta Business Manager for Sybis Technology Private Limited, with the WhatsApp Business Account linked | — |
+| WhatsApp number | The dedicated number on the Cloud API (migrated, or coexistence), and its phone number id | `WHATSAPP_PHONE_NUMBER_ID` |
+| Business account id | WhatsApp Business Account id from WhatsApp Manager | `WHATSAPP_BUSINESS_ACCOUNT_ID` |
+| Permanent token | A system-user token with `whatsapp_business_messaging` and `whatsapp_business_management` | `WHATSAPP_ACCESS_TOKEN` |
+| App secret | The Meta app secret used to check `X-Hub-Signature-256` | `WHATSAPP_APP_SECRET` |
+| Verify token | The string you type into the Meta webhook subscription | `WHATSAPP_VERIFY_TOKEN` |
+| Template approvals | Submit every JSON object below in category UTILITY. Wait until each name is approved before enabling WhatsApp for a school. Names must match exactly. | stored per template as `whatsapp_template_name` |
+| MSG91 auth key | Auth key for the Flow API, from the separate MSG91 account | `MSG91_AUTH_KEY` |
+| MSG91 sender id | Six-character DLT-approved header | `MSG91_SENDER_ID` |
+| DLT registration | Entity, sender id, and each SMS text registered. Copy the template id onto the row. | `sms_dlt_template_id` on each template |
+| MSG91 webhook token | Shared secret the MSG91 callback sends in `X-Msg91-Token` | `MSG91_WEBHOOK_TOKEN` |
 
 After the secrets are present, a school admin enables the channels with `PUT /api/v1/alerts/settings`. Quiet hours default to 21:00–07:00 Asia/Kolkata. Student absent and student late bypass quiet hours. Other alerts wait until 07:00. Users still need `whatsapp_enabled` or `sms_enabled` on their notification preference. `STOP` opts that phone out.
 
@@ -36,6 +70,34 @@ Webhook callback URLs:
 
 - `GET` and `POST /api/v1/webhooks/whatsapp/meta`
 - `POST /api/v1/webhooks/sms/msg91`
+
+## Submitting templates
+
+Templates can be prepared now and submitted the moment a token and a WhatsApp Business Account id exist. The JSON in this file is the body Meta accepts. Category is UTILITY.
+
+Three ways to submit, all using the same names and bodies:
+
+1. Script, from `apps/api`, once the token and business account id are in the environment or Secrets Manager:
+
+```
+python scripts/submit_whatsapp_templates.py --dry-run
+python scripts/submit_whatsapp_templates.py
+```
+
+`--dry-run` prints the JSON and does not call Meta. With the token or the business account id missing, the script prints `WhatsApp not configured` and exits 0.
+
+2. Admin endpoint `POST /api/v1/alerts/templates/submit`. Query `dry_run=true` to return the JSON. Query `event_key` and `locale` to submit a subset. The endpoint posts to `https://graph.facebook.com/v20.0/{WHATSAPP_BUSINESS_ACCOUNT_ID}/message_templates`. The same missing-credential response is `{"status": "WhatsApp not configured"}` with an empty `submitted` list.
+
+3. WhatsApp Manager, by hand:
+
+- Finish business verification for Sybis Technology Private Limited.
+- Add the number with Cloud API migration or coexistence onboarding, as above.
+- In the Meta app, add the WhatsApp product. In Business settings, create a system user, assign this app and the WhatsApp account, and generate a permanent token with `whatsapp_business_messaging` and `whatsapp_business_management`.
+- Open WhatsApp Manager → Message templates → Create template.
+- Category: Utility. Name and language must match the JSON (`sybeez_{event}_{locale}`, language `en`, `hi`, or `ta`). Paste the BODY text. Enter the sample row from `example.body_text`. Submit each locale.
+- Wait until each template is approved before a school admin sets `whatsapp_enabled` to true.
+- App settings → Basic → App secret becomes `WHATSAPP_APP_SECRET`.
+- WhatsApp → Configuration → Webhook: callback `https://<api-host>/api/v1/webhooks/whatsapp/meta`, verify token equal to `WHATSAPP_VERIFY_TOKEN`, subscribe to `messages`.
 
 ## Endpoints for DeliveryLogView
 
@@ -46,10 +108,12 @@ The frontend `DeliveryLogView` should call these school-admin routes. Session ro
 | GET | `/api/v1/alerts/deliveries` | List. Query: `channel`, `status`, `event` (event key or notification type), `date_from`, `date_to`, `recipient` (user id or phone fragment), `limit`, `offset`. Response `{ items, total }`. |
 | GET | `/api/v1/alerts/deliveries/{id}` | One delivery, including `sent_at`, `delivered_at`, `read_at`, `failed_at`, `error_code`, `template_name`. |
 | POST | `/api/v1/alerts/deliveries/{id}/resend` | Re-queue a `FAILED` delivery. |
-| GET | `/api/v1/alerts/settings` | Per-school enable flags, quiet hours, timezone, default locale. |
+| GET | `/api/v1/alerts/status` | `whatsapp_status` is `WhatsApp not configured` or `configured`. Also `sms_status`, effective providers, and the env names still blank. |
+| GET | `/api/v1/alerts/settings` | Per-school enable flags, quiet hours, timezone, default locale, plus the same provider status fields. |
 | PUT | `/api/v1/alerts/settings` | Update any of `whatsapp_enabled`, `sms_enabled`, `quiet_hours_start`, `quiet_hours_end` (`HH:MM`), `timezone`, `default_locale`. |
 | GET | `/api/v1/alerts/templates` | Effective templates. School rows override platform defaults. Query: `event_key`, `locale`. |
 | POST | `/api/v1/alerts/templates` | Create a school-specific template. |
+| POST | `/api/v1/alerts/templates/submit` | Submit active templates to the WABA `message_templates` API. `dry_run=true` returns the JSON. Missing token or business account id returns status `WhatsApp not configured`. |
 | PUT | `/api/v1/alerts/templates/{id}` | Update a school template. Editing a platform default copies it onto the school first. |
 
 Delivery item fields: `id`, `school_id`, `user_id`, `channel`, `notification_type`, `event_key`, `to`, `to_masked`, `title`, `body`, `provider`, `provider_message_id`, `status`, `attempts`, `last_error`, `error_code`, `locale`, `template_name`, `scheduled_for`, `sent_at`, `delivered_at`, `read_at`, `failed_at`, `created_at`.
@@ -64,6 +128,7 @@ Status values: `PENDING`, `SCHEDULED`, `SENT`, `DELIVERED`, `READ`, `FAILED`.
 - Inbound WhatsApp messages are stored. `STOP`, `STOPALL`, `UNSUBSCRIBE`, `CANCEL`, `END`, `QUIT`, and `OPT OUT` record an opt-out and turn the preference off.
 - Phone numbers are masked in logs and in `alert_audit_logs`. New tables use forced row-level security on `school_id`. Platform default templates (`school_id` null) are readable by the school. Global opt-outs are readable so a STOP is honored.
 - The worker consumes the Redis list `sybeez:jobs`. `JOBS_BACKEND=sqs` with `JOBS_SQS_QUEUE_URL` sends and polls SQS instead. Provider rate limits default to 60 WhatsApp and 100 SMS messages per minute (`WHATSAPP_RATE_LIMIT_PER_MINUTE`, `SMS_RATE_LIMIT_PER_MINUTE`).
+- A job tagged `meta_cloud` or `msg91` is sent as mock when the matching credentials are blank. The worker logs `WhatsApp not configured` or `SMS not configured` and does not call Graph or MSG91.
 - Scheduled quiet-hour rows are released by `POST /internal/v1/alerts/release-due`. Weekly summaries are `POST /internal/v1/attendance/{school_id}/digests/weekly/run`.
 
 ## Meta template JSON

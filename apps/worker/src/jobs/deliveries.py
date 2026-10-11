@@ -8,7 +8,12 @@ from datetime import datetime, timedelta, timezone
 from src.core.config import get_settings
 from src.core.redis import get_redis
 from src.jobs.rate_limit import allow_provider_send
-from src.jobs.whatsapp_providers import DeliveryRejected, OutboundMessage, get_whatsapp_provider
+from src.jobs.whatsapp_providers import (
+    DeliveryRejected,
+    OutboundMessage,
+    get_whatsapp_provider,
+    resolve_outbound_provider,
+)
 
 logger = logging.getLogger("sybeez.worker.deliveries")
 
@@ -97,8 +102,8 @@ def _send_sms_msg91(
     Returns a provider request/message id string when available.
     """
     s = get_settings()
-    if not s.msg91_auth_key:
-        raise RuntimeError("MSG91_AUTH_KEY missing")
+    if not s.msg91_auth_key or not s.msg91_sender_id:
+        raise DeliveryRejected("SMS not configured", error_code="missing_credentials")
 
     mobiles = to.replace("+", "")
     dlt_id = template_id or s.msg91_template_id
@@ -139,7 +144,7 @@ def _send_whatsapp_meta(to: str, body: str) -> str:
     """Free-text sender. Callers must already be inside the 24-hour service window."""
     s = get_settings()
     if not s.whatsapp_cloud_access_token or not s.whatsapp_cloud_phone_number_id:
-        raise RuntimeError("WHATSAPP_CLOUD credentials missing")
+        raise DeliveryRejected("WhatsApp not configured", error_code="missing_credentials")
 
     url = f"https://graph.facebook.com/v20.0/{s.whatsapp_cloud_phone_number_id}/messages"
     resp = _http_json(
@@ -205,6 +210,8 @@ def handle(payload: dict) -> None:
         logger.warning("Invalid delivery payload delivery_id=%s channel=%s", delivery_id, channel)
         return
 
+    provider = _effective_provider(channel, provider)
+
     if not _allow(channel, provider):
         logger.info("rate limited channel=%s provider=%s to=%s", channel, provider, _mask_phone(to))
         try:
@@ -238,7 +245,12 @@ def handle(payload: dict) -> None:
                 channel,
                 _mask_phone(to),
             )
-            if isinstance(exc, DeliveryRejected) and exc.error_code in {"outside_service_window", "template_required", "provider_stub"}:
+            if isinstance(exc, DeliveryRejected) and exc.error_code in {
+                "outside_service_window",
+                "template_required",
+                "provider_stub",
+                "missing_credentials",
+            }:
                 break
 
     try:
@@ -252,6 +264,25 @@ def handle(payload: dict) -> None:
         )
     except Exception:
         logger.exception("Failed to report delivery result delivery_id=%s", delivery_id)
+
+
+def _effective_provider(channel: str, provider: str) -> str:
+    """Stay on mock when Meta or MSG91 credentials are absent. Never raises."""
+    settings = get_settings()
+    resolved = resolve_outbound_provider(
+        channel,
+        provider,
+        access_token=settings.whatsapp_cloud_access_token,
+        phone_number_id=settings.whatsapp_cloud_phone_number_id,
+        msg91_auth_key=settings.msg91_auth_key,
+        msg91_sender_id=settings.msg91_sender_id,
+    )
+    if resolved == "mock" and provider not in {"", "mock"}:
+        if channel == "WHATSAPP":
+            logger.warning("WhatsApp not configured")
+        elif channel == "SMS":
+            logger.warning("SMS not configured")
+    return resolved
 
 
 def _send(channel: str, provider: str, to: str, body: str, payload: dict) -> str:

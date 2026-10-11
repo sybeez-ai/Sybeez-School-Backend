@@ -13,6 +13,14 @@ import pytest
 
 from src.core.jobs import jobs_backend
 from src.modules.alerts.catalog import DEFAULT_TEMPLATES, SAMPLE_VALUES, meta_submission_payload, render_message, template_components
+from src.modules.alerts.credentials import (
+    WHATSAPP_NOT_CONFIGURED,
+    effective_sms_provider,
+    effective_whatsapp_provider,
+    provider_status,
+    whatsapp_admin_status,
+)
+from src.modules.alerts.submit import submit_message_templates, template_payload
 from src.modules.alerts.phone import is_opt_out_keyword, mask_phone, normalize_phone
 from src.modules.alerts.policy import (
     choose_channel,
@@ -277,6 +285,141 @@ def test_jobs_backend_reads_env(monkeypatch):
     assert jobs_backend() == "redis"
 
 
+def test_missing_credentials_stay_mock_with_admin_status():
+    from types import SimpleNamespace
+
+    blank = SimpleNamespace(
+        whatsapp_provider="meta_cloud",
+        sms_provider="msg91",
+        whatsapp_cloud_access_token="",
+        whatsapp_cloud_phone_number_id="",
+        whatsapp_business_account_id="",
+        whatsapp_app_secret="",
+        whatsapp_verify_token="",
+        msg91_auth_key="",
+        msg91_sender_id="",
+        msg91_template_id="",
+        msg91_webhook_token="",
+    )
+    status = provider_status(blank)
+    assert status["whatsapp_status"] == WHATSAPP_NOT_CONFIGURED
+    assert whatsapp_admin_status(blank) == "WhatsApp not configured"
+    assert status["sms_status"] == "SMS not configured"
+    assert effective_whatsapp_provider(blank) == "mock"
+    assert effective_sms_provider(blank) == "mock"
+    assert "WHATSAPP_ACCESS_TOKEN" in status["whatsapp_missing"]
+    assert "WHATSAPP_BUSINESS_ACCOUNT_ID" in status["whatsapp_missing"]
+    assert "MSG91_AUTH_KEY" in status["sms_missing"]
+
+    ready = SimpleNamespace(
+        **{
+            **blank.__dict__,
+            "whatsapp_cloud_access_token": "token",
+            "whatsapp_cloud_phone_number_id": "phone",
+            "whatsapp_business_account_id": "waba",
+            "whatsapp_app_secret": "secret",
+            "whatsapp_verify_token": "verify",
+            "msg91_auth_key": "auth",
+            "msg91_sender_id": "SYBEEZ",
+        }
+    )
+    assert provider_status(ready)["whatsapp_status"] == "configured"
+    assert effective_whatsapp_provider(ready) == "meta_cloud"
+    assert effective_sms_provider(ready) == "msg91"
+
+
+def test_template_submit_skips_meta_when_unconfigured():
+    payload = template_payload(
+        name="sybeez_student_absent_en",
+        language="en",
+        body_text="{{1}} was absent on {{2}}. - {{3}}",
+        variables=("student_name", "date", "school_name"),
+    )
+    calls = []
+
+    def post_json(url, headers, body):
+        calls.append(url)
+        return {"id": "1", "status": "PENDING"}
+
+    result = submit_message_templates(
+        [payload],
+        access_token="",
+        waba_id="",
+        post_json=post_json,
+        dry_run=True,
+    )
+    assert result["status"] == "WhatsApp not configured"
+    assert result["submitted"] == []
+    assert result["payloads"][0]["name"] == "sybeez_student_absent_en"
+    assert calls == []
+
+    sent = submit_message_templates(
+        [payload],
+        access_token="token",
+        waba_id="waba-1",
+        post_json=post_json,
+    )
+    assert sent["status"] == "submitted"
+    assert sent["submitted"][0]["id"] == "1"
+    assert calls == ["https://graph.facebook.com/v20.0/waba-1/message_templates"]
+
+
+def test_worker_downgrades_unconfigured_provider_to_mock():
+    providers = _load(ROOT / "apps/worker/src/jobs/whatsapp_providers.py", "sybeez_whatsapp_providers_resolve")
+    assert (
+        providers.resolve_outbound_provider(
+            "WHATSAPP",
+            "meta_cloud",
+            access_token="",
+            phone_number_id="",
+        )
+        == "mock"
+    )
+    assert providers.resolve_outbound_provider("SMS", "msg91", msg91_auth_key="", msg91_sender_id="") == "mock"
+    assert (
+        providers.resolve_outbound_provider(
+            "WHATSAPP",
+            "meta_cloud",
+            access_token="token",
+            phone_number_id="phone",
+        )
+        == "meta_cloud"
+    )
+    assert (
+        providers.resolve_outbound_provider("SMS", "msg91", msg91_auth_key="auth", msg91_sender_id="SYBEEZ")
+        == "msg91"
+    )
+
+
+def test_settings_read_whatsapp_and_msg91_from_env(monkeypatch):
+    from src.core.config import Settings, get_settings
+
+    monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", "token-from-env")
+    monkeypatch.setenv("WHATSAPP_PHONE_NUMBER_ID", "phone-from-env")
+    monkeypatch.setenv("WHATSAPP_BUSINESS_ACCOUNT_ID", "waba-from-env")
+    monkeypatch.setenv("WHATSAPP_APP_SECRET", "secret-from-env")
+    monkeypatch.setenv("WHATSAPP_VERIFY_TOKEN", "verify-from-env")
+    monkeypatch.setenv("MSG91_AUTH_KEY", "auth-from-env")
+    monkeypatch.setenv("MSG91_SENDER_ID", "SYBEEZ")
+    monkeypatch.setenv("MSG91_TEMPLATE_ID", "dlt-1")
+    monkeypatch.setenv("MSG91_WEBHOOK_TOKEN", "hook-from-env")
+    monkeypatch.delenv("ALERTS_SECRETS_ARN", raising=False)
+    monkeypatch.delenv("WHATSAPP_SECRETS_ARN", raising=False)
+    get_settings.cache_clear()
+    settings = Settings()
+    assert settings.whatsapp_cloud_access_token == "token-from-env"
+    assert settings.whatsapp_cloud_phone_number_id == "phone-from-env"
+    assert settings.whatsapp_business_account_id == "waba-from-env"
+    assert settings.whatsapp_app_secret == "secret-from-env"
+    assert settings.whatsapp_verify_token == "verify-from-env"
+    assert settings.msg91_auth_key == "auth-from-env"
+    assert settings.msg91_sender_id == "SYBEEZ"
+    assert settings.msg91_template_id == "dlt-1"
+    assert settings.msg91_webhook_token == "hook-from-env"
+    assert provider_status(settings)["whatsapp_status"] == "configured"
+    get_settings.cache_clear()
+
+
 def test_docs_list_every_template_and_dlt_text():
     text = (ROOT / "apps/api/docs/WHATSAPP.md").read_text()
     for seed in DEFAULT_TEMPLATES:
@@ -286,4 +429,10 @@ def test_docs_list_every_template_and_dlt_text():
     assert "DeliveryLogView" in text
     assert "/api/v1/alerts/deliveries" in text
     assert "WHATSAPP_ACCESS_TOKEN" in text
+    assert "WHATSAPP_BUSINESS_ACCOUNT_ID" in text
     assert "MSG91_AUTH_KEY" in text
+    assert "WhatsApp not configured" in text
+    assert "Sybis Technology Private Limited" in text
+    assert "coexistence" in text
+    assert "message_templates" in text
+    assert "footer" in text

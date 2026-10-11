@@ -22,15 +22,19 @@ from src.core.database import get_db
 from src.core.exceptions import ForbiddenError, NotFoundError, UnauthorizedError
 from src.db.models import AlertMessageTemplate, NotificationDelivery, SchoolAlertSettings
 from src.modules.alerts.phone import mask_phone
+from src.modules.alerts.credentials import provider_status
 from src.modules.alerts.schemas import (
     AlertSettingsOut,
     AlertSettingsUpdate,
     DeliveryListOut,
     DeliveryOut,
+    ProviderStatusOut,
     TemplateCreate,
     TemplateOut,
+    TemplateSubmitOut,
     TemplateUpdate,
 )
+from src.modules.alerts.submit import default_post_json, submit_message_templates, template_payload
 from src.modules.alerts.service import enable_rls_bypass, record_audit, resend_delivery
 from src.modules.alerts.webhooks import (
     loads_json,
@@ -99,6 +103,7 @@ def _settings_out(row: SchoolAlertSettings) -> AlertSettingsOut:
         quiet_hours_end=_hhmm(row.quiet_hours_end),
         timezone=row.timezone,
         default_locale=row.default_locale,
+        **provider_status(get_settings()),
     )
 
 
@@ -260,6 +265,13 @@ async def resend(
     return _delivery_out(updated)
 
 
+@admin_router.get("/status", response_model=ProviderStatusOut)
+async def alert_provider_status(user: Admin):
+    """Credential banner for DeliveryLogView. Missing secrets stay mock and do not raise."""
+    _ = user
+    return ProviderStatusOut(**provider_status(get_settings()))
+
+
 @admin_router.get("/settings", response_model=AlertSettingsOut)
 async def get_settings_route(
     db: Db,
@@ -336,6 +348,55 @@ async def list_templates(
         items = [item for item in items if item.locale == locale]
     items.sort(key=lambda item: (item.event_key, item.locale))
     return items
+
+
+@admin_router.post("/templates/submit", response_model=TemplateSubmitOut)
+async def submit_templates(
+    db: Db,
+    user: Admin,
+    _scope: Annotated[CurrentUser, Depends(require_school_scope)],
+    event_key: str | None = None,
+    locale: str | None = None,
+    dry_run: bool = False,
+):
+    """Post active templates to the WABA message_templates API.
+
+    With no token or business account id the response status is
+    "WhatsApp not configured" and Meta is not called.
+    """
+    from src.modules.alerts.service import _scope_school
+
+    school_id = _school_id(user)
+    await _scope_school(db, school_id)
+    items = await list_templates(db, user, _scope, event_key=event_key, locale=locale)
+    payloads = [
+        template_payload(
+            name=item.whatsapp_template_name,
+            language=item.language_code,
+            body_text=item.body_text,
+            variables=item.variables,
+        )
+        for item in items
+        if item.active
+    ]
+    settings = get_settings()
+    result = submit_message_templates(
+        payloads,
+        access_token=settings.whatsapp_cloud_access_token,
+        waba_id=settings.whatsapp_business_account_id,
+        post_json=default_post_json,
+        dry_run=dry_run,
+    )
+    await record_audit(
+        db,
+        school_id,
+        user.id,
+        "alert.templates_submit",
+        "alert_message_template",
+        None,
+        {"status": result["status"], "count": len(result["submitted"]), "dry_run": dry_run},
+    )
+    return TemplateSubmitOut(**result)
 
 
 @admin_router.post("/templates", response_model=TemplateOut, status_code=201)

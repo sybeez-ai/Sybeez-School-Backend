@@ -83,10 +83,7 @@ class MetaCloudProvider:
 
     def send(self, message: OutboundMessage) -> str:
         if not self.access_token or not self.phone_number_id:
-            raise DeliveryRejected(
-                "WHATSAPP_ACCESS_TOKEN or WHATSAPP_PHONE_NUMBER_ID missing",
-                error_code="missing_credentials",
-            )
+            raise DeliveryRejected("WhatsApp not configured", error_code="missing_credentials")
         body = meta_request_body(message)
         url = f"https://graph.facebook.com/{self.graph_version}/{self.phone_number_id}/messages"
         response = self._post(
@@ -127,6 +124,27 @@ class MockProvider:
     def send(self, message: OutboundMessage) -> str:
         tail = _digits(message.to)[-4:] or "0000"
         return f"mock_{tail}"
+
+
+def resolve_outbound_provider(
+    channel: str,
+    provider: str | None,
+    *,
+    access_token: str = "",
+    phone_number_id: str = "",
+    msg91_auth_key: str = "",
+    msg91_sender_id: str = "",
+) -> str:
+    """Use mock when Meta or MSG91 credentials are blank. Does not raise."""
+    key = (provider or "mock").strip().lower() or "mock"
+    if channel == "WHATSAPP" and key in {"meta", "meta_cloud", "whatsapp_cloud"}:
+        if not (access_token or "").strip() or not (phone_number_id or "").strip():
+            return "mock"
+        return "meta_cloud"
+    if channel == "SMS" and key == "msg91":
+        if not (msg91_auth_key or "").strip() or not (msg91_sender_id or "").strip():
+            return "mock"
+    return key
 
 
 def get_whatsapp_provider(name: str | None = None, **kwargs):

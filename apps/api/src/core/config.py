@@ -75,7 +75,7 @@ class Settings(BaseSettings):
     sms_provider: str = "mock"  # mock | msg91
     msg91_auth_key: str = Field(default="", validation_alias=AliasChoices("MSG91_AUTH_KEY"))
     msg91_sender_id: str = Field(default="", validation_alias=AliasChoices("MSG91_SENDER_ID"))
-    msg91_template_id: str = ""  # optional; if blank, send plain text when supported
+    msg91_template_id: str = Field(default="", validation_alias=AliasChoices("MSG91_TEMPLATE_ID"))
     msg91_webhook_token: str = Field(default="", validation_alias=AliasChoices("MSG91_WEBHOOK_TOKEN"))
     sms_rate_limit_per_minute: int = 100
 
@@ -87,6 +87,10 @@ class Settings(BaseSettings):
     whatsapp_cloud_phone_number_id: str = Field(
         default="",
         validation_alias=AliasChoices("WHATSAPP_PHONE_NUMBER_ID", "WHATSAPP_CLOUD_PHONE_NUMBER_ID"),
+    )
+    whatsapp_business_account_id: str = Field(
+        default="",
+        validation_alias=AliasChoices("WHATSAPP_BUSINESS_ACCOUNT_ID"),
     )
     whatsapp_app_secret: str = Field(default="", validation_alias=AliasChoices("WHATSAPP_APP_SECRET"))
     whatsapp_verify_token: str = Field(default="", validation_alias=AliasChoices("WHATSAPP_VERIFY_TOKEN"))
@@ -105,10 +109,12 @@ class Settings(BaseSettings):
         mapping = {
             "whatsapp_cloud_access_token": ("WHATSAPP_ACCESS_TOKEN", "WHATSAPP_CLOUD_ACCESS_TOKEN"),
             "whatsapp_cloud_phone_number_id": ("WHATSAPP_PHONE_NUMBER_ID", "WHATSAPP_CLOUD_PHONE_NUMBER_ID"),
+            "whatsapp_business_account_id": ("WHATSAPP_BUSINESS_ACCOUNT_ID",),
             "whatsapp_app_secret": ("WHATSAPP_APP_SECRET",),
             "whatsapp_verify_token": ("WHATSAPP_VERIFY_TOKEN",),
             "msg91_auth_key": ("MSG91_AUTH_KEY",),
             "msg91_sender_id": ("MSG91_SENDER_ID",),
+            "msg91_template_id": ("MSG91_TEMPLATE_ID",),
             "msg91_webhook_token": ("MSG91_WEBHOOK_TOKEN",),
         }
         for field, keys in mapping.items():

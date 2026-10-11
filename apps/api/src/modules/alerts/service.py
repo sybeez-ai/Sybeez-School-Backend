@@ -672,14 +672,12 @@ async def _enqueue_delivery(row: NotificationDelivery, components: list, sms_var
 
 def _provider_for(channel: str) -> str:
     from src.core.config import get_settings
+    from src.modules.alerts.credentials import effective_sms_provider, effective_whatsapp_provider
 
     settings = get_settings()
     if channel == NotificationChannel.SMS.value:
-        return (settings.sms_provider or "mock").strip().lower() or "mock"
-    provider = (settings.whatsapp_provider or "mock").strip().lower() or "mock"
-    if provider == "meta":
-        return "meta_cloud"
-    return provider
+        return effective_sms_provider(settings)
+    return effective_whatsapp_provider(settings)
 
 
 async def _scope_school(db: AsyncSession, school_id: UUID) -> None:

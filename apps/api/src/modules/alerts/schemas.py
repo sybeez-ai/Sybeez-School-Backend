@@ -38,7 +38,16 @@ class DeliveryListOut(BaseModel):
     total: int
 
 
-class AlertSettingsOut(BaseModel):
+class ProviderStatusOut(BaseModel):
+    whatsapp_status: str
+    sms_status: str
+    whatsapp_provider: str
+    sms_provider: str
+    whatsapp_missing: list[str] = Field(default_factory=list)
+    sms_missing: list[str] = Field(default_factory=list)
+
+
+class AlertSettingsOut(ProviderStatusOut):
     school_id: UUID
     whatsapp_enabled: bool
     sms_enabled: bool
@@ -82,6 +91,21 @@ class TemplateUpdate(BaseModel):
     body_text: str | None = None
     active: bool | None = None
     locale: str | None = None
+
+
+class TemplateSubmitItem(BaseModel):
+    name: str
+    language: str
+    id: str | None = None
+    meta_status: str | None = None
+    error: str | None = None
+
+
+class TemplateSubmitOut(BaseModel):
+    status: str
+    dry_run: bool
+    submitted: list[TemplateSubmitItem]
+    payloads: list[dict] = Field(default_factory=list)
 
 
 class TemplateCreate(BaseModel):
