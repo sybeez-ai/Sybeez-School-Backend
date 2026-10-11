@@ -9,6 +9,8 @@ class UserRole(StrEnum):
     TEACHER = "TEACHER"
     STUDENT = "STUDENT"
     PARENT = "PARENT"
+    # Non-teaching employee: HR self-service only (My HR, leave, salary slips).
+    STAFF = "STAFF"
 
 
 class PlatformRole(StrEnum):

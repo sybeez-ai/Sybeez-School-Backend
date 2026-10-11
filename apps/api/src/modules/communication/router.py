@@ -31,6 +31,15 @@ from src.shared.enums import UserRole
 
 router = APIRouter(prefix="/communication", tags=["communication"])
 
+# Personal inbox and preferences: every signed-in school user, including non-teaching STAFF.
+INBOX_ROLES = (
+    UserRole.STUDENT,
+    UserRole.PARENT,
+    UserRole.TEACHER,
+    UserRole.STAFF,
+    UserRole.SCHOOL_ADMIN,
+)
+
 
 def _sid(u: CurrentUser) -> UUID:
     if u.school_id is None:
@@ -57,14 +66,7 @@ async def list_notifications(
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[
         CurrentUser,
-        Depends(
-            require_roles(
-                UserRole.STUDENT,
-                UserRole.PARENT,
-                UserRole.TEACHER,
-                UserRole.SCHOOL_ADMIN,
-            )
-        ),
+        Depends(require_roles(*INBOX_ROLES)),
     ],
     unread: bool | None = Query(None),
     page: int = Query(1, ge=1),
@@ -81,14 +83,7 @@ async def unread_count(
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[
         CurrentUser,
-        Depends(
-            require_roles(
-                UserRole.STUDENT,
-                UserRole.PARENT,
-                UserRole.TEACHER,
-                UserRole.SCHOOL_ADMIN,
-            )
-        ),
+        Depends(require_roles(*INBOX_ROLES)),
     ],
     scope: Literal["hr"] | None = Query(None),
 ):
@@ -101,14 +96,7 @@ async def mark_notification_read(
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[
         CurrentUser,
-        Depends(
-            require_roles(
-                UserRole.STUDENT,
-                UserRole.PARENT,
-                UserRole.TEACHER,
-                UserRole.SCHOOL_ADMIN,
-            )
-        ),
+        Depends(require_roles(*INBOX_ROLES)),
     ],
 ):
     return await CommunicationService(db).mark_read(user.id, notification_id)
@@ -119,14 +107,7 @@ async def mark_all_read(
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[
         CurrentUser,
-        Depends(
-            require_roles(
-                UserRole.STUDENT,
-                UserRole.PARENT,
-                UserRole.TEACHER,
-                UserRole.SCHOOL_ADMIN,
-            )
-        ),
+        Depends(require_roles(*INBOX_ROLES)),
     ],
     scope: Literal["hr"] | None = Query(None),
 ):
@@ -139,14 +120,7 @@ async def delete_notification(
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[
         CurrentUser,
-        Depends(
-            require_roles(
-                UserRole.STUDENT,
-                UserRole.PARENT,
-                UserRole.TEACHER,
-                UserRole.SCHOOL_ADMIN,
-            )
-        ),
+        Depends(require_roles(*INBOX_ROLES)),
     ],
 ):
     await CommunicationService(db).delete_notification(user.id, notification_id)
@@ -160,14 +134,7 @@ async def get_preferences(
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[
         CurrentUser,
-        Depends(
-            require_roles(
-                UserRole.STUDENT,
-                UserRole.PARENT,
-                UserRole.TEACHER,
-                UserRole.SCHOOL_ADMIN,
-            )
-        ),
+        Depends(require_roles(*INBOX_ROLES)),
     ],
 ):
     return await CommunicationService(db).get_preferences(user.id, user.school_id)
@@ -179,14 +146,7 @@ async def update_preferences(
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[
         CurrentUser,
-        Depends(
-            require_roles(
-                UserRole.STUDENT,
-                UserRole.PARENT,
-                UserRole.TEACHER,
-                UserRole.SCHOOL_ADMIN,
-            )
-        ),
+        Depends(require_roles(*INBOX_ROLES)),
     ],
 ):
     return await CommunicationService(db).update_preferences(user.id, user.school_id, body)

@@ -14,6 +14,7 @@ from src.modules.staff_attendance.schemas import (
     AttendanceMark,
     AttendanceOut,
     AttendanceUpdate,
+    AuditEntry,
     BulkResult,
     DailySheet,
     RangeSummary,
@@ -138,6 +139,18 @@ async def update_attendance(
 
 
 @router.delete("/{record_id}", status_code=204)
-async def delete_attendance(record_id: UUID, user: Admin, db: Db):
-    await StaffAttendanceService(db).delete(_sid(user), record_id)
+async def delete_attendance(
+    record_id: UUID,
+    user: Admin,
+    db: Db,
+    reason: Annotated[str | None, Query(max_length=500)] = None,
+):
+    await StaffAttendanceService(db).delete(
+        _sid(user), record_id, user.id, (reason or "").strip() or None
+    )
     return Response(status_code=204)
+
+
+@router.get("/{record_id}/history", response_model=list[AuditEntry])
+async def attendance_audit_trail(record_id: UUID, user: Admin, db: Db):
+    return await StaffAttendanceService(db).audit_trail(_sid(user), record_id)

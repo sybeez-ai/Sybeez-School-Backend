@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import and_, delete, func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -47,7 +47,10 @@ from src.modules.communication.schemas import (
     PreferencesUpdate,
     UnreadCountOut,
 )
-from src.modules.notifications.service import create_bulk_notifications, create_in_app_notification
+from src.modules.notifications.service import (
+    create_bulk_notifications,
+    create_in_app_notification,
+)
 from src.shared.enums import (
     AnnouncementStatus,
     AudienceType,
@@ -85,7 +88,7 @@ DEFAULT_PREF_TYPES = [
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class CommunicationService:

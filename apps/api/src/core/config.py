@@ -1,8 +1,8 @@
+import logging
 from functools import lru_cache
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
 
 _INSECURE_DEFAULTS: set[str] = {
     "",
@@ -73,6 +73,14 @@ class Settings(BaseSettings):
     whatsapp_cloud_access_token: str = ""
     whatsapp_cloud_phone_number_id: str = ""
 
+    # Private HR file storage. With a bucket set, files go to S3 (server-side encrypted) and
+    # downloads use presigned URLs; otherwise they stay on the API host's private disk and are
+    # served through signed one-file download tokens. Both links expire after the TTL.
+    hr_files_s3_bucket: str = ""
+    hr_files_s3_region: str = ""
+    hr_files_s3_prefix: str = "hr-files"
+    hr_files_link_ttl_seconds: int = Field(default=120, ge=10, le=3600)
+
     def validate_runtime(self) -> None:
         """Fail closed in production for unsafe defaults."""
         if (self.app_env or "").lower() != "production":
@@ -105,6 +113,12 @@ class Settings(BaseSettings):
                 missing.append("WEB_APP_URL")
             if missing:
                 problems.append(f"Missing Cognito settings: {', '.join(missing)}")
+
+        if not self.hr_files_s3_bucket:
+            logging.getLogger(__name__).warning(
+                "HR_FILES_S3_BUCKET is not set: HR files are stored on this host's private disk. "
+                "Mount persistent storage for private_media/ or configure S3."
+            )
 
         if problems:
             raise RuntimeError(

@@ -38,6 +38,18 @@ EMPLOYEE_LINKS = {
     "document": "/teacher/my-hr",
     "letter": "/teacher/my-hr",
 }
+STAFF_LINKS = {
+    "leave": "/staff/leave",
+    "request": "/staff/my-hr",
+    "workflow": "/staff/my-hr",
+    "document": "/staff/my-hr",
+    "letter": "/staff/my-hr",
+}
+
+
+def event_key(entity_type: str, entity_id: UUID, event: str) -> str:
+    """Stable key for one business event; the (event_key, user_id) unique index makes replays no-ops."""
+    return f"hr:{entity_type}:{entity_id}:{event}"[:240]
 
 
 class HrNotifier:
@@ -61,6 +73,24 @@ class HrNotifier:
     async def _enabled(self, school_id: UUID, category: str) -> bool:
         return await notifications_enabled(self.db, school_id, category)
 
+    async def employee_links(self, school_id: UUID, user_id: UUID | None) -> dict[str, str]:
+        """Self-service links for the portal this employee signs in to (teacher or staff)."""
+        if user_id is None:
+            return EMPLOYEE_LINKS
+        roles = set(
+            (
+                await self.db.execute(
+                    select(SchoolMembership.role).where(
+                        SchoolMembership.school_id == school_id,
+                        SchoolMembership.user_id == user_id,
+                    )
+                )
+            ).scalars()
+        )
+        if UserRole.STAFF.value in roles and UserRole.TEACHER.value not in roles:
+            return STAFF_LINKS
+        return EMPLOYEE_LINKS
+
     async def send(
         self,
         school_id: UUID,
@@ -72,9 +102,14 @@ class HrNotifier:
         link: str,
         entity_type: str,
         entity_id: UUID,
+        event: str,
         actor: UUID | None = None,
     ) -> int:
-        """Notify `recipients` (minus the actor who caused the event). Returns rows created."""
+        """Notify `recipients` (minus the actor who caused the event). Returns rows created.
+
+        `event` names the business event (e.g. ``submitted``); delivering the same event to the same
+        user twice is a no-op, so retries and double submits never duplicate an inbox entry.
+        """
         ids = [u for u in dict.fromkeys(recipients) if u and u != actor]
         if not ids or not await self._enabled(school_id, category):
             return 0
@@ -88,6 +123,7 @@ class HrNotifier:
             link_path=link,
             entity_type=entity_type,
             entity_id=entity_id,
+            event_key_prefix=event_key(entity_type, entity_id, event),
         )
 
     async def to_admins(
@@ -99,6 +135,7 @@ class HrNotifier:
         title: str,
         body: str,
         entity_id: UUID,
+        event: str,
         actor: UUID | None,
     ) -> int:
         return await self.send(
@@ -110,6 +147,7 @@ class HrNotifier:
             link=ADMIN_LINKS[kind],
             entity_type=f"hr_{kind}",
             entity_id=entity_id,
+            event=event,
             actor=actor,
         )
 
@@ -123,16 +161,19 @@ class HrNotifier:
         title: str,
         body: str,
         entity_id: UUID,
+        event: str,
         actor: UUID | None,
     ) -> int:
+        links = await self.employee_links(school_id, user_id)
         return await self.send(
             school_id,
             [user_id],
             category=category,
             title=title,
             body=body,
-            link=EMPLOYEE_LINKS[kind],
+            link=links[kind],
             entity_type=f"hr_{kind}",
             entity_id=entity_id,
+            event=event,
             actor=actor,
         )

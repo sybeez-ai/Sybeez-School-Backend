@@ -1,11 +1,9 @@
-from typing import Annotated
-
 import json
 import secrets
+import urllib.parse
+from typing import Annotated
 
 import anyio
-import urllib.parse
-
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -88,6 +86,7 @@ async def me(
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     from sqlalchemy import select
+
     from src.db.models import User
 
     row = (await db.execute(select(User).where(User.id == user.id))).scalar_one()

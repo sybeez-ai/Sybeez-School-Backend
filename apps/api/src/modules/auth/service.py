@@ -4,7 +4,12 @@ from uuid import UUID, uuid4
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.config import get_settings
-from src.core.exceptions import ConflictError, ForbiddenError, NotFoundError, UnauthorizedError
+from src.core.exceptions import (
+    ConflictError,
+    ForbiddenError,
+    NotFoundError,
+    UnauthorizedError,
+)
 from src.core.security import (
     create_access_token,
     create_refresh_token_claims,
@@ -135,6 +140,7 @@ class AuthService:
         "teacher": {UserRole.TEACHER},
         "student": {UserRole.STUDENT},
         "parent": {UserRole.PARENT},
+        "staff": {UserRole.STAFF},
     }
 
     async def _assert_portal_role(self, user: User, portal: str | None, *, school_id_hint=None) -> None:
@@ -188,6 +194,10 @@ class AuthService:
             if role == UserRole.PARENT:
                 raise ForbiddenError(
                     "This account is a parent. Sign in at /login/parent only."
+                )
+            if role == UserRole.STAFF:
+                raise ForbiddenError(
+                    "This account is a staff member. Sign in at /login/staff only."
                 )
             raise ForbiddenError(
                 f"This account cannot sign in on the {key} portal."

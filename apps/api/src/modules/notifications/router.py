@@ -52,7 +52,14 @@ async def list_my_notifications(
 async def mark_read(
     notification_id: UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.STUDENT, UserRole.PARENT, UserRole.TEACHER, UserRole.SCHOOL_ADMIN))],
+    user: Annotated[
+        CurrentUser,
+        Depends(
+            require_roles(
+                UserRole.STUDENT, UserRole.PARENT, UserRole.TEACHER, UserRole.STAFF, UserRole.SCHOOL_ADMIN
+            )
+        ),
+    ],
 ):
     row = await db.get(Notification, notification_id)
     if not row or row.user_id != user.id:

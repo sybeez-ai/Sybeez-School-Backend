@@ -39,6 +39,7 @@ from src.modules.hr_dashboard.schemas import (
     WorkflowSummary,
 )
 from src.modules.hr_files.service import EmployeeDocumentService
+from src.modules.hr_settings.service import load_rules
 from src.modules.staff_attendance.service import StaffAttendanceService
 from src.shared.utils import utcnow
 
@@ -71,13 +72,15 @@ class HrDashboardService:
             today = as_of
         headcount, departments = await self._headcount(school_id)
         attendance = StaffAttendanceService(self.db)
-        attendance_today = (await attendance.daily(school_id, today)).summary
+        sheet = await attendance.daily(school_id, today)
+        attendance_today = sheet.summary
         month_start = today.replace(day=1)
         month = await attendance.summary(school_id, date_from=month_start, date_to=today)
         leave = await self._leave(school_id, today)
-        records = await self._records(school_id)
+        records = await self._records(school_id, today)
         workflows = await self._workflows(school_id, today)
         salary = await self._salary_slips(school_id)
+        unmarked = attendance_today.unmarked if sheet.is_working_day else 0
         return HrDashboardOut(
             as_of=today,
             school_timezone=tz_name,
@@ -85,12 +88,14 @@ class HrDashboardService:
             headcount=headcount,
             departments=departments,
             attendance_today=attendance_today,
+            is_working_day=sheet.is_working_day,
+            non_working_reason=sheet.non_working_reason,
             attendance_month=AttendanceMonth(date_from=month_start, date_to=today, totals=month.totals),
             leave=leave,
             records=records,
             workflows=workflows,
             salary_slips=salary,
-            alerts=self._alerts(attendance_today.unmarked, attendance_today.total, leave, records, workflows),
+            alerts=self._alerts(unmarked, attendance_today.total, leave, records, workflows),
         )
 
     async def _count(self, stmt) -> int:
@@ -104,9 +109,12 @@ class HrDashboardService:
                 .outerjoin(Teacher, Teacher.id == Employee.teacher_id)
                 .outerjoin(User, User.id == Teacher.user_id)
                 .outerjoin(Department, Department.id == Employee.department_id)
-                .where(Employee.school_id == school_id)
+                .where(Employee.school_id == school_id, Employee.status != "LEFT")
             )
         ).all()
+        left = await self._count(
+            select(func.count()).where(Employee.school_id == school_id, Employee.status == "LEFT")
+        )
         by_dept: dict[UUID | None, DepartmentHeadcount] = {}
         active = teaching = 0
         for dept_id, dept_name, staff_type, is_active in rows:
@@ -128,6 +136,7 @@ class HrDashboardService:
                 inactive=len(rows) - active,
                 teaching=teaching,
                 non_teaching=len(rows) - teaching,
+                left=left,
             ),
             departments,
         )
@@ -145,7 +154,7 @@ class HrDashboardService:
             ),
         )
 
-    async def _records(self, school_id: UUID) -> RecordsSummary:
+    async def _records(self, school_id: UUID, today: date) -> RecordsSummary:
         letters = dict(
             (
                 await self.db.execute(
@@ -154,7 +163,18 @@ class HrDashboardService:
             ).all()
         )
         checklist = await EmployeeDocumentService(self.db).checklist(school_id)
+        warn_days = (await load_rules(self.db, school_id)).document_expiry_warning_days
+        docs = select(func.count()).select_from(EmployeeDocument).where(
+            EmployeeDocument.school_id == school_id, EmployeeDocument.status == "ACTIVE"
+        )
         return RecordsSummary(
+            documents_pending_verification=await self._count(
+                docs.where(EmployeeDocument.verification_status == "PENDING")
+            ),
+            documents_expired=await self._count(docs.where(EmployeeDocument.expiry_date < today)),
+            documents_expiring=await self._count(
+                docs.where(EmployeeDocument.expiry_date.between(today, today + timedelta(days=warn_days)))
+            ),
             open_requests=await self._count(
                 select(func.count())
                 .select_from(HrRequest)
@@ -247,6 +267,9 @@ class HrDashboardService:
             ("leave", "warning", leave.pending, "{} waiting for a decision", "leave request"),
             ("onboarding", "warning", workflows.overdue_tasks, "{} overdue", "onboarding or exit task"),
             ("documents", "warning", missing_docs, "{} missing required documents", "active employee"),
+            ("expiry", "warning", records.documents_expired, "{} expired", "employee document"),
+            ("expiry", "info", records.documents_expiring, "{} expiring soon", "employee document"),
+            ("verification", "info", records.documents_pending_verification, "{} awaiting verification", "employee document"),
             ("requests", "info", records.open_requests, "{} open", "employee request"),
             ("attendance", "info", unmarked if roster else 0, "{} not yet marked today", "employee"),
             ("letters", "info", records.draft_letters, "{} not yet issued", "draft letter"),

@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.api.dependencies import CurrentUser, require_roles
 from src.core.database import get_db
 from src.core.exceptions import ForbiddenError
+from src.modules.hr.audit import SELF_SERVICE_ROLES
 from src.modules.hr.schemas import (
     PayrollPayslipCreate,
     PayrollPayslipOut,
@@ -18,6 +19,7 @@ from src.modules.hr.schemas import (
     StaffLeaveDecisionIn,
     StaffLeaveRequestCreate,
     StaffLeaveRequestOut,
+    StaffLeaveRevokeIn,
 )
 from src.modules.hr.service import HRService
 from src.shared.enums import UserRole
@@ -26,6 +28,9 @@ router = APIRouter(prefix="/hr", tags=["hr"])
 
 LEAVE_STATUS_PATTERN = "(?i)^(PENDING|APPROVED|REJECTED|CANCELLED)$"
 PAYSLIP_STATUS_PATTERN = "(?i)^(DRAFT|PAID|CANCELLED)$"
+
+Admin = Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))]
+SelfService = Annotated[CurrentUser, Depends(require_roles(*SELF_SERVICE_ROLES))]
 
 
 def _sid(u: CurrentUser) -> UUID:
@@ -45,42 +50,54 @@ async def hr_health():
 @router.get("/leave/requests", response_model=list[StaffLeaveRequestOut])
 async def list_staff_leaves(
     db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    user: Admin,
     status: str | None = Query(default=None, pattern=LEAVE_STATUS_PATTERN),
     q: str | None = Query(default=None, max_length=200),
     date_from: date | None = None,
     date_to: date | None = None,
     user_id: UUID | None = None,
+    leave_type_id: UUID | None = None,
 ):
     return await HRService(db).list_staff_leaves(
-        _sid(user), status=status, q=q, date_from=date_from, date_to=date_to, user_id=user_id
+        _sid(user),
+        status=status,
+        q=q,
+        date_from=date_from,
+        date_to=date_to,
+        user_id=user_id,
+        leave_type_id=leave_type_id,
     )
 
 
 @router.get("/leave/requests/me", response_model=list[StaffLeaveRequestOut])
-async def list_my_staff_leaves(
-    db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.TEACHER))],
-):
+async def list_my_staff_leaves(db: Annotated[AsyncSession, Depends(get_db)], user: SelfService):
     return await HRService(db).list_staff_leaves(_sid(user), user_id=user.id)
 
 
 @router.post("/leave/requests", response_model=StaffLeaveRequestOut, status_code=201)
 async def create_my_staff_leave(
-    body: StaffLeaveRequestCreate,
-    db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.TEACHER))],
+    body: StaffLeaveRequestCreate, db: Annotated[AsyncSession, Depends(get_db)], user: SelfService
 ):
     return await HRService(db).create_staff_leave(_sid(user), user.id, body)
 
 
 @router.post("/leave/requests/{leave_id}/cancel", response_model=StaffLeaveRequestOut)
 async def cancel_my_staff_leave(
-    leave_id: UUID,
-    db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.TEACHER))],
+    leave_id: UUID, db: Annotated[AsyncSession, Depends(get_db)], user: SelfService
 ):
     return await HRService(db).cancel_staff_leave(_sid(user), leave_id, user.id)
+
+
+@router.post(
+    "/leave/requests/{leave_id}/resubmit", response_model=StaffLeaveRequestOut, status_code=201
+)
+async def resubmit_my_staff_leave(
+    leave_id: UUID,
+    body: StaffLeaveRequestCreate,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: SelfService,
+):
+    return await HRService(db).resubmit_staff_leave(_sid(user), leave_id, user.id, body)
 
 
 @router.post("/leave/requests/{leave_id}/decide", response_model=StaffLeaveRequestOut)
@@ -88,37 +105,38 @@ async def decide_staff_leave(
     leave_id: UUID,
     body: StaffLeaveDecisionIn,
     db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    user: Admin,
 ):
     return await HRService(db).decide_staff_leave(_sid(user), leave_id, user.id, body)
+
+
+@router.post("/leave/requests/{leave_id}/revoke", response_model=StaffLeaveRequestOut)
+async def revoke_staff_leave(
+    leave_id: UUID,
+    body: StaffLeaveRevokeIn,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Admin,
+):
+    return await HRService(db).revoke_staff_leave(_sid(user), leave_id, user.id, body)
 
 
 # ── Payroll ──────────────────────────────────────────────────
 
 
 @router.get("/payroll/runs", response_model=list[PayrollRunOut])
-async def list_runs(
-    db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
-):
+async def list_runs(db: Annotated[AsyncSession, Depends(get_db)], user: Admin):
     return await HRService(db).list_payroll_runs(_sid(user))
 
 
 @router.post("/payroll/runs", response_model=PayrollRunOut, status_code=201)
 async def create_run(
-    body: PayrollRunCreate,
-    db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    body: PayrollRunCreate, db: Annotated[AsyncSession, Depends(get_db)], user: Admin
 ):
     return await HRService(db).create_payroll_run(_sid(user), user.id, body)
 
 
 @router.get("/payroll/runs/{run_id}", response_model=PayrollRunDetailOut)
-async def get_run(
-    run_id: UUID,
-    db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
-):
+async def get_run(run_id: UUID, db: Annotated[AsyncSession, Depends(get_db)], user: Admin):
     return await HRService(db).get_payroll_run(_sid(user), run_id)
 
 
@@ -127,7 +145,7 @@ async def create_run_payslip(
     run_id: UUID,
     body: PayrollPayslipCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    user: Admin,
 ):
     return await HRService(db).create_payslip(_sid(user), run_id, body)
 
@@ -137,7 +155,7 @@ async def update_payslip(
     payslip_id: UUID,
     body: PayrollPayslipUpdate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    user: Admin,
 ):
     return await HRService(db).update_payslip(_sid(user), payslip_id, body)
 
@@ -145,7 +163,7 @@ async def update_payslip(
 @router.get("/payroll/payslips", response_model=list[PayrollPayslipOut])
 async def list_payslips(
     db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    user: Admin,
     run_id: UUID | None = None,
     status: str | None = Query(default=None, pattern=PAYSLIP_STATUS_PATTERN),
     teacher_id: UUID | None = None,
@@ -160,7 +178,7 @@ async def list_payslips(
 @router.get("/payroll/payslips/me", response_model=list[PayrollPayslipOut])
 async def list_my_payslips(
     db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.TEACHER))],
+    user: SelfService,
     year: int | None = Query(default=None, ge=2000, le=2100),
 ):
     return await HRService(db).list_my_payslips(_sid(user), user.id, year=year)
@@ -170,7 +188,9 @@ async def list_my_payslips(
 async def payslip_pdf(
     payslip_id: UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN, UserRole.TEACHER))],
+    user: Annotated[
+        CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN, *SELF_SERVICE_ROLES))
+    ],
 ):
     is_admin = user.role == UserRole.SCHOOL_ADMIN
     content, filename = await HRService(db).build_payslip_pdf(
@@ -182,6 +202,8 @@ async def payslip_pdf(
     return Response(
         content=content,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "private, no-store",
+        },
     )
-

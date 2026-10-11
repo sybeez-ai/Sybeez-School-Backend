@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.api.dependencies import CurrentUser, require_roles
 from src.core.database import get_db
 from src.core.exceptions import ForbiddenError
+from src.modules.hr.audit import SELF_SERVICE_ROLES
 from src.modules.hr_requests.schemas import (
     AdminRequestCreate,
     MyProfileOut,
@@ -21,7 +22,7 @@ from src.shared.enums import UserRole
 router = APIRouter(prefix="/hr", tags=["hr-requests"])
 
 Admin = Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))]
-Teacher = Annotated[CurrentUser, Depends(require_roles(UserRole.TEACHER))]
+Teacher = Annotated[CurrentUser, Depends(require_roles(*SELF_SERVICE_ROLES))]
 Db = Annotated[AsyncSession, Depends(get_db)]
 
 
