@@ -260,18 +260,28 @@ jobs:
                 aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$service" \
                   --query 'services[0].{desired:desiredCount,running:runningCount,pending:pendingCount,events:events[:8].message}' \
                   --output json
+                echo "Container environment names (values omitted):"
+                aws ecs describe-task-definition --task-definition "$task_def" \
+                  --query "taskDefinition.containerDefinitions[?name=='${container}'].environment[].name" \
+                  --output text || true
+                echo "Container secret names (values omitted):"
+                aws ecs describe-task-definition --task-definition "$task_def" \
+                  --query "taskDefinition.containerDefinitions[?name=='${container}'].secrets[].name" \
+                  --output text || true
+                # ecs:ListTasks is not granted to the deploy role. A denial must
+                # not skip the CloudWatch dump below.
                 stopped=$(aws ecs list-tasks --cluster "$ECS_CLUSTER" --service-name "$service" \
-                  --desired-status STOPPED --query 'taskArns[:3]' --output text)
+                  --desired-status STOPPED --query 'taskArns[:3]' --output text || true)
+                log_group=$(aws ecs describe-task-definition --task-definition "$task_def" \
+                  --query "taskDefinition.containerDefinitions[?name=='${container}'].logConfiguration.options.\"awslogs-group\" | [0]" \
+                  --output text || true)
+                log_prefix=$(aws ecs describe-task-definition --task-definition "$task_def" \
+                  --query "taskDefinition.containerDefinitions[?name=='${container}'].logConfiguration.options.\"awslogs-stream-prefix\" | [0]" \
+                  --output text || true)
                 if [ -n "$stopped" ] && [ "$stopped" != "None" ]; then
                   aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks $stopped \
                     --query 'tasks[].{stoppedReason:stoppedReason,containers:containers[].{name:name,exitCode:exitCode,reason:reason}}' \
-                    --output json
-                  log_group=$(aws ecs describe-task-definition --task-definition "$task_def" \
-                    --query "taskDefinition.containerDefinitions[?name=='${container}'].logConfiguration.options.\"awslogs-group\" | [0]" \
-                    --output text)
-                  log_prefix=$(aws ecs describe-task-definition --task-definition "$task_def" \
-                    --query "taskDefinition.containerDefinitions[?name=='${container}'].logConfiguration.options.\"awslogs-stream-prefix\" | [0]" \
-                    --output text)
+                    --output json || true
                   if [ -n "$log_group" ] && [ "$log_group" != "None" ] && [ -n "$log_prefix" ] && [ "$log_prefix" != "None" ]; then
                     for arn in $stopped; do
                       task_id="${arn##*/}"
@@ -284,6 +294,16 @@ jobs:
                         --output text || true
                     done
                   fi
+                fi
+                if [ -n "${log_group:-}" ] && [ "$log_group" != "None" ]; then
+                  echo "Recent CloudWatch events in $log_group"
+                  start_ms=$(( $(date +%s) * 1000 - 15 * 60 * 1000 ))
+                  aws logs filter-log-events \
+                    --log-group-name "$log_group" \
+                    --start-time "$start_ms" \
+                    --limit 80 \
+                    --query 'events[].message' \
+                    --output text || true
                 fi
                 exit "$stable"
             fi

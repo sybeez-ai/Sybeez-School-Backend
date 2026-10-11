@@ -10,6 +10,13 @@ from src.modules.access.deps import public
 router = APIRouter(tags=["health"])
 
 
+@router.get("/")
+@public
+async def root():
+    """Load balancer default checks often use GET /."""
+    return await health()
+
+
 @router.get("/health")
 @public
 async def health():

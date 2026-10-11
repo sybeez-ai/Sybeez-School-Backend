@@ -1,3 +1,5 @@
+import asyncio
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -26,18 +28,36 @@ from src.core.middleware import (
 from src.core.redis import close_redis
 from src.modules.platform.bootstrap import bootstrap_superadmin
 
+logger = logging.getLogger(__name__)
+
+
+async def _bootstrap_superadmin() -> None:
+    """Create the platform admin without blocking the process from listening."""
+    try:
+        async with AsyncSessionLocal() as session:
+            try:
+                await bootstrap_superadmin(session)
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
+    except Exception:
+        # A bootstrap or database failure must not keep the process from
+        # listening. The load balancer only needs /health to succeed.
+        logger.exception("Super admin bootstrap failed; continuing startup")
+
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     setup_logging()
-    async with AsyncSessionLocal() as session:
-        try:
-            await bootstrap_superadmin(session)
-            await session.commit()
-        except Exception:
-            await session.rollback()
-            raise
+    bootstrap = asyncio.create_task(_bootstrap_superadmin())
     yield
+    if not bootstrap.done():
+        bootstrap.cancel()
+    try:
+        await bootstrap
+    except asyncio.CancelledError:
+        pass
     await close_redis()
 
 

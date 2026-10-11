@@ -79,6 +79,7 @@ def test_public_routes_are_only_health_and_auth_entry():
         if getattr(route.endpoint, "__public__", False)
     )
     assert public == [
+        "/",
         "/api/v1/admissions/health",
         "/api/v1/ai-reports/health",
         "/api/v1/assignments/health",
