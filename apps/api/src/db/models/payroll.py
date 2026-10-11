@@ -469,6 +469,36 @@ class PayrollPayment(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
+class PayrollAssistantAction(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """A write the assistant proposed. It runs only after the user confirms it."""
+
+    __tablename__ = "payroll_assistant_actions"
+    __table_args__ = (
+        CheckConstraint(_in("status", ("PROPOSED", "EXECUTED")), name="assistant_action_status"),
+        Index(
+            "uq_payroll_assistant_idempotency",
+            "school_id",
+            "user_id",
+            "idempotency_key",
+            unique=True,
+            postgresql_where=text("idempotency_key IS NOT NULL"),
+        ),
+    )
+
+    school_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    action: Mapped[str] = mapped_column(String(48), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="PROPOSED")
+    idempotency_key: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    result: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
+
 class PayrollAuditLog(Base, UUIDPrimaryKeyMixin):
     __tablename__ = "payroll_audit_logs"
 

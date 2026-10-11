@@ -6,7 +6,7 @@ Salary is calculated the day the period's staff attendance is locked, including 
 
 ## Merge order
 
-This branch adds Alembic revision `0040` (`0040_payroll_production.py`, `down_revision = 0035`) and revision `0041` (`0041_payroll_daily.py`, `down_revision = 0040`). Land them on `HRM` after `0035`. `alembic upgrade head` on an empty Postgres 16 database applies `0001` through `0041`.
+This branch adds Alembic revision `0040` (`0040_payroll_production.py`, `down_revision = 0035`), revision `0041` (`0041_payroll_daily.py`, `down_revision = 0040`), and revision `0042` (`0042_payroll_assistant.py`, `down_revision = 0041`). Land them on `HRM` after `0035`. `alembic upgrade head` on an empty Postgres 16 database applies `0001` through `0042`.
 
 Finance PR #1 uses revision ids `0028`, `0029`, and `0030` for different files than HRM's `0028_hr_integrity`, `0029_hr_employees`, and `0030_hr_departments`. Do not reuse those ids. When finance merges, renumber its revisions so they are not `0028`–`0035` or `0040`, then point `0040` at the new head if finance must run first. If the `sybeez_definer` role exists at upgrade time, payroll `SECURITY DEFINER` functions are altered to that owner.
 
@@ -197,3 +197,45 @@ Each payslip stores `lop_detail`: `[{ date, status, source, lop_days }]`. `sourc
 `payroll_loan_events` records EMI, prepayment, closure, and reversal. Migration `0041` forces row level security on that table, same as the other payroll tables. Tables outside payroll are unchanged: the rest of the API does not set `app.school_id` on every request, so forcing RLS there would block those routes.
 
 Payslip template codes remain `CLASSIC`, `COMPACT`, and `STATUTORY` on payroll settings.
+
+## Payroll assistant
+
+The bottom chat and voice overlay in the payroll portal call this API. The model never writes payroll by itself. Read tools use `PayrollService` and `PayrollDashboard` with the caller's role and the request's row-level security. Bank numbers and PAN are masked in tool results, in the streamed answer, and in the audit row.
+
+`PAYROLL_ASSISTANT_PROVIDER` is `local` (no outbound model; the tools still run), `openai` (OpenAI-compatible `POST {PAYROLL_ASSISTANT_BASE_URL}/chat/completions`), or `ai_service` (reuses `AI_SERVICE_URL` at `POST /api/v1/ai/chat`). `PAYROLL_ASSISTANT_SECRET_ID` loads `provider`, `api_key`, `model`, and `base_url` from AWS Secrets Manager and overrides the env values. The key is not written to logs.
+
+This backend proxies the teacher AI at `/api/v1/ai/*` and can stream `text/event-stream` from that service. It has no speech-to-text or text-to-speech route, so the payroll assistant does not add a voice passthrough. The portal keeps voice on whatever path already serves it.
+
+Both assistant routes use the payroll rate limit and a separate assistant limit (`PAYROLL_ASSISTANT_RATE_LIMIT_PER_MINUTE`, default 20). Every chat, tool, proposal, and confirm is a payroll audit row.
+
+`POST /payroll/assistant/chat` body `{ messages: [{ role: "user"|"assistant", content }] }`. Response is `text/event-stream`:
+
+| Event | Data |
+| --- | --- |
+| `tool` | `{ name, arguments }` |
+| `tool_result` | `{ name, result }` for a read |
+| `navigate` | `{ route, label, params }` route intent for the frontend |
+| `proposal` | `{ proposal_id, action, summary, payload }` a write that has not run |
+| `token` | `{ text }` a piece of the answer |
+| `error` | `{ message }` |
+| `done` | `{}` |
+
+Read tools: `search_employee`, `get_employee_pay`, `get_run_status`, `list_pending`, `explain_payslip`, `get_statutory_dues`.
+
+Navigation tools return these routes:
+
+| Tool | Route |
+| --- | --- |
+| `open_dashboard` | `/payroll` |
+| `open_runs` | `/payroll/runs` |
+| `open_run` | `/payroll/runs/{run_id}` |
+| `open_employee` | `/payroll/employees/{employee_id}` |
+| `open_payslip` | `/payroll/payslips/{payslip_id}` |
+| `open_settings` | `/payroll/settings` |
+| `open_loans` | `/payroll/loans` |
+| `open_reports` | `/payroll/runs/{run_id}/reports` |
+| `open_approvals` | `/payroll/approvals` |
+
+Write tools (`submit_run`, `approve_run`, `reject_run`, `cancel_run`, `lock_run`, `recalculate_run`, `retry_failed_payments`, `decide_reimbursement`) insert a `PROPOSED` row in `payroll_assistant_actions` and return a proposal. They do not change the run.
+
+`POST /payroll/assistant/confirm` body `{ proposal_id, idempotency_key }`. The key is 8–80 characters, letters, digits, and `_. :-`. The same key and proposal returns the stored result and does not run the action again. A key already used for a different proposal is a conflict. Confirm calls the same service method as the REST route, so the role check runs again. Migration `0042` forces row level security on `payroll_assistant_actions`.
