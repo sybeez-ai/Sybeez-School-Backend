@@ -114,3 +114,25 @@ def test_db_iam_auth_env_alias(monkeypatch):
     monkeypatch.setenv("DB_IAM_AUTH", "true")
     settings = Settings(_env_file=None)
     assert settings.database_iam_auth is True
+
+
+def test_production_starts_without_cognito_hosted_ui_domain():
+    settings = Settings(
+        _env_file=None,
+        app_env="production",
+        jwt_secret="x" * 40,
+        ai_service_token="y" * 40,
+        core_internal_token="z" * 40,
+        database_iam_auth=True,
+        database_url="postgresql+asyncpg://sybeez_app@db.example.com:5432/sybeez_school",
+        aws_region="ap-south-1",
+        s3_bucket="sybeez-bucket",
+        auth_mode="both",
+        cognito_region="ap-south-1",
+        cognito_user_pool_id="ap-south-1_pool",
+        cognito_app_client_id="client",
+        cognito_domain="",
+        cognito_oauth_redirect_uri="https://api.example/callback",
+        web_app_url="https://app.example",
+    )
+    settings.validate_runtime()

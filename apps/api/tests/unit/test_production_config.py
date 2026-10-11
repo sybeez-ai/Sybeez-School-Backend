@@ -35,6 +35,21 @@ def test_production_still_requires_a_complete_pool_when_cognito_is_partial():
         settings.validate_runtime()
 
 
+def test_production_starts_when_the_pool_has_no_hosted_ui_domain():
+    settings = _production(
+        cognito_region="ap-south-1",
+        cognito_user_pool_id="ap-south-1_pool",
+        cognito_app_client_id="client",
+        cognito_oauth_redirect_uri="https://api.example/callback",
+        web_app_url="https://app.example",
+        cognito_domain="",
+        database_iam_auth=True,
+        database_url="postgresql+asyncpg://sybeez_app@db.example.com:5432/sybeez_school",
+        aws_region="ap-south-1",
+    )
+    settings.validate_runtime()
+
+
 def test_production_requires_cognito_when_auth_mode_is_cognito():
     settings = _production(auth_mode="cognito")
     with pytest.raises(RuntimeError, match="COGNITO_USER_POOL_ID"):

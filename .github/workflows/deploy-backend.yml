@@ -287,6 +287,10 @@ jobs:
                 aws ecs describe-task-definition --task-definition "$task_def" \
                   --query "taskDefinition.containerDefinitions[?name=='${container}'].secrets[].name" \
                   --output text || true
+                echo "Non-secret startup settings:"
+                aws ecs describe-task-definition --task-definition "$task_def" \
+                  --query "taskDefinition.containerDefinitions[?name=='${container}'].environment[?name=='AUTH_MODE' || name=='DB_IAM_AUTH' || name=='APP_ENV' || name=='API_PORT' || name=='API_HOST' || name=='JOBS_BACKEND'].[name,value]" \
+                  --output text || true
                 # ecs:ListTasks is not granted to the deploy role. A denial must
                 # not skip the CloudWatch dump below.
                 stopped=$(aws ecs list-tasks --cluster "$ECS_CLUSTER" --service-name "$service" \
@@ -314,15 +318,20 @@ jobs:
                     done
                   fi
                 fi
-                if [ -n "${log_group:-}" ] && [ "$log_group" != "None" ]; then
-                  echo "Recent CloudWatch events in $log_group"
-                  start_ms=$(( $(date +%s) * 1000 - 15 * 60 * 1000 ))
-                  aws logs filter-log-events \
-                    --log-group-name "$log_group" \
-                    --start-time "$start_ms" \
-                    --limit 80 \
-                    --query 'events[].message' \
-                    --output text || true
+                if [ -n "${log_group:-}" ] && [ "$log_group" != "None" ] && [ -n "${log_prefix:-}" ] && [ "$log_prefix" != "None" ]; then
+                  # Service events name the task ids. GetLogEvents works without ListTasks.
+                  event_text=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$service" \
+                    --query 'services[0].events[].message' --output text || true)
+                  task_ids=$(printf '%s\n' "$event_text" | grep -oE '[0-9a-f]{32}' | sort -u | head -5 || true)
+                  for task_id in $task_ids; do
+                    echo "CloudWatch: $log_group ${log_prefix}/${container}/${task_id}"
+                    aws logs get-log-events \
+                      --log-group-name "$log_group" \
+                      --log-stream-name "${log_prefix}/${container}/${task_id}" \
+                      --limit 80 \
+                      --query 'events[].message' \
+                      --output text || true
+                  done
                 fi
                 exit "$stable"
             fi

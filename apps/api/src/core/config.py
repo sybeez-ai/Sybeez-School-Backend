@@ -225,8 +225,8 @@ class Settings(BaseSettings):
                 missing.append("COGNITO_USER_POOL_ID")
             if not (self.cognito_app_client_id or "").strip():
                 missing.append("COGNITO_APP_CLIENT_ID")
-            if not (self.cognito_domain or "").strip():
-                missing.append("COGNITO_DOMAIN")
+            # COGNITO_DOMAIN is only the Hosted UI host. Password login does not
+            # need it, and those routes already return a conflict when it is blank.
             if not (self.cognito_oauth_redirect_uri or "").strip():
                 missing.append("COGNITO_OAUTH_REDIRECT_URI")
             if not (self.web_app_url or "").strip():

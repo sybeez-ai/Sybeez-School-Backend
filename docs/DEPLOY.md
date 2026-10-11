@@ -56,11 +56,13 @@ Put these on the ECS task definitions, not in git.
 | `JOBS_BACKEND` | `redis` (default) or `sqs`. API enqueue and the worker both read this. |
 | `SQS_QUEUE_URL` | Required when `JOBS_BACKEND=sqs`. Same queue for enqueue and the worker. |
 | `JWT_SECRET`, `AI_SERVICE_TOKEN`, `CORE_INTERNAL_TOKEN` | Required in production, at least 32 characters, not a placeholder. |
-| `AUTH_MODE` | `local` or `both` starts with the school JWT when Cognito is unset. Cognito settings are required only for `AUTH_MODE=cognito`, or when a user pool, app client, or hosted-UI domain is already set. Do not require them on a task that does not have the pool: the process exits before it listens. |
+| `AUTH_MODE` | `local` or `both` starts with the school JWT when Cognito is unset. A user pool and app client are required when `AUTH_MODE=cognito` or when either id is already set. `COGNITO_DOMAIN` is only the Hosted UI host, so a missing domain does not stop the process. Google sign-in returns a conflict until it is set. |
 | `S3_BUCKET` | Required in production. The app stores object keys only. |
 | `APP_ENV` | `production` turns on the checks above. |
 
 `JOBS_BACKEND` defaults to `redis`, so a task definition that omits it keeps the current Redis list `sybeez:jobs`.
+
+`COGNITO_DOMAIN` is the Hosted UI host. Password login does not need it, so a missing domain does not stop the API process. Google sign-in returns a conflict until that variable is set.
 
 ## Production database already at finance revision 0030
 
