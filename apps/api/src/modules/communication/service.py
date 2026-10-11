@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from src.core.exceptions import AppError, ForbiddenError, NotFoundError
+from src.modules.access.scope import teacher_class_ids, teaches_class
 from src.db.models import (
     Announcement,
     AnnouncementAudience,
@@ -346,14 +347,21 @@ class CommunicationService:
         rows = (await self.db.execute(q)).scalars().unique().all()
         if role == UserRole.SCHOOL_ADMIN.value and not for_recipient:
             return [self._announcement_out(a) for a in rows]
-        # Filter to announcements targeting this user
+        teacher_classes = await teacher_class_ids(self.db, user_id, school_id) if role == UserRole.TEACHER.value else None
         out: list[AnnouncementOut] = []
         for a in rows:
-            if await self._user_in_audience(school_id, user_id, role, a):
+            if await self._user_in_audience(school_id, user_id, role, a, teacher_classes=teacher_classes):
                 out.append(self._announcement_out(a))
         return out
 
-    async def get_announcement(self, school_id: UUID, announcement_id: UUID) -> AnnouncementOut:
+    async def get_announcement(
+        self,
+        school_id: UUID,
+        announcement_id: UUID,
+        *,
+        viewer_id: UUID | None = None,
+        viewer_role: str | None = None,
+    ) -> AnnouncementOut:
         a = (
             await self.db.execute(
                 select(Announcement)
@@ -363,6 +371,12 @@ class CommunicationService:
         ).scalar_one_or_none()
         if not a:
             raise NotFoundError("Announcement not found")
+        if viewer_role and viewer_role not in {UserRole.SCHOOL_ADMIN.value, UserRole.PLATFORM_ADMIN.value}:
+            if a.author_id != viewer_id:
+                if a.status != AnnouncementStatus.PUBLISHED.value:
+                    raise NotFoundError("Announcement not found")
+                if viewer_id is None or not await self._user_in_audience(school_id, viewer_id, viewer_role, a):
+                    raise NotFoundError("Announcement not found")
         return self._announcement_out(a)
 
     async def create_announcement(
@@ -527,15 +541,7 @@ class CommunicationService:
         ).scalar_one_or_none()
         if not teacher:
             raise ForbiddenError("Teacher profile required")
-        assigned = (
-            await self.db.execute(
-                select(TeacherAssignment).where(
-                    TeacherAssignment.teacher_id == teacher.id,
-                    TeacherAssignment.class_id == class_id,
-                )
-            )
-        ).scalar_one_or_none()
-        if not assigned:
+        if not await teaches_class(self.db, school_id, class_id, teacher_id=teacher.id):
             raise ForbiddenError("Not assigned to this class")
         audiences: list[AudienceIn] = []
         if audience_role in ("STUDENT", "BOTH"):
@@ -662,9 +668,37 @@ class CommunicationService:
             out |= await self._users_for_section(school_id, sec.id, role)
         return out
 
+    async def _teacher_targeted(self, announcement: Announcement, classes: set[UUID]) -> bool:
+        if announcement.class_id and announcement.class_id in classes:
+            return True
+        for aud in announcement.audiences or []:
+            if aud.audience_type == AudienceType.SCHOOL.value:
+                return True
+            if aud.audience_type == AudienceType.ROLE.value and (aud.role or "").upper() == UserRole.TEACHER.value:
+                return True
+            if aud.section_id and aud.section_id in classes:
+                return True
+            if aud.audience_type == AudienceType.GRADE.value and aud.grade_id and classes:
+                grades = (
+                    await self.db.execute(select(ClassRoom.grade_id).where(ClassRoom.id.in_(classes)))
+                ).scalars().all()
+                if aud.grade_id in set(grades):
+                    return True
+        return False
+
     async def _user_in_audience(
-        self, school_id: UUID, user_id: UUID, role: str, a: Announcement
+        self,
+        school_id: UUID,
+        user_id: UUID,
+        role: str,
+        a: Announcement,
+        *,
+        teacher_classes: set[UUID] | None = None,
     ) -> bool:
+        if role == UserRole.TEACHER.value:
+            classes = teacher_classes if teacher_classes is not None else await teacher_class_ids(self.db, user_id, school_id)
+            if await self._teacher_targeted(a, classes):
+                return True
         recipients = await self._resolve_audience_users(school_id, a)
         return user_id in recipients
 
@@ -995,15 +1029,7 @@ class CommunicationService:
                 ).scalar_one_or_none()
                 if not enr:
                     continue
-                assigned = (
-                    await self.db.execute(
-                        select(TeacherAssignment).where(
-                            TeacherAssignment.teacher_id == teacher.id,
-                            TeacherAssignment.class_id == enr.class_id,
-                        )
-                    )
-                ).scalar_one_or_none()
-                if assigned:
+                if await teaches_class(self.db, school_id, enr.class_id, teacher_id=teacher.id):
                     ok = True
                     break
             if not ok:
@@ -1020,12 +1046,7 @@ class CommunicationService:
             ).scalar_one_or_none()
             if not teacher:
                 raise ForbiddenError("Teacher profile required")
-            assignments = (
-                await self.db.execute(
-                    select(TeacherAssignment).where(TeacherAssignment.teacher_id == teacher.id)
-                )
-            ).scalars().all()
-            class_ids = {a.class_id for a in assignments}
+            class_ids = await teacher_class_ids(self.db, sender_user_id, school_id)
             # Parent of student in assigned class?
             parent = (
                 await self.db.execute(
@@ -1112,15 +1133,7 @@ class CommunicationService:
             ).scalar_one_or_none()
             if not enr:
                 raise ForbiddenError("No active enrollment")
-            assigned = (
-                await self.db.execute(
-                    select(TeacherAssignment).where(
-                        TeacherAssignment.teacher_id == teacher.id,
-                        TeacherAssignment.class_id == enr.class_id,
-                    )
-                )
-            ).scalar_one_or_none()
-            if not assigned:
+            if not await teaches_class(self.db, school_id, enr.class_id, teacher_id=teacher.id):
                 raise ForbiddenError("Teacher is not assigned to your class")
             return
 
@@ -1194,6 +1207,16 @@ class CommunicationService:
                     contact_role="TEACHER",
                     detail="Assigned teacher",
                 )
+            classroom = await self.db.get(ClassRoom, enr.class_id)
+            if classroom and classroom.class_teacher_id:
+                lead = await self.db.get(Teacher, classroom.class_teacher_id)
+                if lead:
+                    await add(
+                        contact_user_id=lead.user_id,
+                        full_name=await self._user_name(lead.user_id),
+                        contact_role="TEACHER",
+                        detail="Class teacher",
+                    )
             return contacts
 
         if role == UserRole.PARENT.value:
@@ -1252,6 +1275,16 @@ class CommunicationService:
                         detail=f"{class_label} · {student_name}",
                         related_student_id=student.id,
                     )
+                if classroom and classroom.class_teacher_id:
+                    lead = await self.db.get(Teacher, classroom.class_teacher_id)
+                    if lead:
+                        await add(
+                            contact_user_id=lead.user_id,
+                            full_name=await self._user_name(lead.user_id),
+                            contact_role="TEACHER",
+                            detail=f"{class_label} · {student_name}",
+                            related_student_id=student.id,
+                        )
             return contacts
 
         if role == UserRole.TEACHER.value:
@@ -1264,12 +1297,7 @@ class CommunicationService:
             ).scalar_one_or_none()
             if not teacher:
                 return []
-            assignments = (
-                await self.db.execute(
-                    select(TeacherAssignment).where(TeacherAssignment.teacher_id == teacher.id)
-                )
-            ).scalars().all()
-            class_ids = {a.class_id for a in assignments}
+            class_ids = await teacher_class_ids(self.db, user_id, school_id)
             if not class_ids:
                 return []
             enrollments = (

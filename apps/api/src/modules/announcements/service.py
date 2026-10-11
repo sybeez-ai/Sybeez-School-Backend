@@ -1,16 +1,17 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from uuid import UUID
 
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import CurrentUser
-from src.core.exceptions import NotFoundError
+from src.core.exceptions import ForbiddenError, NotFoundError
 from src.db.models import Announcement
-from src.modules.access.scope import restrict_classes
+from src.modules.access.scope import assert_teacher_class, restrict_classes
 from src.modules.announcements.schemas import AnnouncementCreate, AnnouncementUpdate
-from src.shared.enums import UserRole
+from src.shared.enums import AnnouncementStatus, UserRole
 from src.shared.listing import fetch_page
 from src.shared.pagination import PageParams
 
@@ -22,21 +23,37 @@ class AnnouncementService:
         self.db = db
 
     async def create(self, user: CurrentUser, school_id: UUID, data: AnnouncementCreate) -> Announcement:
+        if user.role == UserRole.TEACHER:
+            if data.class_id is None:
+                raise ForbiddenError("Teachers can only announce to their classes")
+            await assert_teacher_class(self.db, user.id, school_id, data.class_id)
+        published = bool(data.is_published)
         row = Announcement(
             school_id=school_id,
             author_id=user.id,
             class_id=data.class_id,
             title=data.title,
             body=data.body,
-            is_published=data.is_published,
+            is_published=published,
+            status=AnnouncementStatus.PUBLISHED.value if published else AnnouncementStatus.DRAFT.value,
+            published_at=datetime.now(timezone.utc) if published else None,
         )
         self.db.add(row)
         await self.db.flush()
         return row
 
     def _visible(self, stmt, user: CurrentUser, school_id: UUID):
-        if user.role in {UserRole.STUDENT, UserRole.PARENT, UserRole.FINANCE, UserRole.HR, UserRole.PAYROLL_APPROVER}:
-            stmt = stmt.where(Announcement.is_published.is_(True))
+        if user.role in {
+            UserRole.STUDENT,
+            UserRole.PARENT,
+            UserRole.FINANCE,
+            UserRole.HR,
+            UserRole.PAYROLL_APPROVER,
+            UserRole.TEACHER,
+        }:
+            stmt = stmt.where(
+                or_(Announcement.is_published.is_(True), Announcement.author_id == user.id)
+            )
         if user.role in _SCHOOL_WIDE:
             if user.role != UserRole.SCHOOL_ADMIN and user.role != UserRole.PLATFORM_ADMIN:
                 stmt = stmt.where(Announcement.class_id.is_(None))
@@ -70,7 +87,17 @@ class AnnouncementService:
         row = (await self.db.execute(stmt)).scalar_one_or_none()
         if row is None:
             raise NotFoundError("Announcement not found")
-        for key, value in data.model_dump(exclude_unset=True).items():
+        payload = data.model_dump(exclude_unset=True)
+        if user.role == UserRole.TEACHER:
+            next_class = payload.get("class_id", row.class_id)
+            if next_class is None:
+                raise ForbiddenError("Teachers can only announce to their classes")
+            await assert_teacher_class(self.db, user.id, school_id, next_class)
+        if "is_published" in payload:
+            published = bool(payload["is_published"])
+            row.status = AnnouncementStatus.PUBLISHED.value if published else AnnouncementStatus.DRAFT.value
+            row.published_at = datetime.now(timezone.utc) if published else None
+        for key, value in payload.items():
             setattr(row, key, value)
         await self.db.flush()
         return row

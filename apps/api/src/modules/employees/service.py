@@ -64,31 +64,41 @@ MAX_PHOTO_BYTES = 2_000_000
 MAX_MANAGER_DEPTH = 50
 
 
-async def sync_teacher_employees(db: AsyncSession, school_id: UUID) -> None:
-    """Give every teacher of the school a TEACHING employee row (idempotent)."""
-    await db.execute(
-        text(
-            "INSERT INTO employees (id, school_id, staff_type, teacher_id, user_id, status) "
-            "SELECT gen_random_uuid(), t.school_id, 'TEACHING', t.id, t.user_id, 'ACTIVE' "
-            "FROM teachers t WHERE t.school_id = :sid "
-            "AND NOT EXISTS (SELECT 1 FROM employees e WHERE e.teacher_id = t.id) "
-            "ON CONFLICT (teacher_id) DO NOTHING"
-        ),
-        {"sid": school_id},
+async def sync_teacher_employees(
+    db: AsyncSession, school_id: UUID, *, only_user_id: UUID | None = None
+) -> None:
+    """Give teachers a TEACHING employee row (idempotent).
+
+    Self-service calls pass ``only_user_id`` so a teacher provisions their own
+    row and does not insert colleagues.
+    """
+    sql = (
+        "INSERT INTO employees (id, school_id, staff_type, teacher_id, user_id, status) "
+        "SELECT gen_random_uuid(), t.school_id, 'TEACHING', t.id, t.user_id, 'ACTIVE' "
+        "FROM teachers t WHERE t.school_id = :sid "
     )
-    await db.execute(
-        text(
-            "UPDATE employees e SET user_id = t.user_id "
-            "FROM teachers t "
-            "WHERE e.teacher_id = t.id AND e.school_id = :sid "
-            "AND e.user_id IS NULL AND t.user_id IS NOT NULL "
-            "AND NOT EXISTS ("
-            "SELECT 1 FROM employees other "
-            "WHERE other.school_id = e.school_id AND other.user_id = t.user_id AND other.id <> e.id"
-            ")"
-        ),
-        {"sid": school_id},
+    params: dict = {"sid": school_id}
+    update_sql = (
+        "UPDATE employees e SET user_id = t.user_id "
+        "FROM teachers t "
+        "WHERE e.teacher_id = t.id AND e.school_id = :sid "
+        "AND e.user_id IS NULL AND t.user_id IS NOT NULL "
+        "AND NOT EXISTS ("
+        "SELECT 1 FROM employees other "
+        "WHERE other.school_id = e.school_id AND other.user_id = t.user_id AND other.id <> e.id"
+        ") "
     )
+    if only_user_id is not None:
+        # Cast the bind. `IS NULL OR col = :uid` leaves asyncpg unable to infer the type.
+        sql += "AND t.user_id = CAST(:uid AS uuid) "
+        update_sql += "AND t.user_id = CAST(:uid AS uuid) "
+        params["uid"] = only_user_id
+    sql += (
+        "AND NOT EXISTS (SELECT 1 FROM employees e WHERE e.teacher_id = t.id) "
+        "ON CONFLICT (teacher_id) DO NOTHING"
+    )
+    await db.execute(text(sql), params)
+    await db.execute(text(update_sql), params)
 
 
 def employee_name_expr():

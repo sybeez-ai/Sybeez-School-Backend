@@ -130,7 +130,7 @@ The finance portal serves the same Route reports under `/api/v1/finance/route/re
 
 ## Schema
 
-Migration `0054_razorpay_route` revises `0053`. `0051` and `0052` stay reserved for the hrm-integration branch. `fee_route_transfers` has forced row-level security: `school_id` must match `app.school_id`, and `app.can_see('finance', ...)` must allow the role. A school admin session cannot read or write another school's transfers.
+Migration `0055_razorpay_route` revises `0054` (a teacher's own staff row). `0051` and `0052` stay unused. `fee_route_transfers` has forced row-level security: `school_id` must match `app.school_id`, and `app.can_see('finance', ...)` must allow the role. A school admin session cannot read or write another school's transfers.
 
 ## Frontend still to build
 

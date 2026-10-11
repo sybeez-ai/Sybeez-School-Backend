@@ -6,20 +6,19 @@ A fresh install builds the same tables from the models (``pk_<table>`` and
 ``fk_<table>_<column>_<referred_table>``). This rename makes both install paths carry the
 same names, so later migrations can refer to them reliably. Metadata only; no data change.
 
-Revision ID: 0055
-Revises: 0054
+Revision ID: 0056
+Revises: 0055
 Create Date: 2026-10-11
 
-Renumbered from HRM 0036, then again from 0051. Production already applied
-0053 (WhatsApp alerts, down_revision 0050) and this branch adds 0054 (Razorpay
-Route) before these HR revisions, so they are not inserted in front of an
-applied stamp. 0002–0004 stay the revisions that were applied in production.
+Renumbered from HRM 0036, then from 0051. Production already applied 0053
+(WhatsApp). Release uses 0054 for a teacher's own staff row, and 0055 is
+Razorpay Route, so these HR revisions follow that stamp.
 """
 
 from collections.abc import Sequence
 
-revision: str = "0055"
-down_revision: str | None = "0054"
+revision: str = "0056"
+down_revision: str | None = "0055"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

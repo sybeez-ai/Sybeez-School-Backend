@@ -165,8 +165,8 @@ class PayrollService(PayrollFlow):
         )
 
     async def _employee_for_user(self, user_id: UUID | None = None) -> Employee:
-        await sync_teacher_employees(self.db, self.school_id)
         uid = user_id or self.actor_id
+        await sync_teacher_employees(self.db, self.school_id, only_user_id=uid)
         row = (
             await self.db.execute(
                 select(Employee).where(Employee.school_id == self.school_id, Employee.user_id == uid)

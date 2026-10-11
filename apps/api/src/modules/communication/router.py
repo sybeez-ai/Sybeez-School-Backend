@@ -243,7 +243,9 @@ async def get_announcement(
         ),
     ],
 ):
-    return await CommunicationService(db).get_announcement(_sid(user), announcement_id)
+    return await CommunicationService(db).get_announcement(
+        _sid(user), announcement_id, viewer_id=user.id, viewer_role=user.role.value
+    )
 
 
 @router.patch("/announcements/{announcement_id}", response_model=AnnouncementOut)

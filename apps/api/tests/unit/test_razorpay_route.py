@@ -38,7 +38,7 @@ from src.modules.fees.route_state import (
     merge_transfer_status,
 )
 
-MIGRATION = Path(__file__).resolve().parents[2] / "src" / "db" / "migrations" / "versions" / "0054_razorpay_route.py"
+MIGRATION = Path(__file__).resolve().parents[2] / "src" / "db" / "migrations" / "versions" / "0055_razorpay_route.py"
 
 
 def _settings(**kwargs):
@@ -414,10 +414,10 @@ def test_reconciliation_rows():
     assert blocked is False and why == "missing_transfer"
 
 
-def test_migration_is_0054_and_forces_rls():
+def test_migration_is_0055_and_forces_rls():
     text = MIGRATION.read_text()
-    assert 'revision: str = "0054"' in text
-    assert 'down_revision: Union[str, None] = "0053"' in text
+    assert 'revision: str = "0055"' in text
+    assert 'down_revision: Union[str, None] = "0054"' in text
     assert "linked_account_id" in text
     assert "platform_fee_percent" in text
     assert "platform_fee_fixed" in text
@@ -437,6 +437,7 @@ def test_migration_is_0054_and_forces_rls():
                 revisions.append(line.split("=")[1].strip().strip('"').strip("'"))
                 break
     assert revisions.count("0054") == 1
+    assert revisions.count("0055") == 1
     assert "0051" not in revisions
     assert "0052" not in revisions
 

@@ -6,7 +6,17 @@ from sqlalchemy import Select, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import CurrentUser
-from src.db.models import Enrollment, Parent, SchoolMembership, Student, StudentParent, Teacher, TeacherAssignment
+from src.core.exceptions import ForbiddenError
+from src.db.models import (
+    ClassRoom,
+    Enrollment,
+    Parent,
+    SchoolMembership,
+    Student,
+    StudentParent,
+    Teacher,
+    TeacherAssignment,
+)
 from src.shared.enums import EnrollmentStatus, MembershipStatus, UserRole
 
 _DIRECTORY = {UserRole.PLATFORM_ADMIN, UserRole.SCHOOL_ADMIN, UserRole.FINANCE}
@@ -18,11 +28,17 @@ def _staff_portals(user: CurrentUser, names: set[str]) -> bool:
 
 
 def _teacher_class_ids(user_id: UUID, school_id: UUID):
-    return (
+    assigned = (
         select(TeacherAssignment.class_id)
         .join(Teacher, Teacher.id == TeacherAssignment.teacher_id)
         .where(Teacher.user_id == user_id, TeacherAssignment.school_id == school_id)
     )
+    led = (
+        select(ClassRoom.id)
+        .join(Teacher, Teacher.id == ClassRoom.class_teacher_id)
+        .where(Teacher.user_id == user_id, ClassRoom.school_id == school_id)
+    )
+    return assigned.union(led)
 
 
 def _student_class_ids(user_id: UUID, school_id: UUID):
@@ -102,6 +118,79 @@ def restrict_student_rows(stmt: Select, user: CurrentUser, school_id: UUID, stud
     if user.role == UserRole.PARENT:
         return stmt.where(student_column.in_(_child_ids(user.id, school_id)))
     return stmt.where(student_column.is_(None))
+
+
+async def teacher_class_ids(db: AsyncSession, user_id: UUID, school_id: UUID) -> set[UUID]:
+    """Classes a teacher is assigned to or leads as class teacher."""
+    assigned = (
+        await db.execute(
+            select(TeacherAssignment.class_id)
+            .join(Teacher, Teacher.id == TeacherAssignment.teacher_id)
+            .where(Teacher.user_id == user_id, TeacherAssignment.school_id == school_id)
+        )
+    ).scalars().all()
+    led = (
+        await db.execute(
+            select(ClassRoom.id)
+            .join(Teacher, Teacher.id == ClassRoom.class_teacher_id)
+            .where(Teacher.user_id == user_id, ClassRoom.school_id == school_id)
+        )
+    ).scalars().all()
+    return set(assigned) | set(led)
+
+
+async def teaches_class(
+    db: AsyncSession,
+    school_id: UUID,
+    class_id: UUID,
+    *,
+    user_id: UUID | None = None,
+    teacher_id: UUID | None = None,
+) -> bool:
+    if user_id is not None:
+        return class_id in await teacher_class_ids(db, user_id, school_id)
+    if teacher_id is None:
+        return False
+    assigned = (
+        await db.execute(
+            select(TeacherAssignment.id).where(
+                TeacherAssignment.school_id == school_id,
+                TeacherAssignment.teacher_id == teacher_id,
+                TeacherAssignment.class_id == class_id,
+            ).limit(1)
+        )
+    ).scalar_one_or_none()
+    if assigned is not None:
+        return True
+    led = (
+        await db.execute(
+            select(ClassRoom.id).where(
+                ClassRoom.school_id == school_id,
+                ClassRoom.id == class_id,
+                ClassRoom.class_teacher_id == teacher_id,
+            )
+        )
+    ).scalar_one_or_none()
+    return led is not None
+
+
+async def assert_teacher_class(db: AsyncSession, user_id: UUID, school_id: UUID, class_id: UUID) -> None:
+    if class_id not in await teacher_class_ids(db, user_id, school_id):
+        raise ForbiddenError("Not your class")
+
+
+async def assert_teacher_student(db: AsyncSession, user_id: UUID, school_id: UUID, student_id: UUID) -> None:
+    class_id = (
+        await db.execute(
+            select(Enrollment.class_id).where(
+                Enrollment.school_id == school_id,
+                Enrollment.student_id == student_id,
+                Enrollment.status == EnrollmentStatus.ACTIVE.value,
+            ).limit(1)
+        )
+    ).scalar_one_or_none()
+    if class_id is None or class_id not in await teacher_class_ids(db, user_id, school_id):
+        raise ForbiddenError("Not your student")
 
 
 async def same_school_user(db: AsyncSession, user_id: UUID) -> bool:

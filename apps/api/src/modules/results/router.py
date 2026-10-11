@@ -87,8 +87,11 @@ async def student_results_admin(
         Depends(require_roles(UserRole.SCHOOL_ADMIN, UserRole.TEACHER)),
     ],
 ):
-    # Admin/teacher: list published results for a student in school
     svc = ExamService(db)
+    if user.role == UserRole.TEACHER:
+        from src.modules.access.scope import assert_teacher_student
+
+        await assert_teacher_student(db, user.id, _sid(user), student_id)
     from sqlalchemy import select
 
     from src.db.models import Exam, Result
@@ -126,7 +129,7 @@ async def report_card_json(
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[
         CurrentUser,
-        Depends(require_roles(UserRole.STUDENT, UserRole.PARENT, UserRole.SCHOOL_ADMIN)),
+        Depends(require_roles(UserRole.STUDENT, UserRole.PARENT, UserRole.SCHOOL_ADMIN, UserRole.TEACHER)),
     ],
     student_id: UUID | None = Query(None),
 ):
@@ -140,6 +143,13 @@ async def report_card_json(
             raise ForbiddenError("student_id required")
         parent = await svc._parent_for_user(sid, user.id)
         await svc._assert_parent_child(sid, parent.id, student_id)
+        target = student_id
+    elif user.role == UserRole.TEACHER:
+        if not student_id:
+            raise ForbiddenError("student_id required")
+        from src.modules.access.scope import assert_teacher_student
+
+        await assert_teacher_student(db, user.id, sid, student_id)
         target = student_id
     else:
         if not student_id:
@@ -154,7 +164,7 @@ async def report_card_pdf(
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[
         CurrentUser,
-        Depends(require_roles(UserRole.STUDENT, UserRole.PARENT, UserRole.SCHOOL_ADMIN)),
+        Depends(require_roles(UserRole.STUDENT, UserRole.PARENT, UserRole.SCHOOL_ADMIN, UserRole.TEACHER)),
     ],
     student_id: UUID | None = Query(None),
 ):
@@ -168,6 +178,13 @@ async def report_card_pdf(
             raise ForbiddenError("student_id required")
         parent = await svc._parent_for_user(sid, user.id)
         await svc._assert_parent_child(sid, parent.id, student_id)
+        target = student_id
+    elif user.role == UserRole.TEACHER:
+        if not student_id:
+            raise ForbiddenError("student_id required")
+        from src.modules.access.scope import assert_teacher_student
+
+        await assert_teacher_student(db, user.id, sid, student_id)
         target = student_id
     else:
         if not student_id:

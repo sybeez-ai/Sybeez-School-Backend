@@ -93,3 +93,31 @@ def resolve_superadmin_password() -> str | None:
         return password
     logger.warning("Super admin secret %s did not contain SUPERADMIN_INITIAL_PASSWORD", secret_id)
     return None
+
+
+def store_superadmin_password(password: str) -> bool:
+    """Write the password to Secrets Manager. The value is never logged.
+
+    Used when the one-off task received SUPERADMIN_INITIAL_PASSWORD so later
+    boots can read the same secret. A missing permission is not fatal.
+    """
+    settings = get_settings()
+    secret_id = settings.superadmin_secret_id
+    try:
+        import boto3
+    except ImportError:
+        logger.info("boto3 is not installed; left secret %s unchanged", secret_id)
+        return False
+    payload = json.dumps({"SUPERADMIN_INITIAL_PASSWORD": password})
+    try:
+        client = boto3.client("secretsmanager", region_name=settings.aws_region or None)
+        client.put_secret_value(SecretId=secret_id, SecretString=payload)
+    except Exception as exc:
+        code = type(exc).__name__
+        response = getattr(exc, "response", None)
+        if isinstance(response, dict):
+            code = str((response.get("Error") or {}).get("Code") or code)
+        logger.info("Secrets Manager update for %s was not applied (%s)", secret_id, code)
+        return False
+    logger.info("Updated Secrets Manager secret %s", secret_id)
+    return True

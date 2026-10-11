@@ -657,10 +657,14 @@ class TimetableService:
 
     # ── grid ─────────────────────────────────────────────────
 
-    async def grid(self, *, school_id: UUID, class_id: UUID) -> TimetableGridOut:
+    async def grid(self, *, school_id: UUID, class_id: UUID, user: CurrentUser | None = None) -> TimetableGridOut:
         classroom = await self.db.get(ClassRoom, class_id)
         if not classroom or classroom.school_id != school_id:
             raise NotFoundError("Section not found")
+        if user is not None and user.role == UserRole.TEACHER:
+            from src.modules.access.scope import assert_teacher_class
+
+            await assert_teacher_class(self.db, user.id, school_id, class_id)
         settings = await self.get_settings(school_id)
         periods = await self.list_periods(school_id, enabled_only=True)
         entries = await self.list_entries(school_id=school_id, class_id=class_id)

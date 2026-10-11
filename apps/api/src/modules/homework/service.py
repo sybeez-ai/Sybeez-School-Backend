@@ -41,6 +41,7 @@ from src.shared.enums import (
     EnrollmentStatus,
     HomeworkStatus,
     HomeworkSubmissionStatus,
+    HomeworkType,
     UserRole,
 )
 
@@ -450,6 +451,12 @@ class HomeworkService:
                 raise ForbiddenError("You can only manage your own homework")
             return
         raise ForbiddenError("Not allowed")
+
+    async def assert_kind(self, *, school_id: UUID, homework_id: UUID, kind: str) -> None:
+        row = await self.repo.get(school_id, homework_id)
+        label = "Assignment" if kind == HomeworkType.ASSIGNMENT.value else "Homework"
+        if not row or row.homework_type != kind:
+            raise NotFoundError(f"{label} not found")
 
     async def get(
         self, *, school_id: UUID, user_id: UUID, role: str, homework_id: UUID

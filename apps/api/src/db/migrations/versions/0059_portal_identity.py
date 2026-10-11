@@ -1,7 +1,7 @@
 """Link HR employees to one login and show staff only published payslips.
 
-Revision ID: 0058
-Revises: 0057
+Revision ID: 0059
+Revises: 0058
 Create Date: 2026-10-11
 
 Production is already stamped at 0053 (WhatsApp). This revision follows the
@@ -16,8 +16,8 @@ from typing import Sequence, Union
 
 from alembic import op
 
-revision: str = "0058"
-down_revision: Union[str, None] = "0057"
+revision: str = "0059"
+down_revision: Union[str, None] = "0058"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

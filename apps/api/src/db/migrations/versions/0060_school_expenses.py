@@ -1,7 +1,7 @@
 """School expense heads, vouchers, and an append-only expense ledger.
 
-Revision ID: 0059
-Revises: 0058
+Revision ID: 0060
+Revises: 0059
 Create Date: 2026-10-11
 
 Tables are created from the ORM. Row-level security matches fee transfers:
@@ -12,8 +12,8 @@ from typing import Sequence, Union
 
 from alembic import op
 
-revision: str = "0059"
-down_revision: Union[str, None] = "0058"
+revision: str = "0060"
+down_revision: Union[str, None] = "0059"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

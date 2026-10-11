@@ -1,18 +1,17 @@
 """Razorpay Route linked accounts and per-payment transfers.
 
-Revision ID: 0054
-Revises: 0053
+Revision ID: 0055
+Revises: 0054
 Create Date: 2026-10-11
 
-`alembic heads` on release is 0053 (WhatsApp alerts, down_revision 0050).
-0051 and 0052 stay reserved for the hrm-integration branch, so this revision
-is the next free id: 0054.
+Release already uses 0054 for a teacher's own staff row. This follows that
+stamp. 0051 and 0052 stay unused so they are not inserted ahead of 0053.
 """
 
 from typing import Sequence, Union
 
-revision: str = "0054"
-down_revision: Union[str, None] = "0053"
+revision: str = "0055"
+down_revision: Union[str, None] = "0054"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

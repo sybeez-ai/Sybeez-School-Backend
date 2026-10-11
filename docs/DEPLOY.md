@@ -20,7 +20,9 @@ Set these on the repository (Settings → Secrets and variables → Actions → 
 
 ## GitHub Actions secrets
 
-The workflow does not read GitHub Actions secrets. Application secrets stay in AWS (Secrets Manager or SSM) and are injected by the ECS task definitions. Do not put database passwords, `JWT_SECRET`, or queue URLs in the workflow file.
+Application secrets stay in AWS (Secrets Manager or SSM) and are injected by the ECS task definitions. Do not put database passwords, `JWT_SECRET`, or queue URLs in the workflow file.
+
+`SUPERADMIN_INITIAL_PASSWORD` is the one GitHub Actions secret this workflow reads. The provision step passes it into a one-off API task and does not print it. When that secret is empty, the task reads Secrets Manager secret `sybeez-school/superadmin` instead.
 
 The OIDC role needs at least:
 
@@ -38,6 +40,7 @@ The OIDC role needs at least:
 3. Build `infra/docker/api.Dockerfile` and `apps/worker/Dockerfile`. Push both to ECR tagged with the git SHA and `latest`.
 4. Render task definition `sybeez-school-migrate` with the new API image, run it once on `sybeez-school-cluster`, and wait until it stops. The deploy fails if the container exit code is not 0. The workflow overrides the container command to `alembic upgrade head` (working directory `/app`). Before any other DDL, that command restamps a legacy finance database (see below) or exits non-zero if the stamp is ambiguous.
 5. Render new task definitions for services `sybeez-school-api` and `sybeez-school-worker` from the latest family revisions, not from the revision the service rolled back to. `DATABASE_URL` and `DATABASE_URL_SYNC` on those two tasks are pinned to secret `sybeez-school/api-db`. The migrate task keeps its master secret. Container names come from `AWS_BACKEND_API_CONTAINER` and `AWS_BACKEND_WORKER_CONTAINER` (`api` and `worker`). Update the services, then raise the API desired count to at least 2 and the worker to at least 1 if either is lower. Wait until each service is stable. If it is not, the job prints the service events, the stopped task reason, and the container log.
+6. Run `python -m src.modules.platform.provision_superadmin` once on the new API task definition. That sets `admin@sybeez.ai` as `SUPER_ADMIN` (local hash, Cognito sub cleared, and a permanent Cognito password when a pool is configured) and disables `admin@cybis.ai` in the database and the user pool. The password is not written to the logs. The deploy fails if the database update fails. If the API task role is denied `cognito-idp` admin calls, the step logs that and still succeeds: login uses the local hash while `cognito_sub` is empty. Startup bootstrap still does not replace an existing password.
 
 Images are non-root. The API process is `uvicorn` with `--proxy-headers`. Both images health-check `GET /health`. `GET /` returns the same liveness payload, because the load balancer often checks `/`. That endpoint returns HTTP 200 with `"status": "degraded"` when Redis is down. It does not fail the container for a temporary Redis outage. Super-admin bootstrap runs after the process is listening; a database or Cognito error is logged and does not stop the process. If a service never reaches its minimum running count, the job prints recent events from that container's CloudWatch log group without listing task ARNs.
 
@@ -85,7 +88,7 @@ On `release`, `0028`–`0030` are HRM (`hr_integrity`, `hr_employees`, `hr_depar
 | `0029` | table `employees` | function `app.can_see` |
 | `0030` | table `departments` | `app.can_see` or `finance_staff_scopes`, and no `departments` |
 
-3. Finance match: in one transaction, `UPDATE alembic_version SET version_num = '0027' WHERE version_num = '<old>'`. `0027` is the last revision both histories share. The log line is `Detected legacy finance revision 0030` and `Restamped alembic_version to 0027`. The same process then applies HRM `0028` through payroll `0040` (not on this database yet) and re-applies `0041`–`0043`. Those finance revisions are idempotent (`IF NOT EXISTS`, `CREATE OR REPLACE`, `DROP POLICY IF EXISTS`, duplicate-object handlers). It then applies `0044`–`0046` (payroll daily, assistant, and import) and `0047`–`0050` (platform access, additive RLS helpers, staff sessions, and `app.can_see` role aliases), then `0053` (WhatsApp template alerts, school settings, opt-out, and delivery columns), then `0054` (Razorpay Route linked accounts and transfers), then `0055`–`0057` (HR constraint names, HR specification, and HR operations), then `0058` (one login per HR employee, published payslips only for that employee), then `0059` (school expenses). `0051` and `0052` stay unused so they are not inserted ahead of the applied `0053` stamp. `0048` does not replace payroll or finance policies. `0050` replaces `app.can_see` only.
+3. Finance match: in one transaction, `UPDATE alembic_version SET version_num = '0027' WHERE version_num = '<old>'`. `0027` is the last revision both histories share. The log line is `Detected legacy finance revision 0030` and `Restamped alembic_version to 0027`. The same process then applies HRM `0028` through payroll `0040` (not on this database yet) and re-applies `0041`–`0043`. Those finance revisions are idempotent (`IF NOT EXISTS`, `CREATE OR REPLACE`, `DROP POLICY IF EXISTS`, duplicate-object handlers). It then applies `0044`–`0046` (payroll daily, assistant, and import) and `0047`–`0050` (platform access, additive RLS helpers, staff sessions, and `app.can_see` role aliases), then `0053` (WhatsApp template alerts, school settings, opt-out, and delivery columns), then `0054` (a teacher may read and insert only their own staff row), then `0055` (Razorpay Route), then `0056`–`0058` (HR constraint names, HR specification, and HR operations), then `0059` (one login per HR employee, published payslips only for that employee), then `0060` (school expenses). `0051` and `0052` stay unused so they are not inserted ahead of the applied `0053` stamp. `0048` does not replace payroll or finance policies. `0050` and `0054` replace `app.can_see` only.
 4. HRM match: the stamp stays, and upgrade continues at `0031`.
 5. Neither marker, or both: the process raises `Refusing to upgrade`, does not change `alembic_version`, and exits non-zero. The workflow waits for the task to stop and fails the deploy when the container exit code is not 0. Fix the schema by hand before rerunning. Do not stamp past the HRM revisions to hide the mismatch.
 
@@ -112,7 +115,7 @@ UPDATE alembic_version SET version_num = '0027' WHERE version_num = '0030';
 alembic upgrade head
 ```
 
-The migrate task already does both. A second run sees `0059` and does not restamp.
+The migrate task already does both. A second run sees `0060` and does not restamp.
 
 ## IAM database auth
 

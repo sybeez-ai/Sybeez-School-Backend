@@ -18,8 +18,8 @@ Downgrade maps letter types and document categories that did not exist before ba
 ``OTHER`` (the previous catch-all) so the narrower checks can be restored; everything else
 added here is dropped.
 
-Revision ID: 0056
-Revises: 0055
+Revision ID: 0057
+Revises: 0056
 Create Date: 2026-10-11
 
 Renumbered from HRM 0037 so it follows 0051. New tables get the same forced
@@ -40,8 +40,8 @@ from src.db.migration_guards import (
     table_exists,
 )
 
-revision: str = "0056"
-down_revision: str | None = "0055"
+revision: str = "0057"
+down_revision: str | None = "0056"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -190,12 +190,18 @@ def _extend_can_see() -> None:
     IF app.hr_access() THEN
       RETURN true;
     END IF;
+    IF r = 'TEACHER' AND row_user IS NOT NULL AND row_user = uid THEN
+      RETURN true;
+    END IF;
     RETURN r IN (
       'HR_MANAGER', 'HR', 'PAYROLL_ADMIN', 'PAYROLL_APPROVER', 'ACCOUNTANT', 'AUDITOR'
     );
   END IF;"""
     patched, staff_count = re.subn(
-        r"IF category = 'staff' THEN\s+RETURN r IN \(\s*"
+        r"IF category = 'staff' THEN\s+"
+        r"(?:IF r = 'TEACHER' AND row_user IS NOT NULL AND row_user = uid THEN\s+"
+        r"RETURN true;\s+END IF;\s+)?"
+        r"RETURN r IN \(\s*"
         r"'HR_MANAGER', 'HR', 'PAYROLL_ADMIN', 'PAYROLL_APPROVER', 'ACCOUNTANT', 'AUDITOR'\s*"
         r"\);\s+END IF;",
         staff_new,

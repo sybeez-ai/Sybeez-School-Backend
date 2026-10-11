@@ -1,7 +1,7 @@
 """HR operations: reports, probation, appraisals, recruitment, training, roster, assets, exit.
 
-Revision ID: 0057
-Revises: 0056
+Revision ID: 0058
+Revises: 0057
 Create Date: 2026-10-11
 
 Tables are created from the ORM so names stay aligned with the models. Row-level
@@ -14,8 +14,8 @@ from typing import Sequence, Union
 
 from alembic import op
 
-revision: str = "0057"
-down_revision: Union[str, None] = "0056"
+revision: str = "0058"
+down_revision: Union[str, None] = "0057"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
