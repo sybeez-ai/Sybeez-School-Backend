@@ -52,6 +52,7 @@ ACTIONS: dict[str, set[str]] = {
     "reminders.run": {UserRole.SCHOOL_ADMIN.value, UserRole.ACCOUNTANT.value},
     "refund.request": {UserRole.SCHOOL_ADMIN.value, UserRole.ACCOUNTANT.value, UserRole.CASHIER.value},
     "staff_scope.write": {UserRole.SCHOOL_ADMIN.value},
+    "route.manage": {UserRole.SCHOOL_ADMIN.value, UserRole.ACCOUNTANT.value},
 }
 
 

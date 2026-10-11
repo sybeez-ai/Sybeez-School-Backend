@@ -70,6 +70,7 @@ from src.db.models.finance import (
     FeeDayClose,
     FeeLedgerEntry,
     FeePaymentTender,
+    FeeRouteTransfer,
     FeeWebhookEvent,
     FinanceApproval,
     FinanceStaffScope,

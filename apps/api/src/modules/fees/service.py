@@ -5,7 +5,6 @@ from __future__ import annotations
 import csv
 import io
 import json
-import os
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID, uuid4
@@ -134,8 +133,10 @@ class FeeService:
         # Production default: prefer Razorpay when credentials are configured.
         core = get_settings()
         if (core.app_env or "").lower() == "production":
-            key_id = os.getenv("RAZORPAY_KEY_ID", "").strip()
-            key_secret = os.getenv("RAZORPAY_KEY_SECRET", "").strip()
+            from src.modules.fees.razorpay_secrets import razorpay_env
+
+            key_id = razorpay_env("RAZORPAY_KEY_ID")
+            key_secret = razorpay_env("RAZORPAY_KEY_SECRET")
             if key_id and key_secret:
                 row.gateway_provider = "razorpay"
                 row.gateway_public_key = key_id
