@@ -1,7 +1,7 @@
 import re
 import secrets
 from datetime import timedelta
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import UploadFile
 from sqlalchemy import func, or_, select
@@ -23,6 +23,7 @@ from src.db.models import (
 )
 from src.modules.auth import cognito as cognito_svc
 from src.modules.auth.repository import hash_token
+from src.modules.fees.tenant import bind_tenant
 from src.modules.audit.repository import AuditRepository
 from src.modules.platform.repository import PlatformRepository
 from src.modules.platform.schemas import (
@@ -163,7 +164,14 @@ class PlatformService:
         slug = await self._unique_slug(base_slug)
         code = await self._unique_school_code()
 
+        # Tenant tables (subscriptions, memberships, audit) enforce
+        # school_id = app.school_id under forced RLS. The platform admin's token
+        # carries no school, so bind the new school's id before any insert.
+        school_id = uuid4()
+        await bind_tenant(self.db, school_id)
+
         school = School(
+            id=school_id,
             name=data.name,
             slug=slug,
             code=code,
@@ -222,6 +230,7 @@ class PlatformService:
         if school is None:
             raise NotFoundError("School not found")
         await self._assert_school_access(actor, school)
+        await bind_tenant(self.db, school.id)
         payload = data.model_dump(exclude_unset=True)
         plan_code = payload.pop("plan_code", None)
         for k, v in payload.items():
@@ -269,6 +278,7 @@ class PlatformService:
         if school is None:
             raise NotFoundError("School not found")
         await self._assert_school_access(actor, school)
+        await bind_tenant(self.db, school.id)
         if status == SchoolStatus.ARCHIVED.value:
             if confirm_name and confirm_name.strip() != school.name:
                 raise ForbiddenError("Confirmation name does not match school name")
@@ -557,6 +567,7 @@ class PlatformService:
         if school is None:
             raise NotFoundError("School not found")
         await self._assert_school_access(actor, school)
+        await bind_tenant(self.db, school.id)
         raw = generate_token(24)
         inv = Invitation(
             school_id=school_id,
