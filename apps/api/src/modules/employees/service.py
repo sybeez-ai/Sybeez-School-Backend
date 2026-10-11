@@ -27,17 +27,24 @@ _TEACHER_FIELDS = ("full_name", "phone", "employee_code", "title", "date_of_birt
 _NON_TEACHING_FIELDS = ("full_name", "email", "phone", "employee_code", "date_of_birth", "joining_date", "qualification")
 
 
-async def sync_teacher_employees(db: AsyncSession, school_id: UUID) -> None:
-    """Give every teacher of the school a TEACHING employee row (idempotent)."""
+async def sync_teacher_employees(
+    db: AsyncSession, school_id: UUID, *, only_user_id: UUID | None = None
+) -> None:
+    """Give teachers a TEACHING employee row (idempotent).
+
+    Self-service calls pass ``only_user_id`` so a teacher provisions their own
+    row and does not insert colleagues.
+    """
     await db.execute(
         text(
             "INSERT INTO employees (id, school_id, staff_type, teacher_id, user_id, status) "
             "SELECT gen_random_uuid(), t.school_id, 'TEACHING', t.id, t.user_id, 'ACTIVE' "
             "FROM teachers t WHERE t.school_id = :sid "
+            "AND (:uid IS NULL OR t.user_id = :uid) "
             "AND NOT EXISTS (SELECT 1 FROM employees e WHERE e.teacher_id = t.id) "
             "ON CONFLICT (teacher_id) DO NOTHING"
         ),
-        {"sid": school_id},
+        {"sid": school_id, "uid": only_user_id},
     )
 
 

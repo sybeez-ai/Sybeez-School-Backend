@@ -26,6 +26,8 @@ class AnnouncementOut(BaseModel):
     title: str
     body: str
     is_published: bool
+    status: str
+    published_at: datetime | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

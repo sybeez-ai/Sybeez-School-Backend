@@ -217,7 +217,11 @@ async def get_roster(
     attended_on: date = Query(...),
 ):
     roster, _ = await AttendanceService(db).roster(
-        school_id=_sid(user), class_id=class_id, attended_on=attended_on
+        school_id=_sid(user),
+        class_id=class_id,
+        attended_on=attended_on,
+        user_id=user.id,
+        role=user.role.value,
     )
     return roster
 
@@ -230,7 +234,11 @@ async def get_summary(
     attended_on: date = Query(...),
 ):
     _, summary = await AttendanceService(db).roster(
-        school_id=_sid(user), class_id=class_id, attended_on=attended_on
+        school_id=_sid(user),
+        class_id=class_id,
+        attended_on=attended_on,
+        user_id=user.id,
+        role=user.role.value,
     )
     return summary
 
@@ -296,6 +304,8 @@ async def student_attendance(
             raise ForbiddenError("Cannot view another student's attendance")
     elif user.role == UserRole.PARENT:
         await svc.assert_parent_of(school_id=school_id, user_id=user.id, student_id=student_id)
+    elif user.role == UserRole.TEACHER:
+        await svc.assert_teacher_of_student(school_id=school_id, user_id=user.id, student_id=student_id)
     return await svc.list_for_student(
         school_id=school_id,
         student_id=student_id,
@@ -320,6 +330,8 @@ async def student_monthly(
             raise ForbiddenError("Cannot view another student's attendance")
     elif user.role == UserRole.PARENT:
         await svc.assert_parent_of(school_id=school_id, user_id=user.id, student_id=student_id)
+    elif user.role == UserRole.TEACHER:
+        await svc.assert_teacher_of_student(school_id=school_id, user_id=user.id, student_id=student_id)
     return await svc.monthly_stats(
         school_id=school_id, student_id=student_id, year=year, month=month
     )
@@ -335,6 +347,8 @@ async def student_audit(
     school_id = _sid(user)
     if user.role == UserRole.PARENT:
         await svc.assert_parent_of(school_id=school_id, user_id=user.id, student_id=student_id)
+    elif user.role == UserRole.TEACHER:
+        await svc.assert_teacher_of_student(school_id=school_id, user_id=user.id, student_id=student_id)
     return await svc.audit_for_student(school_id=school_id, student_id=student_id)
 
 

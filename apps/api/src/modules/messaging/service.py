@@ -24,6 +24,12 @@ class MessagingService:
             raise ForbiddenError("Choose a different recipient")
         if not await same_school_user(self.db, data.recipient_id):
             raise NotFoundError("Recipient not found")
+        if user.role in {UserRole.STUDENT, UserRole.PARENT, UserRole.TEACHER}:
+            from src.modules.communication.service import CommunicationService
+
+            await CommunicationService(self.db)._assert_can_message(
+                school_id, user.id, user.role.value, data.recipient_id, None
+            )
         row = Message(
             school_id=school_id,
             sender_id=user.id,

@@ -254,11 +254,21 @@ class AttendanceService:
         )
 
     async def roster(
-        self, *, school_id: UUID, class_id: UUID, attended_on: date
+        self,
+        *,
+        school_id: UUID,
+        class_id: UUID,
+        attended_on: date,
+        user_id: UUID | None = None,
+        role: str | None = None,
     ) -> tuple[list[RosterStudentOut], AttendanceSummaryOut]:
         classroom = await self.db.get(ClassRoom, class_id)
         if not classroom or classroom.school_id != school_id:
             raise NotFoundError("Class not found")
+        if role == UserRole.TEACHER.value and user_id is not None:
+            await self._assert_teacher_can_mark_class(
+                school_id=school_id, user_id=user_id, class_id=class_id, attended_on=attended_on
+            )
 
         enrollments = (
             await self.db.execute(
@@ -357,6 +367,42 @@ class AttendanceService:
         raise ForbiddenError(
             "You can only take attendance for classes on your timetable, teaching assignments, or as class teacher."
         )
+
+    async def _classes_taught(self, *, school_id: UUID, user_id: UUID) -> set[UUID]:
+        """Classes this teacher may view: assignment, class teacher, or any timetable day."""
+        from src.modules.access.scope import teacher_class_ids
+
+        ids = await teacher_class_ids(self.db, user_id, school_id)
+        teacher = (
+            await self.db.execute(
+                select(Teacher).where(Teacher.school_id == school_id, Teacher.user_id == user_id)
+            )
+        ).scalar_one_or_none()
+        if teacher is None:
+            return ids
+        taught = (
+            await self.db.execute(
+                select(TimetableEntry.class_id).where(
+                    TimetableEntry.school_id == school_id,
+                    TimetableEntry.teacher_id == teacher.id,
+                )
+            )
+        ).scalars().all()
+        return ids | set(taught)
+
+    async def assert_teacher_of_student(self, *, school_id: UUID, user_id: UUID, student_id: UUID) -> None:
+        classes = await self._classes_taught(school_id=school_id, user_id=user_id)
+        class_id = (
+            await self.db.execute(
+                select(Enrollment.class_id).where(
+                    Enrollment.school_id == school_id,
+                    Enrollment.student_id == student_id,
+                    Enrollment.status == EnrollmentStatus.ACTIVE.value,
+                ).limit(1)
+            )
+        ).scalar_one_or_none()
+        if class_id is None or class_id not in classes:
+            raise ForbiddenError("Not your student")
 
     async def mark(
         self, *, school_id: UUID, user_id: UUID, data: AttendanceMarkRequest, role: str | None = None
@@ -699,6 +745,12 @@ class AttendanceService:
             await self.assert_parent_of(
                 school_id=school_id, user_id=user_id, student_id=student_id
             )
+        elif role == UserRole.TEACHER.value:
+            if student_id is None:
+                raise AppError("student_id is required", code="validation_error", status_code=400)
+            await self.assert_teacher_of_student(
+                school_id=school_id, user_id=user_id, student_id=student_id
+            )
         else:
             if student_id is None:
                 raise AppError("student_id is required", code="validation_error", status_code=400)
@@ -766,6 +818,30 @@ class AttendanceService:
                         )
                     )
                 rows.sort(key=lambda r: r.created_at, reverse=True)
+        elif role == UserRole.TEACHER.value:
+            classes = await self._classes_taught(school_id=school_id, user_id=user_id)
+            if student_id is not None:
+                await self.assert_teacher_of_student(
+                    school_id=school_id, user_id=user_id, student_id=student_id
+                )
+            rows = await self.leave_repo.list(
+                school_id=school_id, status=status, student_id=student_id
+            )
+            if student_id is None:
+                kept = []
+                for row in rows:
+                    class_id = (
+                        await self.db.execute(
+                            select(Enrollment.class_id).where(
+                                Enrollment.school_id == school_id,
+                                Enrollment.student_id == row.student_id,
+                                Enrollment.status == EnrollmentStatus.ACTIVE.value,
+                            ).limit(1)
+                        )
+                    ).scalar_one_or_none()
+                    if class_id in classes:
+                        kept.append(row)
+                rows = kept
         else:
             rows = await self.leave_repo.list(
                 school_id=school_id, status=status, student_id=student_id
@@ -788,6 +864,10 @@ class AttendanceService:
         row = await self.leave_repo.get(school_id=school_id, leave_id=leave_id)
         if not row:
             raise NotFoundError("Leave request not found")
+        if role == UserRole.TEACHER.value:
+            await self.assert_teacher_of_student(
+                school_id=school_id, user_id=user_id, student_id=row.student_id
+            )
         if row.status != LeaveRequestStatus.PENDING.value:
             raise AppError("Leave request already decided", code="already_decided", status_code=409)
 

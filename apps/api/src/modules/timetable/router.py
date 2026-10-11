@@ -240,7 +240,7 @@ async def timetable_grid(
     user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN, UserRole.TEACHER))],
     class_id: UUID = Query(...),
 ):
-    return await TimetableService(db).grid(school_id=_sid(user), class_id=class_id)
+    return await TimetableService(db).grid(school_id=_sid(user), class_id=class_id, user=user)
 
 
 # ── entries ──────────────────────────────────────────────────
