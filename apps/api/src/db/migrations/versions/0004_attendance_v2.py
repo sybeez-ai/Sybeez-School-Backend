@@ -18,6 +18,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    inspector = sa.inspect(op.get_bind())
     op.execute("ALTER TABLE attendance ADD COLUMN IF NOT EXISTS period VARCHAR(32)")
     op.execute("ALTER TABLE attendance ADD COLUMN IF NOT EXISTS arrival_time TIME")
     op.execute("ALTER TABLE attendance ADD COLUMN IF NOT EXISTS reason TEXT")
@@ -46,6 +47,18 @@ def upgrade() -> None:
         "ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS source VARCHAR(32) NOT NULL DEFAULT 'MANUAL'"
     )
 
+    if not inspector.has_table("attendance_audit_logs"):
+        _create_attendance_audit_logs()
+    if not inspector.has_table("attendance_settings"):
+        _create_attendance_settings()
+
+    # Optional link metadata on notifications for deep-links
+    op.execute("ALTER TABLE notifications ADD COLUMN IF NOT EXISTS category VARCHAR(64)")
+    op.execute("ALTER TABLE notifications ADD COLUMN IF NOT EXISTS link_path TEXT")
+    op.execute("ALTER TABLE notifications ADD COLUMN IF NOT EXISTS meta_json TEXT")
+
+
+def _create_attendance_audit_logs() -> None:
     op.create_table(
         "attendance_audit_logs",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, nullable=False),
@@ -65,6 +78,8 @@ def upgrade() -> None:
     op.create_index("ix_attendance_audit_logs_attendance_id", "attendance_audit_logs", ["attendance_id"])
     op.create_index("ix_attendance_audit_logs_student_id", "attendance_audit_logs", ["student_id"])
 
+
+def _create_attendance_settings() -> None:
     op.create_table(
         "attendance_settings",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, nullable=False),
@@ -81,11 +96,6 @@ def upgrade() -> None:
         sa.UniqueConstraint("school_id", name="uq_attendance_settings_school"),
     )
     op.create_index("ix_attendance_settings_school_id", "attendance_settings", ["school_id"])
-
-    # Optional link metadata on notifications for deep-links
-    op.execute("ALTER TABLE notifications ADD COLUMN IF NOT EXISTS category VARCHAR(64)")
-    op.execute("ALTER TABLE notifications ADD COLUMN IF NOT EXISTS link_path TEXT")
-    op.execute("ALTER TABLE notifications ADD COLUMN IF NOT EXISTS meta_json TEXT")
 
 
 def downgrade() -> None:

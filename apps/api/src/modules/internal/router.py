@@ -15,6 +15,8 @@ from src.modules.internal.service import InternalAIContextService
 from src.modules.notifications.deliveries import update_delivery_result
 from src.modules.fees.service import FeeService
 from src.modules.attendance.service import AttendanceService
+from src.modules.payroll.schemas import InternalGenerate
+from src.modules.payroll.service import generate_locked_period
 
 router = APIRouter(prefix="/internal/v1", tags=["internal"])
 
@@ -85,3 +87,16 @@ async def internal_run_absence_digests(
     attended_on: date = Query(default_factory=date.today),
 ):
     return await AttendanceService(db).send_daily_absence_digests(school_id=school_id, attended_on=attended_on)
+
+
+@router.post("/payroll/generate", dependencies=[Depends(require_internal_token)])
+async def internal_generate_payroll(body: InternalGenerate, db: Annotated[AsyncSession, Depends(get_db)]):
+    result = await generate_locked_period(
+        db,
+        school_id=body.school_id,
+        actor_id=body.locked_by,
+        period_start=body.period_start,
+        period_end=body.period_end,
+        source=body.source or "ATTENDANCE_LOCK",
+    )
+    return {"run_id": str(result["run"].id), "created": result["created"], "skipped": result["skipped"]}

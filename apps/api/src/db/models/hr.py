@@ -23,7 +23,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from src.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 
 LEAVE_STATUSES = ("PENDING", "APPROVED", "REJECTED", "CANCELLED")
-PAYSLIP_STATUSES = ("DRAFT", "PAID", "CANCELLED")
+PAYSLIP_STATUSES = ("DRAFT", "PUBLISHED", "PAID", "CANCELLED")
 STAFF_TYPES = ("TEACHING", "NON_TEACHING")
 EMPLOYEE_STATUSES = ("ACTIVE", "INACTIVE", "LEFT")
 EMPLOYMENT_TYPES = ("FULL_TIME", "PART_TIME", "CONTRACT", "TEMPORARY")
@@ -492,6 +492,7 @@ class StaffLeaveRequest(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     start_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     end_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     reason: Mapped[str] = mapped_column(Text, nullable=False)
+    is_paid: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="PENDING", index=True)
     decided_by: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
@@ -521,6 +522,24 @@ class PayrollRun(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     finalized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    run_kind: Mapped[str] = mapped_column(String(16), nullable=False, default="MANUAL")
+    approval_status: Mapped[str] = mapped_column(String(32), nullable=False, default="DRAFT")
+    source: Mapped[str] = mapped_column(String(32), nullable=False, default="MANUAL")
+    submitted_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    approved_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    rejected_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    pay_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class PayrollPayslip(Base, UUIDPrimaryKeyMixin, TimestampMixin):
@@ -558,9 +577,10 @@ class PayrollPayslip(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     payroll_run_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("payroll_runs.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    teacher_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("teachers.id", ondelete="CASCADE"), nullable=False, index=True
+    teacher_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("teachers.id", ondelete="CASCADE"), nullable=True, index=True
     )
+    employee_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
 
     gross_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=Decimal("0.00"))
     deductions_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=Decimal("0.00"))
@@ -569,4 +589,16 @@ class PayrollPayslip(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="DRAFT", index=True)
     paid_on: Mapped[date | None] = mapped_column(Date, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    working_days: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), nullable=True)
+    lop_days: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), nullable=True)
+    paid_days: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), nullable=True)
+    lop_detail: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    pdf_object_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    tax_regime: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    form16: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    view_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    download_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    first_viewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    first_downloaded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

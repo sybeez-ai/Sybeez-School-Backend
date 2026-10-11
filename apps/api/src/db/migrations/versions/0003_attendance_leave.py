@@ -18,6 +18,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    inspector = sa.inspect(op.get_bind())
     # Ensure attendance exists for DBs created before the model was added
     op.execute(
         """
@@ -36,6 +37,9 @@ def upgrade() -> None:
         """
     )
     op.execute("CREATE INDEX IF NOT EXISTS ix_attendance_school_id ON attendance (school_id)")
+
+    if inspector.has_table("leave_requests"):
+        return
 
     op.create_table(
         "leave_requests",

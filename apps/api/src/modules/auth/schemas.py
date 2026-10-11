@@ -8,6 +8,7 @@ class LoginRequest(BaseModel):
     password: str
     school_id: UUID | None = None
     # portal login page: platform | school | hrm | teacher | student | parent
+    # hrm also accepts HR_MANAGER and PAYROLL_APPROVER
     portal: str | None = None
 
 

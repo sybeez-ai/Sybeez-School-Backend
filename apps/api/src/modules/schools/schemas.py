@@ -16,3 +16,11 @@ class SchoolProfile(BaseModel):
 
 class SchoolProfileUpdate(BaseModel):
     name: str | None = None
+
+
+class BranchOut(BaseModel):
+    name: str
+
+
+class BranchList(BaseModel):
+    branches: list[BranchOut]
