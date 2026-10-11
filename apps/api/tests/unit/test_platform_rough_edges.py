@@ -53,3 +53,20 @@ async def test_taken_slug_is_rejected():
 
 def test_admin_password_optional():
     assert _payload().admin.password is None
+
+
+@pytest.mark.asyncio
+async def test_admin_login_refuses_existing_account():
+    from src.modules.platform.schemas import SchoolAdminLoginCreate
+
+    svc = platform_service.PlatformService.__new__(platform_service.PlatformService)
+    svc.repo = MagicMock()
+    svc.repo.get_school = AsyncMock(return_value=SimpleNamespace(id="s", created_by_id=None))
+    svc._assert_school_access = AsyncMock()
+    found = MagicMock()
+    found.scalar_one_or_none.return_value = object()
+    svc.db = MagicMock()
+    svc.db.execute = AsyncMock(return_value=found)
+    body = SchoolAdminLoginCreate(full_name="Test Admin", email="taken@example.com")
+    with pytest.raises(ConflictError, match="already exists"):
+        await svc.create_school_admin_login(SimpleNamespace(id=None), "s", body)

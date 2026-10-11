@@ -20,6 +20,8 @@ from src.modules.fees.route_schemas import PlatformRouteUpdate, RouteSchoolOut
 from src.modules.fees.route_service import RouteService
 from src.modules.platform.saas_service import PlatformSaasService
 from src.modules.platform.schemas import (
+    SchoolAdminLoginCreate,
+    SchoolAdminLoginOut,
     InvitationCreate,
     InvitationOut,
     PlanCreate,
@@ -224,6 +226,17 @@ async def delete_school(
 ):
     await PlatformService(db).delete_school(actor, school_id)
     return Response(status_code=204)
+
+
+@router.post("/schools/{school_id}/admins", response_model=SchoolAdminLoginOut, status_code=201)
+async def create_school_admin_login(
+    school_id: UUID,
+    body: SchoolAdminLoginCreate,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_admin_or_above)],
+):
+    """Create a school-admin login (email + temporary password shown once) for a school."""
+    return await PlatformService(db).create_school_admin_login(actor, school_id, body)
 
 
 @router.post("/schools/{school_id}/admin/reset-password", response_model=SchoolAdminResetPasswordOut)

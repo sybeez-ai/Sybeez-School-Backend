@@ -158,6 +158,20 @@ class SchoolAdminResetPasswordRequest(BaseModel):
     temporary_password: str = Field(min_length=8)
 
 
+class SchoolAdminLoginCreate(BaseModel):
+    full_name: str = Field(min_length=2, max_length=200)
+    email: EmailStr
+    password: str | None = Field(default=None, min_length=8)
+
+
+class SchoolAdminLoginOut(BaseModel):
+    user_id: UUID
+    admin_email: EmailStr
+    full_name: str
+    temporary_password: str
+    login_url: str = "/school-admin/login"
+
+
 class SchoolAdminResetPasswordOut(BaseModel):
     admin_email: EmailStr
     temporary_password: str

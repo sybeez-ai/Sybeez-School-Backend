@@ -644,6 +644,45 @@ class PlatformService:
         )
         return admin_email, temporary_password
 
+    async def create_school_admin_login(self, actor: CurrentUser, school_id: UUID, data) -> "SchoolAdminLoginOut":
+        from src.modules.platform.schemas import SchoolAdminLoginOut
+
+        school = await self.repo.get_school(school_id)
+        if school is None:
+            raise NotFoundError("School not found")
+        await self._assert_school_access(actor, school)
+        email = str(data.email).lower().strip()
+        existing = (await self.db.execute(select(User).where(User.email == email))).scalar_one_or_none()
+        if existing is not None:
+            # Never reset someone else's password through this path.
+            raise ConflictError("An account with this email already exists. Use a different email.")
+        await bind_tenant(self.db, school.id)
+        password = data.password or cognito_svc.generate_temporary_password()
+        user, _, temp = await create_school_user(
+            self.db,
+            school_id=school.id,
+            email=email,
+            full_name=data.full_name.strip(),
+            password=password,
+            role=UserRole.SCHOOL_ADMIN,
+            actor_id=actor.id,
+        )
+        await self.audit.write(
+            action="platform.school.admin.create",
+            actor_id=actor.id,
+            school_id=school.id,
+            resource_type="user",
+            resource_id=str(user.id),
+            message=f"School admin login created: {user.email}",
+            details={"admin_email": user.email},
+        )
+        return SchoolAdminLoginOut(
+            user_id=user.id,
+            admin_email=user.email,
+            full_name=user.full_name,
+            temporary_password=temp or password,
+        )
+
     async def _reset_password(self, email: str, temporary_password: str) -> None:
         """Reset via Cognito when allowed; otherwise switch the account to a local hash.
 
