@@ -212,21 +212,24 @@ class Settings(BaseSettings):
         ):
             problems.append("PAYROLL_ASSISTANT_API_KEY or PAYROLL_ASSISTANT_SECRET_ID")
 
-        # If Cognito is enabled, required identifiers must be present.
-        auth_mode = (self.auth_mode or "").lower().strip()
-        if auth_mode in {"cognito", "both"}:
+        # School session tokens are HS256. Cognito is optional unless the task
+        # asks for it. The default auth mode is "both", and the region default
+        # is us-east-1, so neither of those means a pool was configured.
+        # Requiring the pool here exits before uvicorn binds, and the load
+        # balancer then has nothing to route to.
+        if self._cognito_required():
             missing: list[str] = []
-            if not self.cognito_region:
+            if not (self.cognito_region or "").strip():
                 missing.append("COGNITO_REGION")
-            if not self.cognito_user_pool_id:
+            if not (self.cognito_user_pool_id or "").strip():
                 missing.append("COGNITO_USER_POOL_ID")
-            if not self.cognito_app_client_id:
+            if not (self.cognito_app_client_id or "").strip():
                 missing.append("COGNITO_APP_CLIENT_ID")
-            if not self.cognito_domain:
+            if not (self.cognito_domain or "").strip():
                 missing.append("COGNITO_DOMAIN")
-            if not self.cognito_oauth_redirect_uri:
+            if not (self.cognito_oauth_redirect_uri or "").strip():
                 missing.append("COGNITO_OAUTH_REDIRECT_URI")
-            if not self.web_app_url:
+            if not (self.web_app_url or "").strip():
                 missing.append("WEB_APP_URL")
             if missing:
                 problems.append(f"Missing Cognito settings: {', '.join(missing)}")
@@ -236,6 +239,16 @@ class Settings(BaseSettings):
                 "Unsafe production configuration. Fix environment variables: "
                 + "; ".join(problems)
             )
+
+    def _cognito_required(self) -> bool:
+        mode = (self.auth_mode or "").lower().strip()
+        if mode == "cognito":
+            return True
+        return bool(
+            (self.cognito_user_pool_id or "").strip()
+            or (self.cognito_app_client_id or "").strip()
+            or (self.cognito_domain or "").strip()
+        )
 
     @property
     def cors_origins(self) -> list[str]:

@@ -122,6 +122,25 @@ jobs:
           aws ecs describe-task-definition --task-definition sybeez-school-api --query taskDefinition > api-task.json
           aws ecs describe-task-definition --task-definition sybeez-school-worker --query taskDefinition > worker-task.json
 
+      - name: Pin the API database secret on the latest task definitions
+        run: |
+          set -euo pipefail
+          # describe-task-definition without a revision is the latest family
+          # revision. The service may still be on an older revision after a
+          # circuit-breaker rollback; that older revision's database secret is
+          # not the API secret. Report both names, then register from latest.
+          echo "latest api task definition"
+          python3 .github/scripts/pin_api_db_secret.py --report api-task.json
+          SERVICE_TD=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$API_SERVICE" \
+            --query 'services[0].taskDefinition' --output text || true)
+          if [ -n "${SERVICE_TD:-}" ] && [ "$SERVICE_TD" != "None" ]; then
+            echo "service task definition $SERVICE_TD"
+            aws ecs describe-task-definition --task-definition "$SERVICE_TD" --query taskDefinition > api-running-task.json
+            python3 .github/scripts/pin_api_db_secret.py --report api-running-task.json
+          fi
+          python3 .github/scripts/pin_api_db_secret.py --pin api-task.json
+          python3 .github/scripts/pin_api_db_secret.py --pin worker-task.json
+
       - name: Render migration task definition
         id: render-migrate
         uses: aws-actions/amazon-ecs-render-task-definition@v1

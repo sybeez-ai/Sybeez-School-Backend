@@ -37,7 +37,7 @@ The OIDC role needs at least:
 2. Assume `AWS_BACKEND_ROLE_ARN` in `ap-south-1`.
 3. Build `infra/docker/api.Dockerfile` and `apps/worker/Dockerfile`. Push both to ECR tagged with the git SHA and `latest`.
 4. Render task definition `sybeez-school-migrate` with the new API image, run it once on `sybeez-school-cluster`, and wait until it stops. The deploy fails if the container exit code is not 0. The workflow overrides the container command to `alembic upgrade head` (working directory `/app`). Before any other DDL, that command restamps a legacy finance database (see below) or exits non-zero if the stamp is ambiguous.
-5. Render new task definitions for services `sybeez-school-api` and `sybeez-school-worker` with those images. Container names come from `AWS_BACKEND_API_CONTAINER` and `AWS_BACKEND_WORKER_CONTAINER` (`api` and `worker`). Update the services, then raise the API desired count to at least 2 and the worker to at least 1 if either is lower. Wait until each service is stable. If it is not, the job prints the service events, the stopped task reason, and the container log.
+5. Render new task definitions for services `sybeez-school-api` and `sybeez-school-worker` from the latest family revisions, not from the revision the service rolled back to. `DATABASE_URL` and `DATABASE_URL_SYNC` on those two tasks are pinned to secret `sybeez-school/api-db`. The migrate task keeps its master secret. Container names come from `AWS_BACKEND_API_CONTAINER` and `AWS_BACKEND_WORKER_CONTAINER` (`api` and `worker`). Update the services, then raise the API desired count to at least 2 and the worker to at least 1 if either is lower. Wait until each service is stable. If it is not, the job prints the service events, the stopped task reason, and the container log.
 
 Images are non-root. The API process is `uvicorn` with `--proxy-headers`. Both images health-check `GET /health`. `GET /` returns the same liveness payload, because the load balancer often checks `/`. That endpoint returns HTTP 200 with `"status": "degraded"` when Redis is down. It does not fail the container for a temporary Redis outage. Super-admin bootstrap runs after the process is listening; a database or Cognito error is logged and does not stop the process. If a service never reaches its minimum running count, the job prints recent events from that container's CloudWatch log group without listing task ARNs.
 
@@ -56,6 +56,7 @@ Put these on the ECS task definitions, not in git.
 | `JOBS_BACKEND` | `redis` (default) or `sqs`. API enqueue and the worker both read this. |
 | `SQS_QUEUE_URL` | Required when `JOBS_BACKEND=sqs`. Same queue for enqueue and the worker. |
 | `JWT_SECRET`, `AI_SERVICE_TOKEN`, `CORE_INTERNAL_TOKEN` | Required in production, at least 32 characters, not a placeholder. |
+| `AUTH_MODE` | `local` or `both` starts with the school JWT when Cognito is unset. Cognito settings are required only for `AUTH_MODE=cognito`, or when a user pool, app client, or hosted-UI domain is already set. Do not require them on a task that does not have the pool: the process exits before it listens. |
 | `S3_BUCKET` | Required in production. The app stores object keys only. |
 | `APP_ENV` | `production` turns on the checks above. |
 
