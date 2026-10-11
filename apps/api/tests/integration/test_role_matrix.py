@@ -284,6 +284,7 @@ def world(client: TestClient):
         "PAYROLL_APPROVER": _auth(client, f"payroll_approver-{suffix}@example.com"),
         "SOUTH_ADMIN": _auth(client, f"south-admin-{suffix}@example.com"),
     }
+    client.cookies.clear()
     return {
         "suffix": suffix,
         "schools": schools,
@@ -369,6 +370,7 @@ def test_role_http_matrix(client: TestClient, world, role, path, expected):
 
 
 def test_anonymous_requests_are_rejected(client: TestClient):
+    client.cookies.clear()
     assert client.get("/api/v1/students").status_code == 401
     assert client.get("/health").status_code == 200
 
