@@ -1,10 +1,14 @@
-"""Resolve the super-admin initial password without logging it.
+"""Resolve secrets without logging them.
 
-SUPERADMIN_EMAIL comes from the environment. The password is read from
+Super-admin: SUPERADMIN_EMAIL comes from the environment. The password is read from
 SUPERADMIN_INITIAL_PASSWORD when that is set (local development and tests),
 otherwise from AWS Secrets Manager secret `sybeez-school/superadmin`
 (override the id with SUPERADMIN_SECRET_ID). The secret may be a raw string
 or a JSON object with SUPERADMIN_INITIAL_PASSWORD.
+
+WhatsApp and MSG91: `load_secret_map` reads ALERTS_SECRETS_ARN or
+WHATSAPP_SECRETS_ARN. Settings copies a value only when the matching field is
+still blank, so environment variables win.
 """
 
 from __future__ import annotations
@@ -16,6 +20,27 @@ import os
 from src.core.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+
+def load_secret_map() -> dict[str, str]:
+    """WhatsApp and MSG91 credentials from Secrets Manager.
+
+    Environment variables win: Settings only copies a key when its field is blank.
+    No ARN means mock mode. A missing secret or a non-JSON payload returns an empty map.
+    """
+    arn = (os.environ.get("ALERTS_SECRETS_ARN") or os.environ.get("WHATSAPP_SECRETS_ARN") or "").strip()
+    if not arn:
+        return {}
+    try:
+        import boto3
+
+        raw = boto3.client("secretsmanager").get_secret_value(SecretId=arn)["SecretString"]
+        data = json.loads(raw)
+    except Exception:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {str(key): "" if value is None else str(value) for key, value in data.items()}
 
 
 def password_from_secret_string(raw: str) -> str | None:

@@ -212,6 +212,33 @@ class HRService:
             entity_id=row.id,
             actor=decided_by,
         )
+        if approved and row.user_id:
+            from src.db.models import User
+            from src.modules.alerts.service import dispatch_alert, school_display_name
+
+            person = await self.db.get(User, row.user_id)
+            try:
+                await dispatch_alert(
+                    self.db,
+                    school_id=school_id,
+                    event_key="leave_approved",
+                    notification_type=LEAVE_APPROVED,
+                    staff_user_ids=[row.user_id],
+                    variables={
+                        "employee_name": person.full_name if person else "Employee",
+                        "leave_type": "Paid leave" if row.is_paid else "Unpaid leave",
+                        "from_date": row.start_date.strftime("%d %b %Y"),
+                        "to_date": row.end_date.strftime("%d %b %Y"),
+                        "school_name": await school_display_name(self.db, school_id),
+                    },
+                    dedupe_key=f"leave_approved:{row.id}",
+                    title="Leave approved",
+                    link_path="/hrm/leave",
+                )
+            except Exception:
+                from src.core.telemetry import track_alert
+
+                track_alert("hr_alert_failed", leave_id=str(row.id))
         return await self._leave_out(school_id, row.id)
 
     @staticmethod

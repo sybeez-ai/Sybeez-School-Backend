@@ -1,21 +1,16 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.config import get_settings
-from src.core.exceptions import NotFoundError
 from src.core.jobs import enqueue_job
 from src.db.models import NotificationDelivery, NotificationPreference, User
 from src.shared.enums import NotificationChannel
-
-
-def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
 
 
 async def queue_outbound_delivery(
@@ -105,20 +100,19 @@ async def update_delivery_result(
     provider_message_id: str | None = None,
     last_error: str | None = None,
     attempts: int | None = None,
+    error_code: str | None = None,
+    scheduled_for: datetime | None = None,
 ) -> NotificationDelivery:
-    row = await db.get(NotificationDelivery, delivery_id)
-    if not row:
-        raise NotFoundError("Delivery not found")
+    from src.modules.alerts.service import apply_worker_result
 
-    row.status = status
-    if provider_message_id:
-        row.provider_message_id = provider_message_id
-    if last_error:
-        row.last_error = last_error
-    if attempts is not None:
-        row.attempts = attempts
-    if status == "SENT":
-        row.sent_at = _utcnow()
-    await db.flush()
-    return row
+    return await apply_worker_result(
+        db,
+        delivery_id=delivery_id,
+        status=status,
+        provider_message_id=provider_message_id,
+        last_error=last_error,
+        attempts=attempts,
+        error_code=error_code,
+        scheduled_for=scheduled_for,
+    )
 

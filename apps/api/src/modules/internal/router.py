@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 from typing import Annotated
 from uuid import UUID
 
@@ -53,6 +53,8 @@ class DeliveryResultIn(BaseModel):
     provider_message_id: str | None = None
     last_error: str | None = None
     attempts: int | None = None
+    error_code: str | None = None
+    scheduled_for: datetime | None = None
 
 
 @router.post(
@@ -82,6 +84,8 @@ async def delivery_result(
         provider_message_id=body.provider_message_id,
         last_error=body.last_error,
         attempts=body.attempts,
+        error_code=body.error_code,
+        scheduled_for=body.scheduled_for,
     )
     return {"ok": True}
 
@@ -138,6 +142,22 @@ async def internal_run_absence_digests(
 
     await bind_tenant(db, school_id, role="SERVICE")
     return await AttendanceService(db).send_daily_absence_digests(school_id=school_id, attended_on=attended_on)
+
+
+@router.post("/alerts/release-due", dependencies=[Depends(require_internal_token)])
+async def release_due_alerts(db: Annotated[AsyncSession, Depends(get_db)]):
+    from src.modules.alerts.service import release_due_deliveries
+
+    return await release_due_deliveries(db)
+
+
+@router.post("/attendance/{school_id}/digests/weekly/run", dependencies=[Depends(require_internal_token)])
+async def internal_run_weekly_attendance(
+    school_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    week_ending: date = Query(default_factory=date.today),
+):
+    return await AttendanceService(db).send_weekly_attendance_summaries(school_id=school_id, week_ending=week_ending)
 
 
 @router.post("/payroll/generate", dependencies=[Depends(require_internal_token)])

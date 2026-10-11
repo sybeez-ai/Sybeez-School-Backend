@@ -46,12 +46,10 @@ from src.modules.attendance.schemas import (
     StudentRateOut,
 )
 from src.modules.notifications.service import create_in_app_notification
-from src.modules.notifications.deliveries import queue_outbound_delivery
 from src.shared.enums import (
     AttendanceStatus,
     EnrollmentStatus,
     LeaveRequestStatus,
-    NotificationChannel,
     NotificationType,
     UserRole,
 )
@@ -388,6 +386,7 @@ class AttendanceService:
 
         out: list[AttendanceOut] = []
         absent_student_ids: list[UUID] = []
+        late_student_ids: list[UUID] = []
 
         for item in data.marks:
             if item.student_id not in enrolled_ids:
@@ -420,6 +419,8 @@ class AttendanceService:
             )
             if status == AttendanceStatus.ABSENT.value:
                 absent_student_ids.append(item.student_id)
+            elif status == AttendanceStatus.LATE.value:
+                late_student_ids.append(item.student_id)
             out.append(await self._to_attendance_out(row))
 
         if settings.notify_parents_on_absent:
@@ -430,6 +431,13 @@ class AttendanceService:
                     class_name=classroom.name,
                     attended_on=data.attended_on,
                     marked_at=datetime.utcnow(),
+                )
+            for sid in late_student_ids:
+                await self._notify_parents_late(
+                    school_id=school_id,
+                    student_id=sid,
+                    class_name=classroom.name,
+                    attended_on=data.attended_on,
                 )
 
         return out
@@ -513,6 +521,84 @@ class AttendanceService:
                 priority="HIGH",
                 event_key=f"ATTENDANCE_ABSENCE:{student_id}:{attended_on.isoformat()}:{parent.user_id}",
             )
+        await self._dispatch_student_alert(
+            school_id=school_id,
+            student_id=student_id,
+            event_key="student_absent",
+            notification_type=NotificationType.ATTENDANCE_ABSENCE.value,
+            title="Attendance Alert",
+            variables={
+                "student_name": name,
+                "date": attended_on.strftime("%d %b %Y"),
+                "school_name": await self._school_name(school_id),
+            },
+            dedupe_key=f"student_absent:{student_id}:{attended_on.isoformat()}",
+            urgent=True,
+        )
+
+    async def _notify_parents_late(
+        self,
+        *,
+        school_id: UUID,
+        student_id: UUID,
+        class_name: str,
+        attended_on: date,
+    ) -> None:
+        name = await self._student_name(student_id) or "Your child"
+        links = (
+            await self.db.execute(
+                select(StudentParent).where(
+                    StudentParent.school_id == school_id,
+                    StudentParent.student_id == student_id,
+                )
+            )
+        ).scalars().all()
+        for link in links:
+            parent = await self.db.get(Parent, link.parent_id)
+            if not parent:
+                continue
+            await create_in_app_notification(
+                self.db,
+                school_id=school_id,
+                user_id=parent.user_id,
+                title="Late arrival",
+                body=f"{name} was marked LATE today ({attended_on.strftime('%d %B %Y')}). Class: {class_name}.",
+                category=NotificationType.ATTENDANCE_LATE.value,
+                link_path="/parent/attendance",
+                entity_type="attendance",
+                priority="HIGH",
+                event_key=f"ATTENDANCE_LATE:{student_id}:{attended_on.isoformat()}:{parent.user_id}",
+            )
+        await self._dispatch_student_alert(
+            school_id=school_id,
+            student_id=student_id,
+            event_key="student_late",
+            notification_type=NotificationType.ATTENDANCE_LATE.value,
+            title="Late arrival",
+            variables={
+                "student_name": name,
+                "date": attended_on.strftime("%d %b %Y"),
+                "school_name": await self._school_name(school_id),
+            },
+            dedupe_key=f"student_late:{student_id}:{attended_on.isoformat()}",
+            urgent=True,
+        )
+
+    async def _school_name(self, school_id: UUID) -> str:
+        from src.db.models import School
+
+        school = await self.db.get(School, school_id)
+        return school.name if school else "School"
+
+    async def _dispatch_student_alert(self, **kwargs):
+        from src.core.telemetry import track_alert
+        from src.modules.alerts.service import dispatch_alert
+
+        try:
+            return await dispatch_alert(self.db, link_path="/parent/attendance", **kwargs)
+        except Exception:
+            track_alert("attendance_alert_failed", event_key=kwargs.get("event_key"))
+            return None
 
     async def list_for_student(
         self,
@@ -760,6 +846,21 @@ class AttendanceService:
                     entity_id=row.id,
                     event_key=f"LEAVE_APPROVED:{row.id}:{parent.user_id}",
                 )
+            await self._dispatch_student_alert(
+                school_id=school_id,
+                student_id=row.student_id,
+                event_key="leave_approved",
+                notification_type=NotificationType.LEAVE_APPROVED.value,
+                title="Leave approved",
+                variables={
+                    "employee_name": name,
+                    "leave_type": "Student leave",
+                    "from_date": row.start_date.strftime("%d %b %Y"),
+                    "to_date": row.end_date.strftime("%d %b %Y"),
+                    "school_name": await self._school_name(school_id),
+                },
+                dedupe_key=f"leave_approved:{row.id}",
+            )
 
         return await self._to_leave_out(row)
 
@@ -963,7 +1064,7 @@ class AttendanceService:
             )
         ).scalars().all()
 
-        by_parent: dict[UUID, list[tuple[str, str]]] = {}
+        by_parent: dict[UUID, list[tuple[UUID, str, str]]] = {}
         for a in absences:
             student_name = await self._student_name(a.student_id) or "Student"
             class_name = await self._class_name(a.class_id)
@@ -979,7 +1080,7 @@ class AttendanceService:
                 parent = await self.db.get(Parent, link.parent_id)
                 if not parent:
                     continue
-                by_parent.setdefault(parent.user_id, []).append((student_name, class_name))
+                by_parent.setdefault(parent.user_id, []).append((a.student_id, student_name, class_name or ""))
 
         digests_considered = 0
         digests_sent = 0
@@ -1011,7 +1112,7 @@ class AttendanceService:
             )
             await self.db.flush()
 
-            parts = [f"{n} ({c})" for (n, c) in items[:5]]
+            parts = [f"{n} ({c})" for (_sid, n, c) in items[:5]]
             more = f" +{len(items) - 5} more" if len(items) > 5 else ""
             summary = ", ".join(parts) + more
             title = "Attendance update"
@@ -1032,24 +1133,31 @@ class AttendanceService:
                 event_key=f"ATTENDANCE_ABSENCE_DIGEST:{school_id}:{attended_on}:{parent_user_id}",
                 meta={
                     "attended_on": str(attended_on),
-                    "items": [{"student": n, "class": c} for n, c in items],
+                    "items": [{"student": n, "class": c} for _sid, n, c in items],
                 },
             )
 
-            for ch in (NotificationChannel.SMS.value, NotificationChannel.WHATSAPP.value):
-                row = await queue_outbound_delivery(
-                    self.db,
+            alerted: set[UUID] = set()
+            for student_id, child_name, _class_name in items:
+                if student_id in alerted:
+                    continue
+                alerted.add(student_id)
+                result = await self._dispatch_student_alert(
                     school_id=school_id,
-                    user_id=parent_user_id,
-                    channel=ch,
+                    student_id=student_id,
+                    event_key="student_absent",
                     notification_type=NotificationType.ATTENDANCE_ABSENCE.value,
                     title=title,
-                    body=body,
-                    link_path=link_path,
-                    meta={"attended_on": str(attended_on), "kind": kind},
+                    variables={
+                        "student_name": child_name,
+                        "date": attended_on.strftime("%d %b %Y"),
+                        "school_name": await self._school_name(school_id),
+                    },
+                    dedupe_key=f"student_absent:{student_id}:{attended_on.isoformat()}",
+                    urgent=True,
                 )
-                if row:
-                    deliveries_queued += 1
+                if result is not None:
+                    deliveries_queued += result.queued + result.scheduled
 
             digests_sent += 1
 
@@ -1060,6 +1168,52 @@ class AttendanceService:
             "digests_sent": digests_sent,
             "deliveries_queued": deliveries_queued,
         }
+
+    async def send_weekly_attendance_summaries(self, *, school_id: UUID, week_ending: date) -> dict:
+        """Parents receive one template message per child for the seven days ending on week_ending."""
+        week_start = week_ending - timedelta(days=6)
+        enrollments = (
+            await self.db.execute(
+                select(Enrollment).where(
+                    Enrollment.school_id == school_id,
+                    Enrollment.status == EnrollmentStatus.ACTIVE.value,
+                )
+            )
+        ).scalars().all()
+        school_name = await self._school_name(school_id)
+        queued = 0
+        for enr in enrollments:
+            rows = await self.repo.list_for_student(
+                school_id=school_id,
+                student_id=enr.student_id,
+                date_from=week_start,
+                date_to=week_ending,
+            )
+            present = sum(1 for row in rows if row.status == AttendanceStatus.PRESENT.value)
+            absent = sum(1 for row in rows if row.status == AttendanceStatus.ABSENT.value)
+            late = sum(1 for row in rows if row.status == AttendanceStatus.LATE.value)
+            name = await self._student_name(enr.student_id) or "Student"
+            result = await self._dispatch_student_alert(
+                school_id=school_id,
+                student_id=enr.student_id,
+                event_key="attendance_weekly_summary",
+                notification_type=NotificationType.ATTENDANCE_WEEKLY.value,
+                title="Weekly attendance",
+                variables={
+                    "student_name": name,
+                    "week_label": f"{week_start.strftime('%d %b %Y')} to {week_ending.strftime('%d %b %Y')}",
+                    "present_days": str(present),
+                    "absent_days": str(absent),
+                    "late_days": str(late),
+                    "school_name": school_name,
+                },
+                dedupe_key=f"attendance_weekly:{enr.student_id}:{week_start.isoformat()}",
+                urgent=False,
+            )
+            if result is not None:
+                queued += result.queued + result.scheduled
+        await self.db.commit()
+        return {"students": len(enrollments), "deliveries_queued": queued}
 
     async def alerts(self, *, school_id: UUID) -> list[AlertOut]:
         settings = await self.repo.get_or_create_settings(school_id)

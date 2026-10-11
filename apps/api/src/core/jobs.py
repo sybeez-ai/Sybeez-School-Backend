@@ -2,12 +2,21 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from typing import Any
 
 from src.core.config import get_settings
 from src.core.redis import get_redis
 
 QUEUE = "sybeez:jobs"
+
+
+def jobs_backend() -> str:
+    """JOBS_BACKEND from the environment, otherwise the cached setting. Default redis."""
+    raw = os.environ.get("JOBS_BACKEND")
+    if raw is not None and raw.strip():
+        return raw.strip().lower()
+    return (get_settings().jobs_backend or "redis").strip().lower() or "redis"
 
 
 def _sqs_client(settings):

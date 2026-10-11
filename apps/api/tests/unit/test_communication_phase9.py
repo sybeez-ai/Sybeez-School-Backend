@@ -74,6 +74,7 @@ def test_notification_types_cover_phase9():
     expected = {
         "ATTENDANCE_ABSENCE",
         "ATTENDANCE_LATE",
+        "ATTENDANCE_WEEKLY",
         "LEAVE_SUBMITTED",
         "LEAVE_APPROVED",
         "LEAVE_REJECTED",
@@ -93,6 +94,8 @@ def test_notification_types_cover_phase9():
         "FEE_RECEIPT_READY",
         "FEE_REFUND",
         "PAYSLIP_PUBLISHED",
+        "PAY_RUN_APPROVED",
+        "LOP_UPDATE",
     }
     assert {t.value for t in NotificationType} == expected
 

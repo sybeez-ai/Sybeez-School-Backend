@@ -1,4 +1,4 @@
-"""Migrations apply through 0050 on an empty Postgres 16 database."""
+"""Migrations apply through 0053 on an empty Postgres 16 database."""
 
 import os
 import subprocess
@@ -46,7 +46,22 @@ def test_upgrade_head_on_empty_database():
     conn = psycopg2.connect(APP_DSN)
     cur = conn.cursor()
     cur.execute("SELECT version_num FROM alembic_version")
-    assert cur.fetchone()[0] == "0050"
+    assert cur.fetchone()[0] == "0053"
+    cur.execute("SELECT count(*) FROM alert_message_templates WHERE school_id IS NULL")
+    assert cur.fetchone()[0] == 33
+    cur.execute(
+        """
+        SELECT relname, relforcerowsecurity
+        FROM pg_class
+        WHERE relname IN ('alert_message_templates', 'alert_channel_opt_outs', 'school_alert_settings')
+        ORDER BY relname
+        """
+    )
+    assert {name: forced for name, forced in cur.fetchall()} == {
+        "alert_channel_opt_outs": True,
+        "alert_message_templates": True,
+        "school_alert_settings": True,
+    }
     cur.execute("SELECT current_setting('server_version_num')")
     assert int(cur.fetchone()[0]) >= 160000
 

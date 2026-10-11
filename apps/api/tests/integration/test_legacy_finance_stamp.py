@@ -87,7 +87,7 @@ async def test_legacy_finance_0030_upgrades_to_head():
         assert upgraded.returncode == 0, upgraded.stdout + "\n" + upgraded.stderr
         assert "Detected legacy finance revision 0030" in upgraded.stderr
         assert "Restamped alembic_version to 0027" in upgraded.stderr
-        assert await _version(name) == "0050"
+        assert await _version(name) == "0053"
 
         conn = await asyncpg.connect(user="sybeez", password="sybeez", host="127.0.0.1", database=name)
         try:
@@ -120,6 +120,11 @@ async def test_legacy_finance_0030_upgrades_to_head():
                 "SELECT relforcerowsecurity FROM pg_class WHERE relname = 'fee_ledger_entries'"
             )
             assert fee_forced is True
+            templates = await conn.fetchval(
+                "SELECT count(*) FROM alert_message_templates WHERE school_id IS NULL"
+            )
+            assert templates == 33
+            assert await conn.fetchval("SELECT to_regclass('public.school_alert_settings')") == "school_alert_settings"
         finally:
             await conn.close()
     finally:
@@ -143,7 +148,7 @@ async def test_hrm_0030_is_not_restamped():
         upgraded = _alembic(name, "upgrade", "head")
         assert upgraded.returncode == 0, upgraded.stdout + "\n" + upgraded.stderr
         assert "Restamped" not in upgraded.stderr
-        assert await _version(name) == "0050"
+        assert await _version(name) == "0053"
     finally:
         await admin.execute(
             "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()",

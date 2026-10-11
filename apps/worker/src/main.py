@@ -1,6 +1,7 @@
 import logging
 import threading
 import time
+import urllib.request
 
 from src.core.config import get_settings
 from src.core.redis import get_redis
@@ -8,6 +9,35 @@ from src.queue import QUEUE, jobs_backend, poll_redis, poll_sqs
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("sybeez.worker")
+
+_last_release = 0.0
+
+
+def _release_due() -> None:
+    """Ask the API to send alerts that were held for quiet hours. At most once a minute."""
+    global _last_release
+    now = time.time()
+    if now - _last_release < 60:
+        return
+    _last_release = now
+    settings = get_settings()
+    base = (settings.core_api_url or "").rstrip("/")
+    if not base:
+        return
+    request = urllib.request.Request(
+        f"{base}/internal/v1/alerts/release-due",
+        data=b"{}",
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "X-Internal-Token": settings.core_internal_token,
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            response.read()
+    except Exception:
+        logger.warning("Could not release scheduled alerts")
 
 
 def redis_reachable() -> bool:
@@ -33,6 +63,7 @@ def consume_forever(stop: threading.Event | None = None) -> None:
             except Exception:
                 logger.exception("SQS poll failed")
                 time.sleep(2)
+            _release_due()
         return
 
     client = get_redis()
@@ -42,6 +73,7 @@ def consume_forever(stop: threading.Event | None = None) -> None:
         except Exception:
             logger.exception("Redis poll failed")
             time.sleep(2)
+        _release_due()
 
 
 def main() -> None:
