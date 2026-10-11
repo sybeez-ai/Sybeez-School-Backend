@@ -1,4 +1,4 @@
-"""Migrations apply through 0050 on an empty Postgres 16 database."""
+"""Migrations apply through 0052 on an empty Postgres 16 database."""
 
 import os
 import subprocess
@@ -46,7 +46,7 @@ def test_upgrade_head_on_empty_database():
     conn = psycopg2.connect(APP_DSN)
     cur = conn.cursor()
     cur.execute("SELECT version_num FROM alembic_version")
-    assert cur.fetchone()[0] == "0050"
+    assert cur.fetchone()[0] == "0052"
     cur.execute("SELECT current_setting('server_version_num')")
     assert int(cur.fetchone()[0]) >= 160000
 

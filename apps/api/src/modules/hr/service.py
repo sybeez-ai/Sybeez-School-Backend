@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from uuid import UUID, uuid4
 
@@ -14,13 +14,18 @@ from src.core.exceptions import AppError, ConflictError, ForbiddenError, NotFoun
 from src.db.models import (
     Department,
     Employee,
+    HrLeaveType,
     PayrollPayslip,
     PayrollRun,
     School,
+    StaffAttendance,
     StaffLeaveRequest,
     Teacher,
     User,
 )
+from src.modules.employees.lookup import employee_for_user
+from src.modules.employees.service import employee_code_expr
+from src.modules.hr.audit import hr_audit
 from src.modules.hr.payslip_pdf import build_payslip_pdf
 from src.modules.hr.schemas import (
     PayrollPayslipCreate,
@@ -32,6 +37,14 @@ from src.modules.hr.schemas import (
     StaffLeaveDecisionIn,
     StaffLeaveRequestCreate,
     StaffLeaveRequestOut,
+    StaffLeaveRevokeIn,
+)
+from src.modules.hr_leave_policy.service import (
+    LeavePolicyService,
+    employee_join,
+    fmt_days,
+    request_days,
+    working_dates,
 )
 from src.modules.hr_notifications.service import (
     LEAVE_APPROVED,
@@ -57,42 +70,64 @@ def _fmt_day(d: date) -> str:
 
 
 def _leave_span(row: StaffLeaveRequest) -> str:
-    days = (row.end_date - row.start_date).days + 1
     dates = (
         _fmt_day(row.start_date)
         if row.start_date == row.end_date
         else f"{_fmt_day(row.start_date)} – {_fmt_day(row.end_date)}"
     )
+    if row.working_days is not None:
+        n = request_days(row)
+        return f"{dates} ({fmt_days(n)} working day{'s' if n != 1 else ''})"
+    days = (row.end_date - row.start_date).days + 1
     return f"{dates} ({days} day{'s' if days != 1 else ''})"
-
-
-def _teacher_code():
-    return func.coalesce(Teacher.employee_code, Teacher.teacher_code)
 
 
 class HRService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def _teacher_for_user(self, school_id: UUID, user_id: UUID) -> Teacher:
-        t = (
-            await self.db.execute(
-                select(Teacher).where(Teacher.school_id == school_id, Teacher.user_id == user_id)
-            )
-        ).scalar_one_or_none()
-        if not t:
-            raise ForbiddenError("Teacher profile required")
-        return t
-
     # ── Leave (staff) ─────────────────────────────────────────
 
-    async def create_staff_leave(self, school_id: UUID, user_id: UUID, data: StaffLeaveRequestCreate) -> StaffLeaveRequestOut:
+    async def create_staff_leave(
+        self,
+        school_id: UUID,
+        user_id: UUID,
+        data: StaffLeaveRequestCreate,
+        *,
+        resubmitted_from_id: UUID | None = None,
+    ) -> StaffLeaveRequestOut:
         if data.end_date < data.start_date:
             raise AppError("End date must be on or after the start date", status_code=422)
-        max_days = (await load_rules(self.db, school_id)).leave_max_days
+        rules = await load_rules(self.db, school_id)
+        max_days = rules.leave_max_days
         if (data.end_date - data.start_date).days >= max_days:
             raise AppError(
                 f"A leave request cannot exceed {max_days} day{'s' if max_days != 1 else ''}",
+                status_code=422,
+            )
+        notice = rules.leave_min_notice_days
+        if notice and data.start_date < date.today() + timedelta(days=notice):
+            raise AppError(
+                f"Leave must be requested at least {notice} day{'s' if notice != 1 else ''} in advance",
+                status_code=422,
+            )
+        await employee_for_user(self.db, school_id, user_id)
+        policy = LeavePolicyService(self.db)
+        leave_type: HrLeaveType | None = None
+        if data.leave_type_id:
+            leave_type = await policy.get_type(school_id, data.leave_type_id)
+            if not leave_type.is_active:
+                raise AppError(f"{leave_type.name} is no longer offered", status_code=422)
+        elif await policy.has_active_types(school_id):
+            raise AppError("Choose a leave type", status_code=422)
+        days = Decimal(len(await working_dates(self.db, school_id, data.start_date, data.end_date)))
+        if not days:
+            raise AppError(
+                "These dates fall entirely on non-working days or school holidays", status_code=422
+            )
+        if leave_type and leave_type.max_consecutive_days and days > leave_type.max_consecutive_days:
+            raise AppError(
+                f"{leave_type.name} allows at most {leave_type.max_consecutive_days} working days per request",
                 status_code=422,
             )
         overlap = (
@@ -113,6 +148,10 @@ class HRService:
                 f"These dates overlap your {overlap.status.lower()} leave request for "
                 f"{_fmt_day(overlap.start_date)} – {_fmt_day(overlap.end_date)}"
             )
+        if leave_type:
+            await policy.assert_within_balance(
+                school_id, user_id, leave_type, days, data.start_date.year
+            )
         row = StaffLeaveRequest(
             id=uuid4(),
             school_id=school_id,
@@ -121,20 +160,48 @@ class HRService:
             end_date=data.end_date,
             reason=data.reason.strip(),
             status="PENDING",
+            leave_type_id=leave_type.id if leave_type else None,
+            working_days=days,
+            resubmitted_from_id=resubmitted_from_id,
         )
-        self.db.add(row)
-        await self.db.flush()
+        try:
+            async with self.db.begin_nested():
+                self.db.add(row)
+                await self.db.flush()
+        except IntegrityError as exc:
+            if resubmitted_from_id:
+                raise ConflictError("This request has already been resubmitted") from exc
+            raise
         out = await self._leave_out(school_id, row.id)
         await HrNotifier(self.db).to_admins(
             school_id,
             kind="leave",
             category=LEAVE_SUBMITTED,
-            title=f"Leave request from {out.staff_name or 'a staff member'}",
-            body=f"{_leave_span(row)} · {row.reason}",
+            title=f"{'Resubmitted leave' if resubmitted_from_id else 'Leave'} request from {out.staff_name or 'a staff member'}",
+            body=f"{out.leave_type_name + ' · ' if out.leave_type_name else ''}{_leave_span(row)} · {row.reason}",
             entity_id=row.id,
+            event="submitted",
             actor=user_id,
         )
         return out
+
+    async def resubmit_staff_leave(
+        self, school_id: UUID, leave_id: UUID, user_id: UUID, data: StaffLeaveRequestCreate
+    ) -> StaffLeaveRequestOut:
+        """A rejected or withdrawn request may be resubmitted once, as a new linked request."""
+        row = await self.db.get(StaffLeaveRequest, leave_id)
+        if not row or row.school_id != school_id:
+            raise NotFoundError("Leave request not found")
+        if row.user_id != user_id:
+            raise ForbiddenError("Cannot resubmit another staff member's leave request")
+        if row.status not in ("REJECTED", "CANCELLED"):
+            raise AppError("Only rejected or withdrawn requests can be resubmitted", status_code=422)
+        already = await self.db.scalar(
+            select(StaffLeaveRequest.id).where(StaffLeaveRequest.resubmitted_from_id == row.id)
+        )
+        if already:
+            raise ConflictError("This request has already been resubmitted")
+        return await self.create_staff_leave(school_id, user_id, data, resubmitted_from_id=row.id)
 
     async def list_staff_leaves(
         self,
@@ -145,6 +212,7 @@ class HRService:
         q: str | None = None,
         date_from: date | None = None,
         date_to: date | None = None,
+        leave_type_id: UUID | None = None,
         limit: int = 500,
     ) -> list[StaffLeaveRequestOut]:
         if date_from and date_to and date_from > date_to:
@@ -154,6 +222,8 @@ class HRService:
             stmt = stmt.where(StaffLeaveRequest.status == status.upper().strip())
         if user_id:
             stmt = stmt.where(StaffLeaveRequest.user_id == user_id)
+        if leave_type_id:
+            stmt = stmt.where(StaffLeaveRequest.leave_type_id == leave_type_id)
         if date_from:
             stmt = stmt.where(StaffLeaveRequest.end_date >= date_from)
         if date_to:
@@ -161,7 +231,7 @@ class HRService:
         if q:
             like = f"%{q.strip()}%"
             stmt = stmt.where(
-                or_(User.full_name.ilike(like), _teacher_code().ilike(like), StaffLeaveRequest.reason.ilike(like))
+                or_(User.full_name.ilike(like), employee_code_expr().ilike(like), StaffLeaveRequest.reason.ilike(like))
             )
         rows = (await self.db.execute(stmt.order_by(StaffLeaveRequest.created_at.desc()).limit(limit))).all()
         return [self._to_leave_out(*r) for r in rows]
@@ -184,9 +254,61 @@ class HRService:
             title=f"Leave request withdrawn by {out.staff_name or 'a staff member'}",
             body=_leave_span(row),
             entity_id=row.id,
+            event="withdrawn",
             actor=user_id,
         )
         return out
+
+    async def revoke_staff_leave(
+        self, school_id: UUID, leave_id: UUID, actor: UUID, data: StaffLeaveRevokeIn
+    ) -> StaffLeaveRequestOut:
+        """HR cancels an approved leave; the LEAVE marks it created are removed from attendance."""
+        row = await self.db.get(StaffLeaveRequest, leave_id)
+        if not row or row.school_id != school_id:
+            raise NotFoundError("Leave request not found")
+        if row.status != "APPROVED":
+            raise AppError("Only approved leave can be cancelled by HR", status_code=422)
+        row.status = "CANCELLED"
+        row.decision_note = "\n".join(
+            x for x in (row.decision_note, f"Cancelled by HR: {data.reason}") if x
+        )
+        marks = list(
+            (
+                await self.db.execute(
+                    select(StaffAttendance).where(
+                        StaffAttendance.school_id == school_id,
+                        StaffAttendance.leave_request_id == row.id,
+                        StaffAttendance.status == "LEAVE",
+                    )
+                )
+            ).scalars()
+        )
+        removed = sorted(m.attendance_date for m in marks)
+        for m in marks:
+            await self.db.delete(m)
+        await self.db.flush()
+        await HrNotifier(self.db).to_employee(
+            school_id,
+            row.user_id,
+            kind="leave",
+            category=LEAVE_REJECTED,
+            title="Your approved leave was cancelled by HR",
+            body=f"{_leave_span(row)} · {data.reason}",
+            entity_id=row.id,
+            event="revoked",
+            actor=actor,
+        )
+        await hr_audit(
+            self.db,
+            school_id=school_id,
+            actor_id=actor,
+            action="hr.leave.revoked",
+            resource_type="staff_leave_request",
+            resource_id=row.id,
+            message=f"Approved leave {_leave_span(row)} cancelled",
+            details={"reason": data.reason, "attendance_marks_removed": removed},
+        )
+        return await self._leave_out(school_id, row.id)
 
     async def decide_staff_leave(
         self, school_id: UUID, leave_id: UUID, decided_by: UUID, data: StaffLeaveDecisionIn
@@ -196,12 +318,26 @@ class HRService:
             raise NotFoundError("Leave request not found")
         if row.status != "PENDING":
             raise AppError("Only PENDING requests can be decided", status_code=422)
-        row.status = data.decision.upper().strip()
+        if row.user_id == decided_by:
+            raise ForbiddenError("You cannot decide your own leave request")
+        decision = data.decision.upper().strip()
+        if decision == "APPROVED" and row.leave_type_id:
+            policy = LeavePolicyService(self.db)
+            await policy.assert_within_balance(
+                school_id,
+                row.user_id,
+                await policy.get_type(school_id, row.leave_type_id),
+                request_days(row),
+                row.start_date.year,
+                exclude_leave_id=row.id,
+            )
+        row.status = decision
         row.decided_by = decided_by
         row.decided_at = utcnow()
         row.decision_note = data.decision_note
         await self.db.flush()
         approved = row.status == "APPROVED"
+        marked, overwritten = (await self._apply_leave_to_attendance(row, decided_by)) if approved else ([], [])
         await HrNotifier(self.db).to_employee(
             school_id,
             row.user_id,
@@ -210,23 +346,102 @@ class HRService:
             title=f"Your leave request was {'approved' if approved else 'rejected'}",
             body=_leave_span(row) + (f" · {row.decision_note}" if row.decision_note else ""),
             entity_id=row.id,
+            event=decision.lower(),
             actor=decided_by,
         )
+        await hr_audit(
+            self.db,
+            school_id=school_id,
+            actor_id=decided_by,
+            action=f"hr.leave.{decision.lower()}",
+            resource_type="staff_leave_request",
+            resource_id=row.id,
+            message=f"Leave {_leave_span(row)} {decision.lower()}",
+            details={
+                "user_id": row.user_id,
+                "note": row.decision_note,
+                "attendance_marked_leave": marked,
+                "attendance_overwritten": overwritten,
+            },
+        )
         return await self._leave_out(school_id, row.id)
+
+    async def _apply_leave_to_attendance(
+        self, row: StaffLeaveRequest, actor: UUID
+    ) -> tuple[list[date], list[dict]]:
+        """Mark every working day of an approved leave as LEAVE for the employee.
+
+        Any earlier mark on those days is replaced (the replaced status is returned for the audit
+        trail); marks written here carry ``leave_request_id`` so cancelling the leave removes them.
+        """
+        try:
+            emp = await employee_for_user(self.db, row.school_id, row.user_id)
+        except ForbiddenError:
+            return [], []
+        days = await working_dates(self.db, row.school_id, row.start_date, row.end_date)
+        if not days:
+            return [], []
+        existing = {
+            rec.attendance_date: rec
+            for rec in (
+                await self.db.execute(
+                    select(StaffAttendance).where(
+                        StaffAttendance.employee_id == emp.id,
+                        StaffAttendance.attendance_date.in_(days),
+                    )
+                )
+            ).scalars()
+        }
+        overwritten = []
+        for d in days:
+            rec = existing.get(d)
+            if rec is None:
+                self.db.add(
+                    StaffAttendance(
+                        school_id=row.school_id,
+                        employee_id=emp.id,
+                        attendance_date=d,
+                        status="LEAVE",
+                        notes="On approved leave",
+                        marked_by=actor,
+                        leave_request_id=row.id,
+                    )
+                )
+                continue
+            if rec.status != "LEAVE":
+                overwritten.append({"date": d, "status": rec.status})
+            rec.status = "LEAVE"
+            rec.check_in = rec.check_out = None
+            rec.leave_request_id = row.id
+            rec.marked_by = actor
+        await self.db.flush()
+        return days, overwritten
 
     @staticmethod
     def _leave_query(school_id: UUID):
         decider = aliased(User)
+        resubmission = aliased(StaffLeaveRequest)
         return (
-            select(StaffLeaveRequest, User.full_name, _teacher_code(), Department.name, decider.full_name)
+            select(
+                StaffLeaveRequest,
+                User.full_name,
+                employee_code_expr(),
+                Department.name,
+                decider.full_name,
+                HrLeaveType.name,
+                HrLeaveType.is_paid,
+                resubmission.id,
+            )
             .outerjoin(User, User.id == StaffLeaveRequest.user_id)
             .outerjoin(
                 Teacher,
                 and_(Teacher.user_id == StaffLeaveRequest.user_id, Teacher.school_id == StaffLeaveRequest.school_id),
             )
-            .outerjoin(Employee, Employee.teacher_id == Teacher.id)
+            .outerjoin(Employee, employee_join(StaffLeaveRequest))
             .outerjoin(Department, Department.id == Employee.department_id)
             .outerjoin(decider, decider.id == StaffLeaveRequest.decided_by)
+            .outerjoin(HrLeaveType, HrLeaveType.id == StaffLeaveRequest.leave_type_id)
+            .outerjoin(resubmission, resubmission.resubmitted_from_id == StaffLeaveRequest.id)
             .where(StaffLeaveRequest.school_id == school_id)
             # updated_at is set server-side (onupdate) and expired by flush; reload it with the row,
             # since lazy-loading it during sync serialization raises MissingGreenlet.
@@ -244,6 +459,9 @@ class HRService:
         employee_code: str | None,
         department_name: str | None,
         decided_by_name: str | None,
+        leave_type_name: str | None = None,
+        leave_type_is_paid: bool | None = None,
+        resubmitted_as_id: UUID | None = None,
     ) -> StaffLeaveRequestOut:
         out = StaffLeaveRequestOut.model_validate(leave)
         out.staff_name = staff_name
@@ -251,6 +469,9 @@ class HRService:
         out.department_name = department_name
         out.decided_by_name = decided_by_name
         out.days = (leave.end_date - leave.start_date).days + 1
+        out.leave_type_name = leave_type_name
+        out.leave_type_is_paid = leave_type_is_paid
+        out.resubmitted_as_id = resubmitted_as_id
         return out
 
     # ── Payroll ───────────────────────────────────────────────
@@ -475,7 +696,14 @@ class HRService:
     async def list_my_payslips(
         self, school_id: UUID, user_id: UUID, *, year: int | None = None
     ) -> list[PayrollPayslipOut]:
-        teacher = await self._teacher_for_user(school_id, user_id)
+        teacher = (
+            await self.db.execute(
+                select(Teacher).where(Teacher.school_id == school_id, Teacher.user_id == user_id)
+            )
+        ).scalar_one_or_none()
+        if teacher is None:
+            # Payroll issues payslips to teacher records only; non-teaching staff have none yet.
+            return []
         stmt = self._payslip_query(school_id).where(
             PayrollPayslip.teacher_id == teacher.id,
             PayrollPayslip.status.in_(EMPLOYEE_VISIBLE_PAYSLIP_STATUSES),

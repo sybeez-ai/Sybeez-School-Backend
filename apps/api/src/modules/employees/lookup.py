@@ -32,6 +32,7 @@ class EmployeeBrief:
     joining_date: date | None
     title: str | None
     is_active: bool
+    exit_date: date | None = None
 
 
 def _brief_stmt(school_id: UUID) -> Select:
@@ -48,6 +49,7 @@ def _brief_stmt(school_id: UUID) -> Select:
             func.coalesce(Teacher.joining_date, Employee.joining_date),
             Teacher.title,
             employee_active_expr(),
+            Employee.exit_date,
         )
         .outerjoin(Teacher, Teacher.id == Employee.teacher_id)
         .outerjoin(User, User.id == Teacher.user_id)
@@ -58,7 +60,7 @@ def _brief_stmt(school_id: UUID) -> Select:
 
 
 def _row_to_brief(row) -> EmployeeBrief:
-    eid, name, code, dept, desig, staff_type, user_id, email, joined, title, active = (
+    eid, name, code, dept, desig, staff_type, user_id, email, joined, title, active, exited = (
         row
     )
     return EmployeeBrief(
@@ -73,6 +75,7 @@ def _row_to_brief(row) -> EmployeeBrief:
         joining_date=joined,
         title=title,
         is_active=bool(active),
+        exit_date=exited,
     )
 
 
@@ -118,7 +121,7 @@ async def list_employee_briefs(
 async def employee_for_user(
     db: AsyncSession, school_id: UUID, user_id: UUID
 ) -> EmployeeBrief:
-    """The signed-in user's own employee record (teachers today; 403 when there is none)."""
+    """The signed-in user's own employee record (teacher or linked staff login; 403 when there is none)."""
     await sync_teacher_employees(db, school_id)
     row = (
         await db.execute(

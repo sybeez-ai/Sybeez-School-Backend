@@ -102,6 +102,7 @@ def test_public_routes_are_only_health_and_auth_entry():
         "/api/v1/fees/health",
         "/api/v1/finance/health",
         "/api/v1/homework/health",
+        "/api/v1/hr/files/signed/{token}",
         "/api/v1/hr/health",
         "/api/v1/notes/health",
         "/api/v1/payments/webhook/{provider}",

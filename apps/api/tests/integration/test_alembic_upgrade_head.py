@@ -39,7 +39,7 @@ async def test_upgrade_head_on_empty_postgres():
         conn = await asyncpg.connect(user="sybeez", password="sybeez", host="127.0.0.1", database=name)
         try:
             versions = await conn.fetch("SELECT version_num FROM alembic_version")
-            assert [row["version_num"] for row in versions] == ["0050"]
+            assert [row["version_num"] for row in versions] == ["0052"]
             created_by = await conn.fetchval(
                 "SELECT 1 FROM information_schema.columns WHERE table_name = 'schools' AND column_name = 'created_by_id'"
             )

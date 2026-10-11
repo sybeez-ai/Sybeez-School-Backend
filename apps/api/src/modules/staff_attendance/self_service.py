@@ -35,6 +35,15 @@ class StaffSelfAttendance:
         self.user = user
         self.payroll = PayrollService(db, user)
 
+    async def _ensure(self, allowed: set[str], *, write: bool) -> None:
+        """HR role and hr.read / hr.manage grants, or the payroll attendance roles."""
+        from src.modules.hr.access import user_is_hr_admin
+
+        if await user_is_hr_admin(self.db, self.user, write=write):
+            await self.payroll._bind()
+            return
+        await self.payroll._allow(allowed)
+
     async def check_in(self, data: dict) -> dict:
         employee = await self.payroll._employee_for_user()
         await self.payroll._bind()
@@ -107,7 +116,7 @@ class StaffSelfAttendance:
         await self.payroll._bind()
         reason = require_text(data["reason"], max_len=2000, field="reason")
         if data.get("employee_id"):
-            await self.payroll._allow(ATTENDANCE_ADMIN)
+            await self._ensure(ATTENDANCE_ADMIN, write=True)
             employee = await self.payroll._employee(data["employee_id"])
         else:
             employee = await self.payroll._employee_for_user()
@@ -148,11 +157,11 @@ class StaffSelfAttendance:
         return await self._list(date_from, date_to, employee.id)
 
     async def list_school(self, date_from: date, date_to: date, employee_id: UUID | None) -> list[StaffAttendanceSession]:
-        await self.payroll._allow(ATTENDANCE_ADMIN | PREPARE)
+        await self._ensure(ATTENDANCE_ADMIN | PREPARE, write=False)
         return await self._list(date_from, date_to, employee_id)
 
     async def correct(self, session_id: UUID, data: dict) -> StaffAttendanceSession:
-        await self.payroll._allow(ATTENDANCE_ADMIN)
+        await self._ensure(ATTENDANCE_ADMIN, write=True)
         reason = require_text(data["reason"], max_len=2000, field="reason")
         row = await self.db.get(StaffAttendanceSession, session_id)
         if row is None or row.school_id != self.payroll.school_id:
@@ -210,7 +219,7 @@ class StaffSelfAttendance:
             await self.payroll._bind()
             employee_id = employee.id
         else:
-            await self.payroll._allow(ATTENDANCE_ADMIN)
+            await self._ensure(ATTENDANCE_ADMIN, write=False)
             employee_id = None
         stmt = select(StaffAttendanceRegularisation).where(
             StaffAttendanceRegularisation.school_id == self.payroll.school_id
@@ -220,7 +229,7 @@ class StaffSelfAttendance:
         return list((await self.db.execute(stmt.order_by(StaffAttendanceRegularisation.created_at.desc()))).scalars())
 
     async def decide_regularisation(self, item_id: UUID, approve: bool, note: str | None) -> StaffAttendanceRegularisation:
-        await self.payroll._allow(ATTENDANCE_ADMIN)
+        await self._ensure(ATTENDANCE_ADMIN, write=True)
         row = await self.db.get(StaffAttendanceRegularisation, item_id)
         if row is None or row.school_id != self.payroll.school_id:
             raise NotFoundError("Regularisation request not found")
@@ -262,7 +271,7 @@ class StaffSelfAttendance:
         return row
 
     async def lock_period(self, period_start: date, period_end: date, reason: str | None) -> dict:
-        await self.payroll._allow(ATTENDANCE_ADMIN | PREPARE)
+        await self._ensure(ATTENDANCE_ADMIN | PREPARE, write=True)
         if period_end < period_start:
             raise AppError("period_end must be on or after period_start", status_code=422)
         await self.payroll.ensure_settings()
