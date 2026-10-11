@@ -196,7 +196,7 @@ jobs:
           task-definition: ${{ steps.render-api.outputs.task-definition }}
           service: sybeez-school-api
           cluster: sybeez-school-cluster
-          wait-for-service-stability: true
+          wait-for-service-stability: false
 
       - name: Render worker task definition
         id: render-worker
@@ -212,7 +212,7 @@ jobs:
           task-definition: ${{ steps.render-worker.outputs.task-definition }}
           service: sybeez-school-worker
           cluster: sybeez-school-cluster
-          wait-for-service-stability: true
+          wait-for-service-stability: false
 
       - name: Ensure minimum desired counts
         env:
@@ -240,11 +240,21 @@ jobs:
               aws ecs update-service --cluster "$ECS_CLUSTER" --service "$service" \
                 --desired-count "$minimum" >/dev/null
             fi
-            # A desired count that is already high enough can still have zero running tasks.
-            set +e
-            aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$service"
-            stable=$?
-            set -e
+            # Desired count can already be high enough while every task is stopped.
+            stable=1
+            for _ in $(seq 1 24); do
+              read -r running pending desired <<<"$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$service" \
+                --query 'services[0].[runningCount,pendingCount,desiredCount]' --output text)"
+              echo "$service running=$running pending=$pending desired=$desired"
+              if [ "$running" -ge "$minimum" ] && [ "$pending" = "0" ]; then
+                set +e
+                aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$service"
+                stable=$?
+                set -e
+                break
+              fi
+              sleep 15
+            done
             if [ "$stable" -ne 0 ]; then
                 echo "$service did not stabilise"
                 aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$service" \
@@ -276,7 +286,6 @@ jobs:
                   fi
                 fi
                 exit "$stable"
-              fi
             fi
             after=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$service" \
               --query 'services[0].desiredCount' --output text)
