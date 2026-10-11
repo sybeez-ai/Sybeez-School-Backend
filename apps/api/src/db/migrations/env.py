@@ -18,7 +18,8 @@ target_metadata = Base.metadata
 # Migrations only need DATABASE_URL. The API's validate_runtime() also requires
 # Cognito, S3, and JWT, which the migrate task does not carry.
 settings = Settings()
-config.set_main_option("sqlalchemy.url", settings.database_url)
+# ConfigParser treats % as interpolation. RDS passwords are percent-encoded.
+config.set_main_option("sqlalchemy.url", settings.database_url.replace("%", "%%"))
 
 
 def _migration_ssl() -> bool:

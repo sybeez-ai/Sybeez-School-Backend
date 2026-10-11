@@ -43,3 +43,13 @@ def test_migrate_keeps_master_url_when_password_is_present():
         iam=True,
     )
     assert_master_url("postgresql+asyncpg://sybeez:sybeez@localhost/sybeez", iam=False)
+
+
+def test_alembic_config_accepts_a_percent_encoded_password():
+    from configparser import ConfigParser
+
+    raw = "postgresql+asyncpg://master:p%40ss@sybeez-school-db.example:5432/sybeez_school"
+    parser = ConfigParser()
+    parser.add_section("alembic")
+    parser.set("alembic", "sqlalchemy.url", raw.replace("%", "%%"))
+    assert parser.get("alembic", "sqlalchemy.url") == raw
