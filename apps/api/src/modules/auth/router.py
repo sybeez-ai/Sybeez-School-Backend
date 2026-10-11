@@ -197,6 +197,69 @@ async def update_me(
     )
 
 
+_HANDOFF_TTL = 60
+
+
+def safe_next_path(raw: str | None) -> str:
+    """Only same-site relative paths: blocks open redirects like //evil.com or /\\evil.com."""
+    if not raw or not raw.startswith("/") or raw.startswith("//") or "\\" in raw or "\n" in raw or "\r" in raw:
+        return "/"
+    return raw
+
+
+@router.post("/web-session/code")
+async def web_session_code(user: Annotated[CurrentUser, Depends(get_current_user)]):
+    """Mobile app: exchange the Bearer session for a one-time, 60s code that a WebView redeems
+    at GET /auth/web-session to receive the web portal's httpOnly cookies (no token in the URL)."""
+    code = secrets.token_urlsafe(32)
+    r = await get_redis()
+    await r.setex(
+        f"web_handoff:{code}",
+        _HANDOFF_TTL,
+        json.dumps(
+            {"user_id": str(user.id), "membership_id": str(user.membership_id) if user.membership_id else None},
+            separators=(",", ":"),
+        ),
+    )
+    return {"code": code, "expires_in": _HANDOFF_TTL, "redeem_path": "/api/v1/auth/web-session"}
+
+
+@router.get("/web-session")
+@public
+async def web_session_redeem(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    code: str = Query(..., min_length=16, max_length=128),
+    next: str | None = Query(default=None),
+):
+    """WebView lands here with a one-time code; sets auth cookies and redirects into the portal."""
+    from uuid import UUID
+
+    r = await get_redis()
+    key = f"web_handoff:{code}"
+    raw = await r.get(key)
+    if not raw:
+        raise UnauthorizedError("Sign-in link expired. Please try again from the app.")
+    await r.delete(key)
+    meta = json.loads(raw)
+    svc = AuthService(db)
+    user = await svc.repo.get_user(UUID(meta["user_id"]))
+    if user is None:
+        raise UnauthorizedError("Account not found")
+    membership = UUID(meta["membership_id"]) if meta.get("membership_id") else None
+    token = await svc._issue_session_for_user(user, membership_id=membership)
+    await db.commit()
+    if not token.access_token:
+        raise UnauthorizedError("Could not start a web session")
+    settings = get_settings()
+    response = RedirectResponse(
+        url=f"{settings.web_app_url.rstrip('/')}{safe_next_path(next)}", status_code=302
+    )
+    _attach(response, token)
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    return response
+
+
 @router.get("/cognito/google/start")
 @public
 async def cognito_google_start(

@@ -96,6 +96,7 @@ def test_public_routes_are_only_health_and_auth_entry():
         "/api/v1/auth/login",
         "/api/v1/auth/logout",
         "/api/v1/auth/refresh",
+        "/api/v1/auth/web-session",
         "/api/v1/bookstore/health",
         "/api/v1/communication/health",
         "/api/v1/diary/health",
