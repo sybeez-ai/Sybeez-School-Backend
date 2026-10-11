@@ -4,12 +4,12 @@ from uuid import UUID
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.dependencies import CurrentUser, require_roles, require_school_scope
+from src.api.dependencies import CurrentUser
 from src.core.database import get_db
 from src.core.exceptions import ForbiddenError
+from src.modules.access.deps import require_permission
 from src.modules.grades.schemas import GradeCreate, GradeOut
 from src.modules.grades.service import GradeService
-from src.shared.enums import UserRole
 
 router = APIRouter(prefix="/grades", tags=["grades"])
 
@@ -21,7 +21,7 @@ def _sid(u: CurrentUser) -> UUID:
 
 
 @router.get("", response_model=list[GradeOut])
-async def list_grades(db: Annotated[AsyncSession, Depends(get_db)], user: Annotated[CurrentUser, Depends(require_school_scope)]):
+async def list_grades(db: Annotated[AsyncSession, Depends(get_db)], user: Annotated[CurrentUser, Depends(require_permission("grades.read"))]):
     return await GradeService(db).list(_sid(user))
 
 
@@ -29,6 +29,6 @@ async def list_grades(db: Annotated[AsyncSession, Depends(get_db)], user: Annota
 async def create_grade(
     body: GradeCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    user: Annotated[CurrentUser, Depends(require_permission("grades.write"))],
 ):
     return await GradeService(db).create(_sid(user), body)

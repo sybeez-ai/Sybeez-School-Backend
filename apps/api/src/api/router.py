@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from src.core.constants import API_V1_PREFIX
+from src.modules.access.router import router as access_router
 from src.modules.academic_years.router import router as academic_years_router
 from src.modules.achievements.router import router as achievements_router
 from src.modules.ai_gateway.router import router as ai_gateway_router
@@ -45,6 +46,7 @@ api_router.include_router(health_router)
 api_router.include_router(internal_router)
 api_router.include_router(ai_gateway_router, prefix=API_V1_PREFIX)
 api_router.include_router(auth_router, prefix=API_V1_PREFIX)
+api_router.include_router(access_router, prefix=API_V1_PREFIX)
 api_router.include_router(platform_router, prefix=API_V1_PREFIX)
 api_router.include_router(schools_router, prefix=API_V1_PREFIX)
 api_router.include_router(users_router, prefix=API_V1_PREFIX)

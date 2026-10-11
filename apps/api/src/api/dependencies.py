@@ -2,13 +2,14 @@ from dataclasses import dataclass
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, Header
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.database import get_db
 from src.core.exceptions import ForbiddenError, UnauthorizedError
+from src.core.rls import apply_rls
 from src.core.security import decode_token
 from src.db.models import SchoolMembership, User
 from src.shared.enums import MembershipStatus, UserRole
@@ -71,6 +72,30 @@ def require_roles(*roles: UserRole):
         return user
 
     return _dep
+
+
+async def get_scoped_user(
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    x_school_id: Annotated[UUID | None, Header(alias="X-School-Id")] = None,
+) -> CurrentUser:
+    """Finalize the tenant from the token, then enable Postgres RLS for this transaction."""
+    if user.role == UserRole.PLATFORM_ADMIN:
+        if x_school_id:
+            user.school_id = x_school_id
+    else:
+        if user.school_id is None:
+            raise ForbiddenError("School context required")
+        if x_school_id and x_school_id != user.school_id:
+            raise ForbiddenError("Cross-tenant access denied")
+    await apply_rls(
+        db,
+        user_id=user.id,
+        school_id=user.school_id,
+        role=user.role.value,
+        membership_id=user.membership_id,
+    )
+    return user
 
 
 async def require_school_scope(

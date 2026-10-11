@@ -4,6 +4,13 @@ from uuid import UUID
 from pydantic import BaseModel, EmailStr, Field
 
 
+class StudentUpdate(BaseModel):
+    admission_no: str | None = Field(default=None, max_length=64)
+    date_of_birth: date | None = None
+    gender: str | None = Field(default=None, max_length=32)
+    status: str | None = Field(default=None, max_length=32)
+
+
 class StudentCreate(BaseModel):
     full_name: str = Field(min_length=2, max_length=200)
     email: EmailStr

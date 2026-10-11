@@ -12,6 +12,7 @@ from src.core.security import (
     verify_password,
 )
 from src.db.models import RefreshToken, SchoolMembership, User
+from src.modules.access.audit import write_audit
 from src.modules.auth.repository import AuthRepository, hash_token
 from src.modules.auth.schemas import AcceptInviteRequest, LoginRequest, TokenResponse
 from src.shared.enums import InvitationStatus, MembershipStatus, UserRole
@@ -142,6 +143,16 @@ class AuthService:
 
         inv.status = InvitationStatus.ACCEPTED.value
         inv.accepted_at = utcnow()
+        await write_audit(
+            self.db,
+            school_id=inv.school_id,
+            actor_id=user.id,
+            action="role.grant",
+            resource_type="membership",
+            resource_id=str(membership.id),
+            message=f"Accepted invitation as {inv.role}",
+            details={"email": inv.email, "role": inv.role, "invitation_id": str(inv.id), "status": "accepted"},
+        )
 
         role = UserRole(inv.role)
         access = create_access_token(

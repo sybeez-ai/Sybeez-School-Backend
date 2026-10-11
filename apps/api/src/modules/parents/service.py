@@ -1,20 +1,27 @@
+from __future__ import annotations
+
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.api.dependencies import CurrentUser
 from src.core.exceptions import NotFoundError
 from src.db.models import Parent, Student, StudentParent, User
+from src.modules.access.scope import restrict_students
 from src.modules.parents.schemas import LinkParentRequest, ParentCreate, ParentOut
 from src.modules.schools.provisioning import create_school_user
+from src.modules.students.schemas import StudentOut
 from src.shared.enums import UserRole
+from src.shared.listing import fetch_page
+from src.shared.pagination import PageParams
 
 
 class ParentService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def create(self, school_id: UUID, data: ParentCreate) -> ParentOut:
+    async def create(self, school_id: UUID, data: ParentCreate, actor_id: UUID | None = None) -> ParentOut:
         user, _ = await create_school_user(
             self.db,
             school_id=school_id,
@@ -22,6 +29,7 @@ class ParentService:
             full_name=data.full_name,
             password=data.password,
             role=UserRole.PARENT,
+            actor_id=actor_id,
         )
         parent = Parent(school_id=school_id, user_id=user.id, phone=data.phone)
         self.db.add(parent)
@@ -40,8 +48,9 @@ class ParentService:
             created_at=parent.created_at,
         )
 
-    async def list(self, school_id: UUID) -> list[ParentOut]:
-        result = await self.db.execute(select(Parent).where(Parent.school_id == school_id).order_by(Parent.created_at.desc()))
+    async def list(self, school_id: UUID, page: PageParams) -> tuple[list[ParentOut], int]:
+        stmt = select(Parent).where(Parent.school_id == school_id).order_by(Parent.created_at.desc())
+        result, total = await fetch_page(self.db, stmt, page)
         out = []
         for p in result.scalars().all():
             user = (await self.db.execute(select(User).where(User.id == p.user_id))).scalar_one()
@@ -54,6 +63,48 @@ class ParentService:
                     email=user.email,
                     phone=p.phone,
                     created_at=p.created_at,
+                )
+            )
+        return out, total
+
+    async def me(self, user: CurrentUser, school_id: UUID) -> ParentOut:
+        parent = (
+            await self.db.execute(select(Parent).where(Parent.user_id == user.id, Parent.school_id == school_id))
+        ).scalar_one_or_none()
+        if parent is None:
+            raise NotFoundError("Parent profile not found")
+        account = (await self.db.execute(select(User).where(User.id == parent.user_id))).scalar_one()
+        return ParentOut(
+            id=parent.id,
+            school_id=parent.school_id,
+            user_id=parent.user_id,
+            full_name=account.full_name,
+            email=account.email,
+            phone=parent.phone,
+            created_at=parent.created_at,
+        )
+
+    async def my_children(self, user: CurrentUser, school_id: UUID) -> list[StudentOut]:
+        parent = (
+            await self.db.execute(select(Parent).where(Parent.user_id == user.id, Parent.school_id == school_id))
+        ).scalar_one_or_none()
+        if parent is None:
+            raise NotFoundError("Parent profile not found")
+        stmt = restrict_students(select(Student).where(Student.school_id == school_id), user, school_id)
+        students = list((await self.db.execute(stmt)).scalars().all())
+        out = []
+        for student in students:
+            account = (await self.db.execute(select(User).where(User.id == student.user_id))).scalar_one()
+            out.append(
+                StudentOut(
+                    id=student.id,
+                    school_id=student.school_id,
+                    user_id=student.user_id,
+                    full_name=account.full_name,
+                    email=account.email,
+                    admission_no=student.admission_no,
+                    date_of_birth=student.date_of_birth,
+                    created_at=student.created_at,
                 )
             )
         return out

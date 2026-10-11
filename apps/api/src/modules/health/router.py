@@ -2,16 +2,19 @@ import httpx
 from fastapi import APIRouter
 
 from src.core.config import get_settings
+from src.modules.access.deps import public
 
 router = APIRouter(tags=["health"])
 
 
 @router.get("/health")
+@public
 async def health():
     return {"status": "ok", "service": "sybeez-api"}
 
 
 @router.get("/ready")
+@public
 async def ready():
     settings = get_settings()
     ai_url = f"{settings.ai_service_url.rstrip('/')}/api/v1/ai/health"

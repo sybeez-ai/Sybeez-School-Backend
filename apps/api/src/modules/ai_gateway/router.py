@@ -5,11 +5,15 @@ Frontend may call AI directly (NEXT_PUBLIC_AI_API_URL) or via Core:
 """
 
 import httpx
-from fastapi import APIRouter, Request, Response
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import StreamingResponse
 
+from src.api.dependencies import CurrentUser
 from src.core.config import get_settings
 from src.core.exceptions import UpstreamError
+from src.modules.access.deps import require_permission
 
 router = APIRouter(prefix="/ai", tags=["ai-gateway"])
 
@@ -37,7 +41,11 @@ def _forward_headers(request: Request) -> dict[str, str]:
 
 
 @router.api_route("/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
-async def proxy_to_ai(path: str, request: Request) -> Response:
+async def proxy_to_ai(
+    path: str,
+    request: Request,
+    _: Annotated[CurrentUser, Depends(require_permission("ai.use"))],
+) -> Response:
     settings = get_settings()
     target = f"{settings.ai_service_url.rstrip('/')}/api/v1/ai/{path}"
     if request.url.query:

@@ -1,8 +1,10 @@
-from fastapi import APIRouter
+from src.modules.homework.router import build_work_router
 
-router = APIRouter(prefix="/assignments", tags=["assignments"])
-
-
-@router.get("/health")
-async def assignments_health():
-    return {"module": "assignments", "status": "ok"}
+router = build_work_router(
+    prefix="/assignments",
+    tag="assignments",
+    read="assignments.read",
+    write="assignments.write",
+    submit="assignments.submit",
+    grade="assignments.grade",
+)
