@@ -239,11 +239,13 @@ jobs:
             if [ "$current" -lt "$minimum" ]; then
               aws ecs update-service --cluster "$ECS_CLUSTER" --service "$service" \
                 --desired-count "$minimum" >/dev/null
-              set +e
-              aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$service"
-              stable=$?
-              set -e
-              if [ "$stable" -ne 0 ]; then
+            fi
+            # A desired count that is already high enough can still have zero running tasks.
+            set +e
+            aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$service"
+            stable=$?
+            set -e
+            if [ "$stable" -ne 0 ]; then
                 echo "$service did not stabilise"
                 aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$service" \
                   --query 'services[0].{desired:desiredCount,running:runningCount,pending:pendingCount,events:events[:8].message}' \
