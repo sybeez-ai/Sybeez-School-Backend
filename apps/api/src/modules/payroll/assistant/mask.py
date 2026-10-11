@@ -14,6 +14,8 @@ _SENSITIVE_KEYS = {
     "beneficiary_account_number",
     "bene_acc_no",
 }
+# Signed download links are capability URLs. Digit runs inside them are not account numbers.
+_CLEARTEXT_KEYS = {"url", "route"}
 
 
 def mask_pan(value: str) -> str:
@@ -40,7 +42,9 @@ def mask_payload(value):
         masked = {}
         for key, item in value.items():
             name = str(key).lower()
-            if name in _SENSITIVE_KEYS and isinstance(item, str):
+            if name in _CLEARTEXT_KEYS:
+                masked[key] = item
+            elif name in _SENSITIVE_KEYS and isinstance(item, str):
                 masked[key] = mask_pan(item) if name == "pan" else mask_account(item)
             else:
                 masked[key] = mask_payload(item)

@@ -39,7 +39,7 @@ async def test_upgrade_head_on_empty_postgres():
         conn = await asyncpg.connect(user="sybeez", password="sybeez", host="127.0.0.1", database=name)
         try:
             version = await conn.fetchval("SELECT version_num FROM alembic_version")
-            assert version == "0042"
+            assert version == "0043"
             created_by = await conn.fetchval(
                 "SELECT 1 FROM information_schema.columns WHERE table_name = 'schools' AND column_name = 'created_by_id'"
             )
@@ -68,6 +68,14 @@ async def test_upgrade_head_on_empty_postgres():
                 "SELECT relforcerowsecurity FROM pg_class WHERE relname = 'payroll_assistant_actions'"
             )
             assert assistant is True
+            imports = await conn.fetchval(
+                "SELECT relforcerowsecurity FROM pg_class WHERE relname = 'payroll_assistant_imports'"
+            )
+            assert imports is True
+            opening = await conn.fetchval(
+                "SELECT relforcerowsecurity FROM pg_class WHERE relname = 'payroll_opening_ytd'"
+            )
+            assert opening is True
         finally:
             await conn.close()
     finally:

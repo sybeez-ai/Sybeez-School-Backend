@@ -31,6 +31,20 @@ def plan_local(messages: list[dict]) -> list[ToolCall]:
             break
     lower = text.lower()
     found = find_uuid(text)
+    if any(word in lower for word in ("download", "export")):
+        kind = _report_kind(lower)
+        if kind:
+            arguments: dict = {"kind": kind}
+            if found and kind == "payslip":
+                arguments["payslip_id"] = found
+            elif found and kind == "form16":
+                arguments["employee_id"] = found
+            elif found:
+                arguments["run_id"] = found
+            year = re.search(r"\b(20\d{2}-\d{2})\b", text)
+            if year and kind == "form16":
+                arguments["financial_year"] = year.group(1)
+            return [ToolCall("get_report", arguments)]
     if any(word in lower for word in ("pending", "waiting for approval", "approvals")):
         return [ToolCall("list_pending", {})]
     if any(word in lower for word in ("statutory", "dues", "provident fund due", "esi due")):
@@ -119,12 +133,45 @@ def summarize(outcomes: list[dict]) -> str:
             bits.append("Here is how that payslip was calculated.")
         elif item["name"] == "get_employee_pay":
             bits.append("Here is the latest pay I can see for that employee.")
+        elif item["name"] == "get_report":
+            bits.append("The download link is ready and expires in a few minutes.")
     if bits:
         return " ".join(bits)
     return (
         "I can look up an employee, a pay run, a payslip, or statutory dues. "
+        "I can prepare a report download. "
         "I can also prepare a change, and I will wait for you to confirm it."
     )
+
+
+def _report_kind(lower: str) -> str | None:
+    if "audit" in lower:
+        return "audit"
+    if "salary register" in lower or "register" in lower:
+        return "register"
+    if "bank" in lower:
+        return "bank"
+    if "ecr" in lower or ("provident" in lower and "file" in lower):
+        return "pf_ecr"
+    if "form 16" in lower or "form16" in lower:
+        return "form16"
+    if "payslip" in lower and "zip" in lower:
+        return "payslips_zip"
+    if "24q" in lower or "tds" in lower:
+        return "tds_24q"
+    if "professional tax" in lower or re.search(r"\bpt\b", lower):
+        return "pt"
+    if "esi" in lower:
+        return "esi"
+    if "reimburse" in lower:
+        return "reimbursements"
+    if "arrear" in lower:
+        return "arrears"
+    if "loan" in lower:
+        return "loans"
+    if "payslip" in lower:
+        return "payslip"
+    return None
 
 
 def sse(event: str, data: dict) -> str:

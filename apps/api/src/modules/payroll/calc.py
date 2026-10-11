@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import ast
 import calendar
+import re
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
@@ -258,6 +259,16 @@ class TdsInput:
     new_slabs: tuple[TaxSlab, ...] = NEW_REGIME_SLABS
     old_slabs: tuple[TaxSlab, ...] = OLD_REGIME_SLABS
     rounding: str = "NEAREST_RUPEE"
+    prior_gross: Decimal = ZERO
+    prior_tds: Decimal = ZERO
+    months_remaining: int = 12
+
+
+def fy_months_remaining(day: date) -> int:
+    """Months left in the financial year, counting the month of `day`."""
+    if day.month >= 4:
+        return 16 - day.month
+    return 4 - day.month
 
 
 @dataclass(frozen=True)
@@ -287,12 +298,25 @@ def hra_exemption(*, annual_hra: Decimal, annual_basic: Decimal, annual_rent: De
 
 
 def tds(spec: TdsInput) -> TdsResult:
-    """Project this month across the year. One-time arrears are taxed once, not times twelve."""
+    """Project this month across the year. One-time arrears are taxed once, not times twelve.
+
+    Opening year-to-date gross is added once, and TDS already paid is taken off
+    the tax still to collect. With no opening figures this is still the month times twelve.
+    """
     regime = "OLD" if spec.regime.upper() == "OLD" else "NEW"
-    annual_gross = D(spec.monthly_taxable_earnings) * 12 + D(spec.one_time_taxable)
+    prior_gross = D(spec.prior_gross)
+    prior_paid = D(spec.prior_tds)
+    span = 12
+    if prior_gross != 0 or prior_paid != 0:
+        span = int(spec.months_remaining or 12)
+        if span < 1:
+            span = 1
+        if span > 12:
+            span = 12
+    annual_gross = D(spec.monthly_taxable_earnings) * span + D(spec.one_time_taxable) + prior_gross
     std = D(spec.standard_deduction_old if regime == "OLD" else spec.standard_deduction_new)
-    annual_basic = D(spec.monthly_basic) * 12
-    annual_hra = D(spec.monthly_hra) * 12
+    annual_basic = D(spec.monthly_basic) * span
+    annual_hra = D(spec.monthly_hra) * span
     exempt_hra = ZERO
     chapter = ZERO
     pt_annual = ZERO
@@ -303,10 +327,10 @@ def tds(spec: TdsInput) -> TdsResult:
             annual_rent=D(spec.annual_rent),
             metro=spec.metro,
         )
-        pf_annual = D(spec.monthly_employee_pf) * 12
+        pf_annual = D(spec.monthly_employee_pf) * span
         chapter_raw = pf_annual + D(spec.declared_80c) + D(spec.declared_80d) + D(spec.other_chapter_vi)
         chapter = min(chapter_raw, D(spec.chapter_vi_cap))
-        pt_annual = D(spec.monthly_pt) * 12
+        pt_annual = D(spec.monthly_pt) * span
     taxable = annual_gross - std - exempt_hra - chapter - pt_annual
     if taxable < 0:
         taxable = ZERO
@@ -318,6 +342,9 @@ def tds(spec: TdsInput) -> TdsResult:
         tax = ZERO
     cess = tax * _rate(spec.cess_rate)
     annual = tax + cess
+    remaining = annual - prior_paid
+    if remaining < 0:
+        remaining = ZERO
     return TdsResult(
         regime=regime,
         annual_gross=round_money(annual_gross, "PAISE"),
@@ -329,7 +356,7 @@ def tds(spec: TdsInput) -> TdsResult:
         tax_before_cess=round_money(tax, spec.rounding),
         cess=round_money(cess, spec.rounding),
         annual_tax=round_money(annual, spec.rounding),
-        monthly_tds=round_money(annual / 12, spec.rounding),
+        monthly_tds=round_money(remaining / span, spec.rounding),
         rebate_applied=rebate or (taxable <= limit),
     )
 
@@ -608,6 +635,8 @@ class PayContext:
     extra_deductions: Decimal = ZERO
     employee_name: str = ""
     pan: str | None = None
+    prior_gross: Decimal = ZERO
+    prior_tds: Decimal = ZERO
 
 
 def compute_pay(ctx: PayContext) -> PayResult:
@@ -723,6 +752,9 @@ def compute_pay(ctx: PayContext) -> PayResult:
             other_chapter_vi=ctx.other_chapter_vi,
             one_time_taxable=D(ctx.arrears) + D(ctx.bonus),
             rounding=ctx.rounding,
+            prior_gross=ctx.prior_gross,
+            prior_tds=ctx.prior_tds,
+            months_remaining=fy_months_remaining(ctx.period_end) if D(ctx.prior_gross) or D(ctx.prior_tds) else 12,
         )
     )
     if D(ctx.arrears) > 0:
@@ -787,6 +819,20 @@ def compute_pay(ctx: PayContext) -> PayResult:
 def financial_year_label(day: date) -> str:
     start = day.year if day.month >= 4 else day.year - 1
     return f"{start}-{(start + 1) % 100:02d}"
+
+
+def canonical_financial_year(value: str) -> str:
+    """Accept `2026-27` or `2026-2027` and return the label used on payslips."""
+    text = (value or "").strip()
+    match = re.fullmatch(r"(\d{4})-(\d{2}|\d{4})", text)
+    if not match:
+        raise ValueError("financial_year must look like 2026-27")
+    start = int(match.group(1))
+    end = match.group(2)
+    short = f"{(start + 1) % 100:02d}"
+    if (len(end) == 2 and end != short) or (len(end) == 4 and int(end) != start + 1):
+        raise ValueError("financial_year must look like 2026-27")
+    return f"{start}-{short}"
 
 
 def statutory_bonus(

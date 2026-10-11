@@ -6,7 +6,7 @@ Salary is calculated the day the period's staff attendance is locked, including 
 
 ## Merge order
 
-This branch adds Alembic revision `0040` (`0040_payroll_production.py`, `down_revision = 0035`), revision `0041` (`0041_payroll_daily.py`, `down_revision = 0040`), and revision `0042` (`0042_payroll_assistant.py`, `down_revision = 0041`). Land them on `HRM` after `0035`. `alembic upgrade head` on an empty Postgres 16 database applies `0001` through `0042`.
+This branch adds Alembic revision `0040` (`0040_payroll_production.py`, `down_revision = 0035`), revision `0041` (`0041_payroll_daily.py`, `down_revision = 0040`), revision `0042` (`0042_payroll_assistant.py`, `down_revision = 0041`), and revision `0043` (`0043_payroll_assistant_import.py`, `down_revision = 0042`). Land them on `HRM` after `0035`. `alembic upgrade head` on an empty Postgres 16 database applies `0001` through `0043`.
 
 Finance PR #1 uses revision ids `0028`, `0029`, and `0030` for different files than HRM's `0028_hr_integrity`, `0029_hr_employees`, and `0030_hr_departments`. Do not reuse those ids. When finance merges, renumber its revisions so they are not `0028`–`0035` or `0040`, then point `0040` at the new head if finance must run first. If the `sybeez_definer` role exists at upgrade time, payroll `SECURITY DEFINER` functions are altered to that owner.
 
@@ -135,7 +135,7 @@ Prefix `/api/v1`. Errors are `{ "error": { "code", "message" } }`. Money is a de
 | GET | `/payroll/payslips/me?year` |  | Own published or paid payslips |
 | GET | `/payroll/payslips/{id}/pdf?intent=view\|download` |  | PDF. `intent=view` increments `view_count` for the owner. `download` increments `download_count`. |
 | GET | `/payroll/notifications?limit` |  | The caller's payslip notifications for this school only: `{ id, title, body, category, link_path, is_read, created_at, payslip_id }` |
-| GET | `/payroll/form16/me?financial_year` |  | Form 16 data, `YYYY-YYYY` |
+| GET | `/payroll/form16/me?financial_year` |  | Form 16 data. `2026-27` or `2026-2027` |
 | GET | `/payroll/form16/me/pdf?financial_year` |  | Form 16 PDF |
 | GET | `/payroll/form16/{employee_id}?financial_year` |  | Same data for one employee |
 | GET | `/payroll/form16/{employee_id}/pdf?financial_year` |  | Form 16 PDF for one employee |
@@ -220,7 +220,7 @@ Both assistant routes use the payroll rate limit and a separate assistant limit 
 | `error` | `{ message }` |
 | `done` | `{}` |
 
-Read tools: `search_employee`, `get_employee_pay`, `get_run_status`, `list_pending`, `explain_payslip`, `get_statutory_dues`.
+Read tools: `search_employee`, `get_employee_pay`, `get_run_status`, `list_pending`, `explain_payslip`, `get_statutory_dues`, `get_report`.
 
 Navigation tools return these routes:
 
@@ -239,3 +239,51 @@ Navigation tools return these routes:
 Write tools (`submit_run`, `approve_run`, `reject_run`, `cancel_run`, `lock_run`, `recalculate_run`, `retry_failed_payments`, `decide_reimbursement`) insert a `PROPOSED` row in `payroll_assistant_actions` and return a proposal. They do not change the run.
 
 `POST /payroll/assistant/confirm` body `{ proposal_id, idempotency_key }`. The key is 8–80 characters, letters, digits, and `_. :-`. The same key and proposal returns the stored result and does not run the action again. A key already used for a different proposal is a conflict. Confirm calls the same service method as the REST route, so the role check runs again. Migration `0042` forces row level security on `payroll_assistant_actions`.
+
+### Importing a pay sheet
+
+`POST /payroll/assistant/import` is multipart. The file field is `file` (xlsx, xls, csv, or pdf, up to 5 MB and 2,000 data rows). Optional form fields are `financial_year` (`2026-27` or `2026-2027`; stored as `2026-27`) and `effective_from` (`YYYY-MM-DD`). Sources are Tally pay sheets (including HTML saved as `.xls`), salary registers, and employee or bank lists.
+
+Headers are mapped with a fixed synonym list (for example `Name of Employee`, `Employee No.`, `PAN`, `A/c No.`, `IFS Code`, `Basic Salary`, `House Rent Allowance`, `Dearness Allowance`, `YTD Earnings`, `YTD TDS`). When `PAYROLL_ASSISTANT_PROVIDER` is `openai` or `ai_service`, unknown headers are sent to that model. A suggestion is kept only when it names an allow-listed field or a salary component that already exists for the school. `BASIC`, `HRA`, and `DA` are always known. Monthly `PF`, `ESI`, `PT`, `TDS`, `Gross`, and `Net` columns are ignored. Every cell is then checked in code. The model never decides that a row is valid.
+
+The response is a preview:
+
+| Field | Meaning |
+| --- | --- |
+| `id` | Preview id |
+| `accepted` | Rows that will be created or updated |
+| `rejected` | Rows that will not be imported. Each item has `row`, `employee_code`, `field`, `reason`, and `value` |
+| `counts` | Accepted rows, and rejected rows |
+| `mapping` | Header to field |
+
+`reason` is one of `missing PAN`, `invalid IFSC`, `unknown component: {header}`, `unreadable cell: {header}`, `duplicate code`, `missing employee code`, or `missing employee name`. PAN and account numbers in this JSON are masked. The preview row stored for confirm keeps the real values.
+
+Nothing in payroll is written by the preview: no employee, statutory profile, bank account, salary assignment, or opening year-to-date row. The preview itself is stored in `payroll_assistant_imports` and audited as `assistant.import.preview`, which is what confirm reads.
+
+`POST /payroll/assistant/import/{id}/confirm` body `{ idempotency_key }` uses the same key rules as assistant confirm. It applies every accepted row in one transaction: non-teaching employees (an existing teaching name is left as it is), statutory profile, primary bank account, one salary template for the file, a salary assignment effective on `effective_from` with rupee overrides and no arrears, and `payroll_opening_ytd` for that financial year. An amount-only override is paid as a fixed rupee amount, including HRA and DA. If a component disappeared after the preview, the confirm fails and writes nothing. The same key returns the stored result. A different import using that key is a conflict. Confirm is audited as `assistant.import.confirm`. An all-rejected file confirms with zero creates.
+
+`GET /payroll/assistant/import/{id}/rejects.csv` returns `row,employee_code,field,reason,value`. PAN and account numbers in the file are masked. The caller must be allowed to change payroll settings, which is the same role as the upload.
+
+Import routes use both payroll rate limits. Migration `0043` forces row level security on `payroll_assistant_imports` and `payroll_opening_ytd`.
+
+Opening year-to-date gross is added to Form 16, and opening TDS is included in `tds_deducted`. The next pay run adds that gross once and reduces the remaining monthly TDS by the tax already paid. A run with no opening figures is unchanged.
+
+### Report downloads
+
+`get_report` is a read tool, not a proposal. Arguments are `kind` plus `run_id` or `period_start` and `period_end`. `payslip` also needs `payslip_id`. `form16` takes `financial_year` and an optional `employee_id`.
+
+| `kind` | File | Who can ask |
+| --- | --- | --- |
+| `payslip` | One payslip PDF | The same people who can open that payslip |
+| `payslips_zip` | Zip of the run's payslips | Prepare |
+| `bank` | Bank file. Pending payments are marked exported, same as the bank export route | Prepare |
+| `pf_ecr` | PF ECR text | Prepare |
+| `esi` | ESI challan CSV | Read |
+| `pt` | Professional tax CSV | Read |
+| `tds_24q` | TDS 24Q CSV | Read |
+| `form16` | Form 16 PDF | Read, or the employee's own form |
+| `register` | Salary register CSV | Read |
+| `audit` | Audit log CSV. Reasons are masked | Audit read |
+| `loans`, `arrears`, `reimbursements` | The existing CSV exports | Prepare |
+
+The tool result is `{ kind, filename, expires_in, url }`. `expires_in` is 600 seconds. When `S3_BUCKET` is set the URL is an S3 presigned GET. Otherwise it is `GET /payroll/assistant/downloads/{token}`, signed with the API secret, and that GET does not use a bearer token. Permission is checked when the link is created. The link is audited as `assistant.tool.get_report`. A local planner phrase such as "download the salary register" or "download the audit log" selects this tool.

@@ -562,23 +562,23 @@ async def payslip_notifications(user: User, db: Db, response: Response, page: Pa
 
 
 @router.get("/form16/me")
-async def my_form16(user: User, db: Db, financial_year: str = Query(min_length=9, max_length=9)):
+async def my_form16(user: User, db: Db, financial_year: str = Query(min_length=7, max_length=9)):
     return await _svc(db, user).form16(None, financial_year)
 
 
 @router.get("/form16/me/pdf")
-async def my_form16_pdf(user: User, db: Db, financial_year: str = Query(min_length=9, max_length=9)):
+async def my_form16_pdf(user: User, db: Db, financial_year: str = Query(min_length=7, max_length=9)):
     content, name = await _svc(db, user).form16_pdf(None, financial_year)
     return RawResponse(content=content, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
 @router.get("/form16/{employee_id}")
-async def employee_form16(employee_id: UUID, user: User, db: Db, financial_year: str = Query(min_length=9, max_length=9)):
+async def employee_form16(employee_id: UUID, user: User, db: Db, financial_year: str = Query(min_length=7, max_length=9)):
     return await _svc(db, user).form16(employee_id, financial_year)
 
 
 @router.get("/form16/{employee_id}/pdf")
-async def employee_form16_pdf(employee_id: UUID, user: User, db: Db, financial_year: str = Query(min_length=9, max_length=9)):
+async def employee_form16_pdf(employee_id: UUID, user: User, db: Db, financial_year: str = Query(min_length=7, max_length=9)):
     content, name = await _svc(db, user).form16_pdf(employee_id, financial_year)
     return RawResponse(content=content, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{name}"'})
 

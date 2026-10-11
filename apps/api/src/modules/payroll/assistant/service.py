@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from src.core.exceptions import AppError, ConflictError, ForbiddenError, NotFoundError
 from src.db.models import Employee, PayrollAssistantAction, PayrollPayslip, PayrollPayslipLine, PayrollRun, Teacher, User
 from src.modules.payroll.assistant.catalog import NAV_TOOLS, READ_TOOLS, WRITE_TOOLS, parse_uuid, route_for
+from src.modules.payroll.assistant.downloads import get_report
 from src.modules.payroll.assistant.llm import assistant_settings, phrase_with_model, plan_with_model
 from src.modules.payroll.assistant.mask import mask_payload, redact_text
 from src.modules.payroll.assistant.planner import ToolCall, plan_local, sse, summarize
@@ -189,6 +190,8 @@ class PayrollAssistant:
             return await self._explain(arguments.get("payslip_id"))
         if name == "get_statutory_dues":
             return await self.dashboard.statutory(None, None)
+        if name == "get_report":
+            return await get_report(self.payroll, arguments)
         raise AppError("Unknown read", status_code=422)
 
     async def _search(self, query: str) -> dict:

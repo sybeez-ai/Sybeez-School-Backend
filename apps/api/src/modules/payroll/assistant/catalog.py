@@ -14,6 +14,7 @@ READ_TOOLS = (
     "list_pending",
     "explain_payslip",
     "get_statutory_dues",
+    "get_report",
 )
 
 NAV_TOOLS = {

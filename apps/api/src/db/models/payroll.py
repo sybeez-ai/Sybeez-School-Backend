@@ -499,6 +499,64 @@ class PayrollAssistantAction(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     result: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
 
+class PayrollAssistantImport(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """A parsed pay sheet. Payroll rows are written only after confirm."""
+
+    __tablename__ = "payroll_assistant_imports"
+    __table_args__ = (
+        CheckConstraint(_in("status", ("PREVIEW", "IMPORTED")), name="assistant_import_status"),
+        Index(
+            "uq_payroll_assistant_import_idempotency",
+            "school_id",
+            "user_id",
+            "idempotency_key",
+            unique=True,
+            postgresql_where=text("idempotency_key IS NOT NULL"),
+        ),
+    )
+
+    school_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(120), nullable=False, default="application/octet-stream")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="PREVIEW")
+    mapping: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    preview: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    idempotency_key: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    result: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
+
+class PayrollOpeningYtd(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """Figures already paid this financial year before the school started on this payroll."""
+
+    __tablename__ = "payroll_opening_ytd"
+    __table_args__ = (
+        UniqueConstraint("employee_id", "financial_year", name="uq_opening_ytd_employee_fy"),
+        ForeignKeyConstraint(
+            ["employee_id", "school_id"],
+            ["employees.id", "employees.school_id"],
+            name="fk_opening_ytd_employee_school",
+            ondelete="CASCADE",
+        ),
+    )
+
+    school_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    employee_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    financial_year: Mapped[str] = mapped_column(String(9), nullable=False)
+    ytd_gross: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=Decimal("0"))
+    ytd_tds: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=Decimal("0"))
+    ytd_pf: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=Decimal("0"))
+    ytd_esi: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=Decimal("0"))
+    ytd_pt: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=Decimal("0"))
+    source: Mapped[str] = mapped_column(String(32), nullable=False, default="IMPORT")
+
+
 class PayrollAuditLog(Base, UUIDPrimaryKeyMixin):
     __tablename__ = "payroll_audit_logs"
 

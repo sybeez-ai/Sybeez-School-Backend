@@ -40,6 +40,28 @@ def put_object(*, key: str, data: bytes, content_type: str | None = None) -> str
     return cleaned
 
 
+def read_object(key: str) -> bytes:
+    """Read bytes previously stored with put_object."""
+    cleaned = key.lstrip("/")
+    if not cleaned or ".." in cleaned.split("/"):
+        raise ValueError("Invalid object key")
+    settings = get_settings()
+    bucket = (settings.s3_bucket or "").strip()
+    if bucket:
+        import boto3
+
+        client = boto3.client("s3", region_name=settings.s3_region or None)
+        try:
+            response = client.get_object(Bucket=bucket, Key=cleaned)
+        except Exception as exc:  # noqa: BLE001
+            raise FileNotFoundError(cleaned) from exc
+        return response["Body"].read()
+    path = _MEDIA_ROOT / cleaned
+    if not path.is_file():
+        raise FileNotFoundError(cleaned)
+    return path.read_bytes()
+
+
 def public_url(key: str | None) -> str | None:
     """HTTPS URL when a bucket or public base is configured. Otherwise the key."""
     if not key:

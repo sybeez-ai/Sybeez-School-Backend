@@ -60,6 +60,13 @@ def emi_schedule(*, balance: Decimal, emi: Decimal, annual_rate: Decimal, start:
     return rows
 
 
+def assignment_calc(calc_type: str, raw) -> str:
+    """An amount-only override is a rupee figure, even when the component is a percent of basic."""
+    if isinstance(raw, dict) and raw.get("amount") is not None and raw.get("percent") is None:
+        return "FIXED"
+    return calc_type
+
+
 def validate_component_fields(
     *,
     kind: str,

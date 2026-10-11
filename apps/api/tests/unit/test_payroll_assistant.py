@@ -17,6 +17,10 @@ def test_openapi_includes_assistant_routes():
     paths = client.get("/openapi.json").json()["paths"]
     assert "/api/v1/payroll/assistant/chat" in paths
     assert "/api/v1/payroll/assistant/confirm" in paths
+    assert "/api/v1/payroll/assistant/import" in paths
+    assert "/api/v1/payroll/assistant/import/{import_id}/confirm" in paths
+    assert "/api/v1/payroll/assistant/import/{import_id}/rejects.csv" in paths
+    assert "/api/v1/payroll/assistant/downloads/{token}" in paths
     assert "text/event-stream" in paths["/api/v1/payroll/assistant/chat"]["post"]["responses"]["200"]["content"]
 
 

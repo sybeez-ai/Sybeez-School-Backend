@@ -19,7 +19,11 @@ _SECRET: dict | None = None
 def tool_specs() -> list[dict]:
     specs = []
     for name in READ_TOOLS:
-        specs.append(_spec(name, "Read payroll data for the signed-in school. Do not invent figures."))
+        if name == "get_report":
+            text = "Return a short-lived download URL for a payroll report the signed-in user is allowed to open."
+        else:
+            text = "Read payroll data for the signed-in school. Do not invent figures."
+        specs.append(_spec(name, text))
     for name, (path, label) in NAV_TOOLS.items():
         specs.append(_spec(name, f"Ask the frontend to open {label} at {path}. This does not change data."))
     for name in WRITE_TOOLS:
@@ -28,6 +32,41 @@ def tool_specs() -> list[dict]:
 
 
 def _spec(name: str, description: str) -> dict:
+    if name == "get_report":
+        properties = {
+            "kind": {
+                "type": "string",
+                "enum": [
+                    "payslip",
+                    "payslips_zip",
+                    "bank",
+                    "pf_ecr",
+                    "esi",
+                    "pt",
+                    "tds_24q",
+                    "form16",
+                    "register",
+                    "audit",
+                    "loans",
+                    "arrears",
+                    "reimbursements",
+                ],
+            },
+            "run_id": {"type": "string"},
+            "payslip_id": {"type": "string"},
+            "employee_id": {"type": "string"},
+            "financial_year": {"type": "string"},
+            "period_start": {"type": "string"},
+            "period_end": {"type": "string"},
+        }
+        return {
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": description,
+                "parameters": {"type": "object", "properties": properties, "additionalProperties": False},
+            },
+        }
     properties: dict = {}
     if "employee" in name and name != "search_employee":
         properties["employee_id"] = {"type": "string"}
@@ -187,6 +226,55 @@ def _content(message: dict) -> str:
     if isinstance(content, list):
         return " ".join(str(part.get("text") or "") for part in content if isinstance(part, dict)).strip()
     return str(content or "").strip()
+
+
+def _json_object(text: str) -> dict:
+    raw = (text or "").strip()
+    if raw.startswith("```"):
+        raw = raw.strip("`")
+        if raw.lower().startswith("json"):
+            raw = raw[4:]
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start < 0 or end <= start:
+        return {}
+    try:
+        parsed = json.loads(raw[start : end + 1])
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+async def map_headers_with_model(headers: list[str], allow: list[str], resolved: dict) -> dict[str, str]:
+    """Ask the configured model which unknown headers match the allow-list. Local mode maps nothing."""
+    if not headers or resolved.get("provider") == "local":
+        return {}
+    messages = [
+        {
+            "role": "user",
+            "content": (
+                "Map these payroll column headers onto the allow-list. "
+                "Reply with a JSON object whose keys are the headers and whose values are allow-list entries. "
+                "Omit a header when none fits. Do not invent fields.\n"
+                f"Allow-list: {', '.join(allow)}\n"
+                f"Headers: {json.dumps(headers)}"
+            ),
+        }
+    ]
+    try:
+        if resolved["provider"] == "openai":
+            message = await _openai(messages, resolved, tools=False)
+        elif resolved["provider"] == "ai_service":
+            message = await _ai_service(messages, resolved)
+        else:
+            return {}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("payroll header mapping failed: %s", type(exc).__name__)
+        return {}
+    parsed = _json_object(_content(message))
+    allowed = set(allow)
+    known = set(headers)
+    return {str(key): str(value) for key, value in parsed.items() if str(key) in known and str(value) in allowed}
 
 
 def _tool_calls(message: dict | None) -> list[ToolCall] | None:

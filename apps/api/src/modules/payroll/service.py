@@ -27,6 +27,7 @@ from src.db.models import (
     PayrollAuditLog,
     PayrollLoan,
     PayrollLoanEvent,
+    PayrollOpeningYtd,
     PayrollPayment,
     PayrollPayslip,
     PayrollPayslipLine,
@@ -54,7 +55,7 @@ from src.db.models import (
 from src.modules.employees.service import sync_teacher_employees
 from src.modules.payroll.bank import render_bank_file
 from src.modules.payroll.flow import PayrollFlow
-from src.modules.payroll.ops import validate_component_fields
+from src.modules.payroll.ops import assignment_calc, validate_component_fields
 from src.modules.payroll.calc import (
     SEEDED_PT_SLABS,
     ComponentDef,
@@ -69,6 +70,7 @@ from src.modules.payroll.calc import (
     completed_years,
     compute_pay,
     eval_formula,
+    canonical_financial_year,
     financial_year_label,
     gratuity,
     last_working_day,
@@ -1185,6 +1187,7 @@ class PayrollService(PayrollFlow):
                 )
             ).scalars()
         )
+        opening = await self._opening_ytd(employee.id, financial_year_label(end))
         basic_guess = next((c.amount for c in components if c.code == "BASIC"), _ZERO)
         da_guess = next((c.amount for c in components if c.code == "DA"), _ZERO)
         bonus = statutory_bonus(
@@ -1241,6 +1244,8 @@ class PayrollService(PayrollFlow):
             bonus=bonus,
             employee_name=name,
             pan=profile.pan if profile else None,
+            prior_gross=opening.ytd_gross if opening else _ZERO,
+            prior_tds=opening.ytd_tds if opening else _ZERO,
         )
         draft = compute_pay(PayContext(**common, loan_emi=_ZERO))
         room = draft.gross - draft.deductions
@@ -1280,7 +1285,7 @@ class PayrollService(PayrollFlow):
                     code=component.code,
                     name=component.name,
                     kind=component.kind,
-                    calc_type=component.calc_type,
+                    calc_type=assignment_calc(component.calc_type, raw),
                     amount=amount or _ZERO,
                     percent=percent,
                     percent_of=component.percent_of,
@@ -1611,6 +1616,10 @@ class PayrollService(PayrollFlow):
 
     async def form16(self, employee_id: UUID | None, financial_year: str) -> dict:
         await self._bind()
+        try:
+            financial_year = canonical_financial_year(financial_year)
+        except ValueError as exc:
+            raise AppError(str(exc), status_code=422) from exc
         if employee_id is None:
             employee = await self._employee_for_user()
         else:
@@ -1649,14 +1658,34 @@ class PayrollService(PayrollFlow):
                 _ZERO,
             )
         latest = slips[-1].form16 if slips and slips[-1].form16 else {}
+        opening = await self._opening_ytd(employee.id, financial_year)
+        if opening:
+            gross += opening.ytd_gross
+            tds_total += opening.ytd_tds
         return {
             "employee_id": str(employee.id),
             "financial_year": financial_year,
             "payslip_count": len(slips),
             "gross": str(gross),
             "tds_deducted": str(tds_total),
+            "opening_gross": str(opening.ytd_gross if opening else _ZERO),
+            "opening_tds": str(opening.ytd_tds if opening else _ZERO),
+            "opening_pf": str(opening.ytd_pf if opening else _ZERO),
+            "opening_esi": str(opening.ytd_esi if opening else _ZERO),
+            "opening_pt": str(opening.ytd_pt if opening else _ZERO),
             "snapshot": latest,
         }
+
+    async def _opening_ytd(self, employee_id: UUID, financial_year: str) -> PayrollOpeningYtd | None:
+        return (
+            await self.db.execute(
+                select(PayrollOpeningYtd).where(
+                    PayrollOpeningYtd.school_id == self.school_id,
+                    PayrollOpeningYtd.employee_id == employee_id,
+                    PayrollOpeningYtd.financial_year == financial_year,
+                )
+            )
+        ).scalar_one_or_none()
 
     async def form16_pdf(self, employee_id: UUID | None, financial_year: str) -> tuple[bytes, str]:
         data = await self.form16(employee_id, financial_year)
