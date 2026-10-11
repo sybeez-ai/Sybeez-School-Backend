@@ -39,7 +39,19 @@ async def test_upgrade_head_on_empty_postgres():
         conn = await asyncpg.connect(user="sybeez", password="sybeez", host="127.0.0.1", database=name)
         try:
             version = await conn.fetchval("SELECT version_num FROM alembic_version")
-            assert version == "0040"
+            assert version == "0041"
+            templates = await conn.fetchval(
+                "SELECT count(*) FROM alert_message_templates WHERE school_id IS NULL"
+            )
+            assert templates == 33
+            forced_alerts = await conn.fetchval(
+                "SELECT relforcerowsecurity FROM pg_class WHERE relname = 'alert_message_templates'"
+            )
+            assert forced_alerts is True
+            opt_out_forced = await conn.fetchval(
+                "SELECT relforcerowsecurity FROM pg_class WHERE relname = 'alert_channel_opt_outs'"
+            )
+            assert opt_out_forced is True
             created_by = await conn.fetchval(
                 "SELECT 1 FROM information_schema.columns WHERE table_name = 'schools' AND column_name = 'created_by_id'"
             )

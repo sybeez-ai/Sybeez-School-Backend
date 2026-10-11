@@ -81,6 +81,10 @@ DEFAULT_PREF_TYPES = [
     NotificationType.FEE_PAYMENT_FAILED.value,
     NotificationType.FEE_RECEIPT_READY.value,
     NotificationType.FEE_REFUND.value,
+    NotificationType.PAYSLIP_PUBLISHED.value,
+    NotificationType.PAY_RUN_APPROVED.value,
+    NotificationType.LOP_UPDATE.value,
+    NotificationType.ATTENDANCE_WEEKLY.value,
 ]
 
 
@@ -455,6 +459,30 @@ class CommunicationService:
             priority=a.priority or NotificationPriority.NORMAL.value,
             event_key_prefix=f"ANNOUNCEMENT:{a.id}",
         )
+        from src.modules.alerts.service import dispatch_alert, school_display_name
+
+        preview = " ".join((a.body or "").split())[:180]
+        try:
+            await dispatch_alert(
+                self.db,
+                school_id=school_id,
+                event_key="announcement",
+                notification_type=NotificationType.ANNOUNCEMENT.value,
+                explicit_user_ids=recipients,
+                variables={
+                    "title": a.title,
+                    "preview": preview or a.title,
+                    "school_name": await school_display_name(self.db, school_id),
+                },
+                dedupe_key=f"announcement:{a.id}",
+                title=a.title,
+                link_path="/announcements",
+                urgent=a.priority == NotificationPriority.URGENT.value,
+            )
+        except Exception:
+            from src.core.telemetry import track_alert
+
+            track_alert("announcement_alert_failed", announcement_id=str(a.id))
         await self._audit(school_id, user_id, "ANNOUNCEMENT_PUBLISHED", "announcement", a.id)
         await self.db.commit()
         return await self.get_announcement(school_id, a.id)

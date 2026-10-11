@@ -408,6 +408,30 @@ class PaymentService:
                 entity_id=receipt.id,
                 event_key=f"FEE_RECEIPT_READY:{receipt.id}:{parent.user_id}",
             )
+        from src.modules.alerts.service import dispatch_alert, school_display_name
+
+        try:
+            await dispatch_alert(
+                self.db,
+                school_id=payment.school_id,
+                event_key="payment_receipt",
+                notification_type=NotificationType.FEE_RECEIPT_READY.value,
+                student_id=acc.student_id,
+                variables={
+                    "student_name": name,
+                    "amount": f"{payment.currency} {payment.amount}",
+                    "receipt_number": receipt.receipt_number,
+                    "paid_on": payment.created_at.strftime("%d %b %Y") if payment.created_at else "",
+                    "school_name": await school_display_name(self.db, payment.school_id),
+                },
+                dedupe_key=f"payment_receipt:{receipt.id}",
+                title="Payment received",
+                link_path="/parent/fees/receipts",
+            )
+        except Exception:
+            from src.core.telemetry import track_alert
+
+            track_alert("fee_alert_failed", payment_id=str(payment.id))
 
     async def _notify_payment_failed(self, payment: Payment) -> None:
         acc = await self.db.get(StudentFeeAccount, payment.student_fee_account_id)

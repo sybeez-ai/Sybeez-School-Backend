@@ -1,7 +1,9 @@
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from src.core.secrets import load_secret_map
 
 
 _INSECURE_DEFAULTS: set[str] = {
@@ -26,6 +28,7 @@ class Settings(BaseSettings):
         env_file=(".env", "../../.env"),
         env_file_encoding="utf-8",
         extra="ignore",
+        populate_by_name=True,
     )
 
     app_env: str = "development"
@@ -36,6 +39,9 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://sybeez:sybeez@localhost:5432/sybeez_school"
     database_url_sync: str = "postgresql://sybeez:sybeez@localhost:5432/sybeez_school"
     redis_url: str = "redis://localhost:6379/0"
+    jobs_backend: str = "redis"  # redis | sqs
+    jobs_sqs_queue_url: str = ""
+    jobs_sqs_region: str = ""
 
     jwt_secret: str = "change-me-in-production"
     jwt_algorithm: str = "HS256"
@@ -63,15 +69,28 @@ class Settings(BaseSettings):
     core_internal_token: str = "dev-internal-service-token"
     embedding_dim: int = 1536
 
-    # Outbound communication providers (Phase 12)
+    # Outbound communication providers (Phase 12).
+    # Production WhatsApp uses meta_cloud. mock stays the unset default so dev
+    # does not call Meta. Secrets may also arrive from Secrets Manager.
     sms_provider: str = "mock"  # mock | msg91
-    msg91_auth_key: str = ""
-    msg91_sender_id: str = ""
+    msg91_auth_key: str = Field(default="", validation_alias=AliasChoices("MSG91_AUTH_KEY"))
+    msg91_sender_id: str = Field(default="", validation_alias=AliasChoices("MSG91_SENDER_ID"))
     msg91_template_id: str = ""  # optional; if blank, send plain text when supported
+    msg91_webhook_token: str = Field(default="", validation_alias=AliasChoices("MSG91_WEBHOOK_TOKEN"))
+    sms_rate_limit_per_minute: int = 100
 
-    whatsapp_provider: str = "mock"  # mock | meta
-    whatsapp_cloud_access_token: str = ""
-    whatsapp_cloud_phone_number_id: str = ""
+    whatsapp_provider: str = "mock"  # mock | meta_cloud | gupshup | twilio
+    whatsapp_cloud_access_token: str = Field(
+        default="",
+        validation_alias=AliasChoices("WHATSAPP_ACCESS_TOKEN", "WHATSAPP_CLOUD_ACCESS_TOKEN"),
+    )
+    whatsapp_cloud_phone_number_id: str = Field(
+        default="",
+        validation_alias=AliasChoices("WHATSAPP_PHONE_NUMBER_ID", "WHATSAPP_CLOUD_PHONE_NUMBER_ID"),
+    )
+    whatsapp_app_secret: str = Field(default="", validation_alias=AliasChoices("WHATSAPP_APP_SECRET"))
+    whatsapp_verify_token: str = Field(default="", validation_alias=AliasChoices("WHATSAPP_VERIFY_TOKEN"))
+    whatsapp_rate_limit_per_minute: int = 60
 
     # Object storage. Empty bucket keeps files on local disk outside production.
     # Set the bucket name from the environment or from Secrets Manager. Never commit a key.
@@ -79,6 +98,27 @@ class Settings(BaseSettings):
     s3_region: str = ""
     s3_public_base_url: str = ""
     payroll_rate_limit_per_minute: int = 120
+
+    @model_validator(mode="after")
+    def _overlay_secrets(self) -> "Settings":
+        secrets = load_secret_map()
+        mapping = {
+            "whatsapp_cloud_access_token": ("WHATSAPP_ACCESS_TOKEN", "WHATSAPP_CLOUD_ACCESS_TOKEN"),
+            "whatsapp_cloud_phone_number_id": ("WHATSAPP_PHONE_NUMBER_ID", "WHATSAPP_CLOUD_PHONE_NUMBER_ID"),
+            "whatsapp_app_secret": ("WHATSAPP_APP_SECRET",),
+            "whatsapp_verify_token": ("WHATSAPP_VERIFY_TOKEN",),
+            "msg91_auth_key": ("MSG91_AUTH_KEY",),
+            "msg91_sender_id": ("MSG91_SENDER_ID",),
+            "msg91_webhook_token": ("MSG91_WEBHOOK_TOKEN",),
+        }
+        for field, keys in mapping.items():
+            if getattr(self, field):
+                continue
+            for key in keys:
+                if secrets.get(key):
+                    setattr(self, field, secrets[key])
+                    break
+        return self
 
     def validate_runtime(self) -> None:
         """Fail closed in production for unsafe defaults."""

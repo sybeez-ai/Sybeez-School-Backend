@@ -73,7 +73,7 @@ from src.modules.payroll.calc import (
     statutory_bonus,
     working_days,
 )
-from src.modules.payroll.notify import notify_payslip_published
+from src.modules.payroll.notify import notify_lop_update, notify_pay_run_approved, notify_payslip_published
 from src.modules.payroll.pdf import build_form16_pdf, build_payslip_pdf
 from src.modules.payroll.reports import professional_tax_csv, tds_24q_csv
 from src.modules.payroll.permissions import (
@@ -1558,8 +1558,28 @@ class PayrollService:
                 period_label=run.label,
                 net=str(slip.net_amount),
             )
+            if user_id and (slip.lop_days or 0) > 0:
+                person = await self.db.get(User, user_id)
+                lost = slip.lop_days
+                lop_text = str(int(lost)) if lost == int(lost) else str(lost)
+                await notify_lop_update(
+                    self.db,
+                    school_id=self.school_id,
+                    user_id=user_id,
+                    payslip_id=slip.id,
+                    employee_name=person.full_name if person else "Employee",
+                    period_label=run.label,
+                    lop_days=lop_text,
+                )
         run.published_at = _now()
         run.approval_status = "PUBLISHED"
+        await notify_pay_run_approved(
+            self.db,
+            school_id=self.school_id,
+            run_id=run.id,
+            period_label=run.label,
+            employee_count=sum(1 for slip in slips if slip.status != "CANCELLED"),
+        )
         await self._audit("run.publish", "payroll_run", run.id, None, {"payslips": len(slips)}, reason)
 
     async def my_payslips(self, year: int | None) -> list[PayrollPayslip]:

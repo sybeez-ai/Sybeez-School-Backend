@@ -113,6 +113,13 @@ from src.db.models.learning_session import LearningSession
 from src.db.models.membership import SchoolMembership
 from src.db.models.notification import Notification, NotificationPreference
 from src.db.models.notification_delivery import NotificationDelivery
+from src.db.models.alerts import (
+    AlertAuditLog,
+    AlertChannelOptOut,
+    AlertInboundMessage,
+    AlertMessageTemplate,
+    SchoolAlertSettings,
+)
 from src.db.models.admissions import AdmissionApplication, AdmissionDocument, AdmissionEnquiry, AdmissionStatusHistory
 from src.db.models.parent import Parent
 from src.db.models.platform_saas import PlatformAiSettings, PlatformAiUsageDaily, PlatformPlan, PlatformSettings
@@ -250,6 +257,11 @@ __all__ = [
     "Notification",
     "NotificationPreference",
     "NotificationDelivery",
+    "AlertMessageTemplate",
+    "SchoolAlertSettings",
+    "AlertInboundMessage",
+    "AlertChannelOptOut",
+    "AlertAuditLog",
     "PayrollRun",
     "PayrollPayslip",
     "PayrollSchoolSettings",

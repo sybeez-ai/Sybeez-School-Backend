@@ -69,12 +69,10 @@ from src.modules.fees.schemas import (
     StudentFeeSummaryOut,
 )
 from src.modules.notifications.service import create_in_app_notification
-from src.modules.notifications.deliveries import queue_outbound_delivery
 from src.shared.enums import (
     EnrollmentStatus,
     FeeInvoiceStatus,
     FeeStructureStatus,
-    NotificationChannel,
     NotificationType,
     PaymentStatus,
     StudentFeeAccountStatus,
@@ -867,20 +865,34 @@ class FeeService:
                     event_key=f"{notif_type}:{inv.id}:{kind}:{parent.user_id}",
                 )
 
-                for ch in (NotificationChannel.SMS.value, NotificationChannel.WHATSAPP.value):
-                    row = await queue_outbound_delivery(
+            event_key = "fee_due" if notif_type == NotificationType.FEE_DUE_REMINDER.value else "fee_overdue"
+            if any_recipient:
+                from src.modules.alerts.service import dispatch_alert, school_display_name
+
+                try:
+                    alert = await dispatch_alert(
                         self.db,
                         school_id=school_id,
-                        user_id=parent.user_id,
-                        channel=ch,
+                        event_key=event_key,
                         notification_type=notif_type,
+                        student_id=student_id,
+                        variables={
+                            "student_name": student_name,
+                            "amount": f"{inv.currency} {inv.balance_amount}",
+                            "due_date": str(inv.due_date),
+                            "invoice_number": inv.invoice_number,
+                            "school_name": await school_display_name(self.db, school_id),
+                        },
+                        dedupe_key=f"{event_key}:{inv.id}:{kind}:{today.isoformat()}",
                         title=title,
-                        body=body,
                         link_path=link_path,
-                        meta={"invoice_id": str(inv.id), "kind": kind},
+                        urgent=False,
                     )
-                    if row:
-                        deliveries_queued += 1
+                    deliveries_queued += alert.queued + alert.scheduled
+                except Exception:
+                    from src.core.telemetry import track_alert
+
+                    track_alert("fee_alert_failed", invoice_id=str(inv.id))
 
             if any_recipient:
                 invoice_events_sent += 1

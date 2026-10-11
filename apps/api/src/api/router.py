@@ -2,6 +2,8 @@ from fastapi import APIRouter
 
 from src.core.constants import API_V1_PREFIX
 from src.modules.academic_years.router import router as academic_years_router
+from src.modules.alerts.router import admin_router as alerts_admin_router
+from src.modules.alerts.router import webhook_router as alerts_webhook_router
 from src.modules.achievements.router import router as achievements_router
 from src.modules.admissions.router import router as admissions_router
 from src.modules.ai_gateway.router import router as ai_gateway_router
@@ -101,6 +103,8 @@ api_router.include_router(achievements_router, prefix=API_V1_PREFIX)
 api_router.include_router(documents_router, prefix=API_V1_PREFIX)
 api_router.include_router(notifications_router, prefix=API_V1_PREFIX)
 api_router.include_router(communication_router, prefix=API_V1_PREFIX)
+api_router.include_router(alerts_admin_router, prefix=API_V1_PREFIX)
+api_router.include_router(alerts_webhook_router, prefix=API_V1_PREFIX)
 api_router.include_router(admissions_router, prefix=API_V1_PREFIX)
 api_router.include_router(hr_router, prefix=API_V1_PREFIX)
 api_router.include_router(employees_router, prefix=API_V1_PREFIX)
