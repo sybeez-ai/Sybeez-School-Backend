@@ -49,18 +49,18 @@ def create_refresh_token_claims(
     *,
     subject: str | UUID,
     jti: str,
+    expires_at,
     role: str | None = None,
     school_id: str | UUID | None = None,
     membership_id: str | UUID | None = None,
 ) -> dict[str, Any]:
-    settings = get_settings()
     now = utcnow()
     claims: dict[str, Any] = {
         "sub": str(subject),
         "type": "refresh",
         "jti": jti,
         "iat": int(now.timestamp()),
-        "exp": int((now + timedelta(days=settings.refresh_token_expire_days)).timestamp()),
+        "exp": int(expires_at.timestamp()),
     }
     if role is not None:
         claims["role"] = role

@@ -6,9 +6,9 @@ Salary is calculated the day the period's staff attendance is locked, including 
 
 ## Merge order
 
-`alembic upgrade head` on an empty Postgres 16 database applies `0001` through `0046`.
+`alembic upgrade head` on an empty Postgres 16 database applies `0001` through `0049`.
 
-Finance PR #1 used revision ids `0028`, `0029`, and `0030` for different files than HRM's `0028_hr_integrity`, `0029_hr_employees`, and `0030_hr_departments`. Those finance revisions are `0041_finance_production` (`down_revision = 0040`), `0042_platform_rls`, and `0043_ai_shared_columns`. Payroll daily, assistant, and import used the same ids on the payroll branch. On `release` they are `0044_payroll_daily` (`down_revision = 0043`), `0045_payroll_assistant`, and `0046_payroll_assistant_import`. The chain is linear and ends at `0046`. Payroll policies from `0040` stay in place; `0042` still forces RLS on those tables and does not replace them. `0044`–`0046` force RLS on the tables they add. If the `sybeez_definer` role exists at upgrade time, payroll `SECURITY DEFINER` functions are altered to that owner.
+Finance PR #1 used revision ids `0028`, `0029`, and `0030` for different files than HRM's `0028_hr_integrity`, `0029_hr_employees`, and `0030_hr_departments`. Those finance revisions are `0041_finance_production` (`down_revision = 0040`), `0042_platform_rls`, and `0043_ai_shared_columns`. Payroll daily, assistant, and import used the same ids on the payroll branch. On `release` they are `0044_payroll_daily` (`down_revision = 0043`), `0045_payroll_assistant`, and `0046_payroll_assistant_import`. Platform access follows as `0047_platform_access` (`down_revision = 0046`), `0048_platform_rls_helpers`, and `0049_platform_staff_sessions`. The chain is linear and ends at `0049`. Payroll policies from `0040` stay in place; `0042` still forces RLS on those tables and does not replace them. `0048` adds `rls_*` helpers that read `app.*` and does not replace those policies. `0044`–`0046` force RLS on the tables they add. If the `sybeez_definer` role exists at upgrade time, payroll `SECURITY DEFINER` functions are altered to that owner.
 
 Production requires `S3_BUCKET`. The app stores object keys only and does not create AWS resources. Development writes under `apps/api/media` when the bucket is empty.
 

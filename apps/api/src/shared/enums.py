@@ -5,6 +5,7 @@ from enum import StrEnum
 
 class UserRole(StrEnum):
     PLATFORM_ADMIN = "PLATFORM_ADMIN"
+    PLATFORM_STAFF = "PLATFORM_STAFF"
     SCHOOL_ADMIN = "SCHOOL_ADMIN"
     PAYROLL_ADMIN = "PAYROLL_ADMIN"
     HR_MANAGER = "HR_MANAGER"
@@ -15,6 +16,9 @@ class UserRole(StrEnum):
     TEACHER = "TEACHER"
     STUDENT = "STUDENT"
     PARENT = "PARENT"
+    # Platform-branch role names. Release payroll and finance use the roles above.
+    FINANCE = "FINANCE"
+    HR = "HR"
 
 
 class PlatformRole(StrEnum):

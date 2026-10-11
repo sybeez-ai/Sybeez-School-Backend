@@ -6,19 +6,22 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import CurrentUser, require_roles
+from src.modules.access.deps import require_permission
+from src.shared.enums import UserRole
 from src.core.database import get_db
 from src.core.exceptions import ForbiddenError
 from src.modules.parents.schemas import LinkParentRequest, ParentChildBrief, ParentCreate, ParentOut
 from src.modules.parents.service import ParentService
-from src.shared.enums import UserRole
+from src.modules.students.schemas import StudentOut
+from src.shared.pagination import Page, PageQuery
 
 router = APIRouter(prefix="/parents", tags=["parents"])
 
 
-def _sid(u: CurrentUser) -> UUID:
-    if u.school_id is None:
+def _sid(user: CurrentUser) -> UUID:
+    if user.school_id is None:
         raise ForbiddenError("School context required")
-    return u.school_id
+    return user.school_id
 
 
 class UnlinkParentRequest(BaseModel):
@@ -55,16 +58,16 @@ async def list_parents(
 async def create_parent(
     body: ParentCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    user: Annotated[CurrentUser, Depends(require_permission("parents.write"))],
 ):
-    return await ParentService(db).create(_sid(user), body)
+    return await ParentService(db).create(_sid(user), body, actor_id=user.id)
 
 
 @router.get("/by-student/{student_id}", response_model=list[ParentOut])
 async def parents_for_student(
     student_id: UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    user: Annotated[CurrentUser, Depends(require_permission("parents.read"))],
 ):
     return await ParentService(db).list_for_student(_sid(user), student_id)
 
@@ -74,7 +77,7 @@ async def link_parent(
     student_id: UUID,
     body: LinkParentRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    user: Annotated[CurrentUser, Depends(require_permission("parents.write"))],
 ):
     link = await ParentService(db).link_to_student(_sid(user), student_id, body)
     return {

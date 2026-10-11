@@ -18,7 +18,8 @@ from src.modules.fees.permissions import FINANCE_VIEW
 from src.modules.fees.schemas import ReceiptOut, RefundIn, RefundOut
 from src.modules.fees.tenant import bind_tenant
 from src.modules.finance.exports import rows_to_csv, rows_to_pdf, rows_to_xlsx
-from src.modules.finance.permissions import assert_finance, permissions_for
+from src.modules.access.deps import effective_permissions
+from src.modules.finance.permissions import assert_finance, bind_finance_permissions, permissions_for
 from src.modules.finance.schemas import (
     AccessOut,
     BranchIn,
@@ -85,6 +86,7 @@ async def _svc(
     x_branch_id: Annotated[UUID | None, Header(alias="X-Branch-Id")] = None,
 ) -> FinanceService:
     """Staff session. X-Branch-Id narrows every query to one branch of this school."""
+    bind_finance_permissions(user.role.value, await effective_permissions(db, user))
     return await FinanceService(db, user.school_id, user.id, user.role.value).prepare(x_branch_id)
 
 

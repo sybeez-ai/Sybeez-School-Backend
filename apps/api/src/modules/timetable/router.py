@@ -6,6 +6,8 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import CurrentUser, require_roles, require_school_scope
+from src.modules.access.deps import require_permission
+from src.shared.enums import UserRole
 from src.core.database import get_db
 from src.core.exceptions import ForbiddenError
 from src.modules.timetable.schemas import (
@@ -27,15 +29,15 @@ from src.modules.timetable.schemas import (
     TodayScheduleOut,
 )
 from src.modules.timetable.service import TimetableService
-from src.shared.enums import UserRole
+from src.shared.pagination import Page, PageQuery
 
 router = APIRouter(prefix="/timetable", tags=["timetable"])
 
 
-def _sid(u: CurrentUser) -> UUID:
-    if u.school_id is None:
+def _sid(user: CurrentUser) -> UUID:
+    if user.school_id is None:
         raise ForbiddenError("School context required")
-    return u.school_id
+    return user.school_id
 
 
 # ── settings ─────────────────────────────────────────────────
@@ -266,7 +268,7 @@ async def list_timetable(
 async def create_entry(
     body: TimetableEntryCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    user: Annotated[CurrentUser, Depends(require_permission("timetable.write"))],
 ):
     return await TimetableService(db).create_entry(_sid(user), body)
 

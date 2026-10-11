@@ -5,6 +5,8 @@ from fastapi import APIRouter, Depends, File, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import CurrentUser, require_roles
+from src.modules.access.deps import require_permission
+from src.shared.enums import UserRole
 from src.core.database import get_db
 from src.core.exceptions import ForbiddenError
 from src.modules.teachers.schemas import (
@@ -15,15 +17,15 @@ from src.modules.teachers.schemas import (
     TeacherUpdate,
 )
 from src.modules.teachers.service import TeacherService
-from src.shared.enums import UserRole
+from src.shared.pagination import Page, PageQuery
 
 router = APIRouter(prefix="/teachers", tags=["teachers"])
 
 
-def _sid(u: CurrentUser) -> UUID:
-    if u.school_id is None:
+def _sid(user: CurrentUser) -> UUID:
+    if user.school_id is None:
         raise ForbiddenError("School context required")
-    return u.school_id
+    return user.school_id
 
 
 @router.get("/me", response_model=TeacherOut)
@@ -59,7 +61,7 @@ async def list_teachers(
 async def create_teacher(
     body: TeacherCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    user: Annotated[CurrentUser, Depends(require_permission("teachers.write"))],
 ):
     return await TeacherService(db).create(_sid(user), body)
 

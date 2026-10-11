@@ -6,8 +6,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.exceptions import ConflictError
+from src.core.rls import clear_lookup_email, set_lookup_email
 from src.core.security import hash_password
 from src.db.models import SchoolMembership, User
+from src.modules.access.audit import write_audit
 from src.modules.auth import cognito as cognito_svc
 from src.shared.enums import MembershipStatus, UserRole
 
@@ -91,6 +93,7 @@ async def ensure_membership(
     user_id: UUID,
     school_id: UUID,
     role: UserRole,
+    actor_id: UUID | None = None,
 ) -> SchoolMembership:
     result = await db.execute(
         select(SchoolMembership).where(
@@ -101,7 +104,18 @@ async def ensure_membership(
     )
     membership = result.scalar_one_or_none()
     if membership:
-        membership.status = MembershipStatus.ACTIVE.value
+        if membership.status != MembershipStatus.ACTIVE.value:
+            membership.status = MembershipStatus.ACTIVE.value
+            await write_audit(
+                db,
+                school_id=school_id,
+                actor_id=actor_id,
+                action="role.grant",
+                resource_type="membership",
+                resource_id=str(membership.id),
+                message=f"Reactivated role {role.value}",
+                details={"user_id": str(user_id), "role": role.value, "status": "reactivated"},
+            )
         return membership
     membership = SchoolMembership(
         user_id=user_id,
@@ -111,6 +125,16 @@ async def ensure_membership(
     )
     db.add(membership)
     await db.flush()
+    await write_audit(
+        db,
+        school_id=school_id,
+        actor_id=actor_id,
+        action="role.grant",
+        resource_type="membership",
+        resource_id=str(membership.id),
+        message=f"Granted role {role.value}",
+        details={"user_id": str(user_id), "role": role.value},
+    )
     return membership
 
 

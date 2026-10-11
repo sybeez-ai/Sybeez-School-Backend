@@ -5,11 +5,13 @@ from sqlalchemy import text
 from src.core.config import get_settings
 from src.core.database import engine
 from src.core.redis import get_redis
+from src.modules.access.deps import public
 
 router = APIRouter(tags=["health"])
 
 
 @router.get("/health")
+@public
 async def health():
     """Liveness. Redis being down is degraded, not a failed health check."""
     redis_ok = False
@@ -28,6 +30,7 @@ async def health():
 
 
 @router.get("/ready")
+@public
 async def ready():
     settings = get_settings()
 

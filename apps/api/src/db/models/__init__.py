@@ -25,6 +25,13 @@ from src.db.models.diary import (
     PersonalHabitCheckin,
 )
 from src.db.models.personal_note import PersonalNote
+from src.db.models.permission import MembershipPermissionOverride, Permission, RolePermission
+from src.db.models.platform_staff import (
+    PlatformStaff,
+    PlatformStaffInvitation,
+    PlatformStaffPermission,
+    PlatformStaffPortal,
+)
 from src.db.models.enrollment import Enrollment
 from src.db.models.exam import (
     Exam,
@@ -305,4 +312,11 @@ __all__ = [
     "AdmissionStatusHistory",
     "AdmissionDocument",
     "SecurityEvent",
+    "Permission",
+    "RolePermission",
+    "MembershipPermissionOverride",
+    "PlatformStaff",
+    "PlatformStaffPortal",
+    "PlatformStaffPermission",
+    "PlatformStaffInvitation",
 ]

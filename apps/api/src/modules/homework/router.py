@@ -20,8 +20,10 @@ from src.modules.homework.schemas import (
     SubmissionOut,
     SubmissionStatsOut,
 )
+from src.modules.access.deps import require_permission
 from src.modules.homework.service import HomeworkService
 from src.shared.enums import UserRole
+from src.shared.pagination import Page, PageQuery
 
 router = APIRouter(prefix="/homework", tags=["homework"])
 

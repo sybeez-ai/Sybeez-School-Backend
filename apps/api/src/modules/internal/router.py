@@ -3,6 +3,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Query
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.config import get_settings
@@ -17,6 +18,7 @@ from src.modules.fees.service import FeeService
 from src.modules.attendance.service import AttendanceService
 from src.modules.payroll.schemas import InternalGenerate
 from src.modules.payroll.service import generate_locked_period
+from src.modules.access.deps import service_auth
 
 router = APIRouter(prefix="/internal/v1", tags=["internal"])
 
@@ -30,6 +32,7 @@ async def require_internal_token(
 
 
 @router.get("/students/ai-context", response_model=AIContextResponse, dependencies=[Depends(require_internal_token)])
+@service_auth
 async def student_ai_context(
     db: Annotated[AsyncSession, Depends(get_db)],
     user_id: UUID = Query(...),
@@ -103,8 +106,6 @@ async def internal_run_fee_reminders(
 async def internal_run_all_fee_reminders(
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    from sqlalchemy import select
-
     from src.db.models import School
     from src.modules.fees.tenant import bind_tenant
 

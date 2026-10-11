@@ -38,6 +38,8 @@ from src.modules.platform.schemas import (
     SchoolUpdate,
 )
 from src.modules.platform.service import PlatformService
+from src.modules.platform.staff_service import StaffService
+from pydantic import BaseModel, EmailStr, Field
 from src.shared.enums import PlatformRole, SchoolStatus, UserRole
 from src.shared.pagination import Page
 
@@ -51,7 +53,7 @@ async def _actor_user(db: AsyncSession, actor: CurrentUser) -> User:
 @router.get("/dashboard", response_model=PlatformDashboard)
 async def dashboard(
     db: Annotated[AsyncSession, Depends(get_db)],
-    _: Annotated[CurrentUser, Depends(require_roles(UserRole.PLATFORM_ADMIN))],
+    _: Annotated[CurrentUser, Depends(require_super_admin)],
 ):
     counts = await PlatformService(db).dashboard()
     return PlatformDashboard(**counts)
@@ -105,7 +107,7 @@ async def update_employee(
 @router.get("/schools", response_model=Page[SchoolOut])
 async def list_schools(
     db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.PLATFORM_ADMIN))],
+    user: Annotated[CurrentUser, Depends(require_super_admin)],
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=100),
     q: str | None = Query(default=None),
@@ -243,7 +245,7 @@ async def invite_admin(
     school_id: UUID,
     body: InvitationCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.PLATFORM_ADMIN))],
+    user: Annotated[CurrentUser, Depends(require_super_admin)],
 ):
     inv, raw = await PlatformService(db).invite_school_admin(user, school_id, body)
     out = InvitationOut.model_validate(inv)
@@ -255,7 +257,7 @@ async def invite_admin(
 async def list_invitations(
     school_id: UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
-    _: Annotated[CurrentUser, Depends(require_roles(UserRole.PLATFORM_ADMIN))],
+    _: Annotated[CurrentUser, Depends(require_super_admin)],
 ):
     return await PlatformService(db).repo.list_invitations(school_id)
 
@@ -464,6 +466,112 @@ async def ai_models(
         "default_chat_model": settings.default_chat_model,
         "fallback_chat_model": settings.fallback_chat_model,
         "models": settings.models_json,
+    }
+
+
+class StaffCreateIn(BaseModel):
+    email: EmailStr
+    full_name: str = Field(min_length=2, max_length=200)
+    password: str = Field(min_length=8, max_length=200)
+    portals: list[str] = Field(default_factory=list)
+    permissions: list[str] = Field(default_factory=list)
+
+
+class StaffAccessIn(BaseModel):
+    portals: list[str] = Field(default_factory=list)
+    permissions: list[str] = Field(default_factory=list)
+
+
+class StaffInviteIn(BaseModel):
+    email: EmailStr
+    portals: list[str] = Field(default_factory=list)
+    permissions: list[str] = Field(default_factory=list)
+    expires_in_days: int = Field(default=7, ge=1, le=30)
+
+
+class StaffOut(BaseModel):
+    id: UUID
+    user_id: UUID
+    email: str
+    full_name: str
+    status: str
+    portals: list[str]
+    permissions: list[str]
+
+
+def _staff_out(row: dict) -> StaffOut:
+    return StaffOut(**row)
+
+
+@router.get("/staff", response_model=list[StaffOut])
+async def list_staff(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _: Annotated[CurrentUser, Depends(require_super_admin)],
+):
+    return [_staff_out(row) for row in await StaffService(db).list_staff()]
+
+
+@router.post("/staff", response_model=StaffOut, status_code=201)
+async def create_staff(
+    body: StaffCreateIn,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_super_admin)],
+):
+    staff = await StaffService(db).create(
+        user,
+        email=body.email,
+        full_name=body.full_name,
+        password=body.password,
+        portals=body.portals,
+        permissions=body.permissions,
+    )
+    rows = await StaffService(db).list_staff()
+    match = next(row for row in rows if row["id"] == staff.id)
+    return _staff_out(match)
+
+
+@router.put("/staff/{staff_id}/access", response_model=StaffOut)
+async def set_staff_access(
+    staff_id: UUID,
+    body: StaffAccessIn,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_super_admin)],
+):
+    await StaffService(db).set_access(user, staff_id, portals=body.portals, permissions=body.permissions)
+    rows = await StaffService(db).list_staff()
+    return _staff_out(next(row for row in rows if row["id"] == staff_id))
+
+
+@router.post("/staff/{staff_id}/revoke", response_model=StaffOut)
+async def revoke_staff(
+    staff_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_super_admin)],
+):
+    await StaffService(db).revoke(user, staff_id)
+    rows = await StaffService(db).list_staff()
+    return _staff_out(next(row for row in rows if row["id"] == staff_id))
+
+
+@router.post("/staff-invitations", status_code=201)
+async def invite_staff(
+    body: StaffInviteIn,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_super_admin)],
+):
+    inv, raw = await StaffService(db).invite(
+        user,
+        email=body.email,
+        portals=body.portals,
+        permissions=body.permissions,
+        expires_in_days=body.expires_in_days,
+    )
+    return {
+        "id": str(inv.id),
+        "email": inv.email,
+        "status": inv.status,
+        "expires_at": inv.expires_at.isoformat(),
+        "invite_token": raw,
     }
 
 

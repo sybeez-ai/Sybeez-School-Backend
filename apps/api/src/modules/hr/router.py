@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import CurrentUser, require_roles
+from src.modules.hr.access import require_hr_admin
 from src.core.database import get_db
 from src.core.exceptions import ForbiddenError
 from src.modules.hr.schemas import (
@@ -45,7 +46,7 @@ async def hr_health():
 @router.get("/leave/requests", response_model=list[StaffLeaveRequestOut])
 async def list_staff_leaves(
     db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    user: Annotated[CurrentUser, Depends(require_hr_admin)],
     status: str | None = Query(default=None, pattern=LEAVE_STATUS_PATTERN),
     q: str | None = Query(default=None, max_length=200),
     date_from: date | None = None,
@@ -88,7 +89,7 @@ async def decide_staff_leave(
     leave_id: UUID,
     body: StaffLeaveDecisionIn,
     db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    user: Annotated[CurrentUser, Depends(require_hr_admin)],
 ):
     return await HRService(db).decide_staff_leave(_sid(user), leave_id, user.id, body)
 
@@ -99,7 +100,7 @@ async def decide_staff_leave(
 @router.get("/payroll/runs", response_model=list[PayrollRunOut])
 async def list_runs(
     db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    user: Annotated[CurrentUser, Depends(require_hr_admin)],
 ):
     return await HRService(db).list_payroll_runs(_sid(user))
 
@@ -108,7 +109,7 @@ async def list_runs(
 async def create_run(
     body: PayrollRunCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    user: Annotated[CurrentUser, Depends(require_hr_admin)],
 ):
     return await HRService(db).create_payroll_run(_sid(user), user.id, body)
 
@@ -117,7 +118,7 @@ async def create_run(
 async def get_run(
     run_id: UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    user: Annotated[CurrentUser, Depends(require_hr_admin)],
 ):
     return await HRService(db).get_payroll_run(_sid(user), run_id)
 
@@ -127,7 +128,7 @@ async def create_run_payslip(
     run_id: UUID,
     body: PayrollPayslipCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    user: Annotated[CurrentUser, Depends(require_hr_admin)],
 ):
     return await HRService(db).create_payslip(_sid(user), run_id, body)
 
@@ -137,7 +138,7 @@ async def update_payslip(
     payslip_id: UUID,
     body: PayrollPayslipUpdate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    user: Annotated[CurrentUser, Depends(require_hr_admin)],
 ):
     return await HRService(db).update_payslip(_sid(user), payslip_id, body)
 
@@ -145,7 +146,7 @@ async def update_payslip(
 @router.get("/payroll/payslips", response_model=list[PayrollPayslipOut])
 async def list_payslips(
     db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    user: Annotated[CurrentUser, Depends(require_hr_admin)],
     run_id: UUID | None = None,
     status: str | None = Query(default=None, pattern=PAYSLIP_STATUS_PATTERN),
     teacher_id: UUID | None = None,

@@ -4,16 +4,15 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.dependencies import CurrentUser, require_roles
+from src.api.dependencies import CurrentUser
+from src.modules.hr.access import require_hr_admin
 from src.core.database import get_db
 from src.core.exceptions import ForbiddenError
 from src.modules.employees.schemas import EmployeeCreate, EmployeeOut, EmployeeUpdate
 from src.modules.employees.service import EmployeeService
-from src.shared.enums import UserRole
-
 router = APIRouter(prefix="/hr/employees", tags=["hr-employees"])
 
-Admin = Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))]
+Admin = Annotated[CurrentUser, Depends(require_hr_admin)]
 Db = Annotated[AsyncSession, Depends(get_db)]
 
 

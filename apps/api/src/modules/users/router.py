@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import CurrentUser, require_roles
+from src.modules.access.deps import require_permission
 from src.core.database import get_db
 from src.modules.users.schemas import SchoolUserOut, UserStatusUpdate
 from src.modules.users.service import UsersService
@@ -14,7 +15,7 @@ router = APIRouter(prefix="/users", tags=["users"])
 
 
 @router.get("/health")
-async def users_health():
+async def users_health(_: Annotated[CurrentUser, Depends(require_permission("users.read"))]):
     return {"module": "users", "status": "ok"}
 
 

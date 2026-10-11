@@ -6,7 +6,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.dependencies import CurrentUser, require_roles
+from src.api.dependencies import CurrentUser
+from src.modules.hr.access import require_hr_admin
 from src.core.database import get_db
 from src.core.exceptions import AppError, ForbiddenError
 from src.modules.staff_attendance.schemas import (
@@ -19,11 +20,9 @@ from src.modules.staff_attendance.schemas import (
     RangeSummary,
 )
 from src.modules.staff_attendance.service import StaffAttendanceService
-from src.shared.enums import UserRole
-
 router = APIRouter(prefix="/hr/attendance", tags=["hr-attendance"])
 
-Admin = Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))]
+Admin = Annotated[CurrentUser, Depends(require_hr_admin)]
 Db = Annotated[AsyncSession, Depends(get_db)]
 Q = Annotated[str | None, Query(max_length=200)]
 StaffType = Annotated[str | None, Query(pattern="^(TEACHING|NON_TEACHING)$")]

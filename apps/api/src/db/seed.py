@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
 
 from datetime import date, datetime, time
 
@@ -78,6 +79,10 @@ def _assert_safe_to_seed() -> None:
     # Seeding creates known-password accounts intended for local development only.
     if APP_ENV == "production":
         raise RuntimeError("Refusing to seed in APP_ENV=production. Use migrations + real provisioning.")
+
+
+def _enabled() -> bool:
+    return os.environ.get("SEED_DEMO_DATA", "").strip().lower() in {"1", "true", "yes"}
 
 
 async def ensure_schema() -> None:
@@ -591,4 +596,8 @@ async def seed() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(seed())
+    try:
+        asyncio.run(seed())
+    except SystemExit as exc:
+        print(exc, file=sys.stderr)
+        raise

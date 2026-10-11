@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.orm import Session
 
 from src.core.config import get_settings
+from src.core.exceptions import ForbiddenError
 
 settings = get_settings()
 
@@ -78,9 +79,11 @@ event.listen(Session, "after_begin", _apply_rls_local)
 def tenant_from_request(request: Request) -> dict[str, str]:
     """Read school, user, and role from the access token. Empty when absent."""
     header = request.headers.get("authorization") or ""
-    if not header.lower().startswith("bearer "):
-        return {"school_id": "", "user_id": "", "role": "", "bypass": "off"}
-    token = header.split(" ", 1)[1].strip()
+    token = ""
+    if header.lower().startswith("bearer "):
+        token = header.split(" ", 1)[1].strip()
+    if not token:
+        token = request.cookies.get(settings.access_cookie_name) or ""
     if not token:
         return {"school_id": "", "user_id": "", "role": "", "bypass": "off"}
     try:
@@ -105,6 +108,10 @@ async def get_db(request: Request) -> AsyncGenerator[AsyncSession, None]:
         try:
             yield session
             await session.commit()
-        except Exception:
+        except Exception as exc:
             await session.rollback()
+            if "row-level security" in str(exc).lower():
+                raise ForbiddenError(
+                    "You cannot access or change rows outside your school, class, or child scope"
+                ) from exc
             raise

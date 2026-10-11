@@ -6,13 +6,15 @@ import secrets
 import anyio
 import urllib.parse
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import CurrentUser, get_current_user
 from src.core.config import get_settings
+from src.core.cookies import clear_auth_cookies, set_auth_cookies
 from src.core.database import get_db
+from src.modules.access.deps import public
 from src.core.exceptions import NotFoundError, UnauthorizedError
 from src.core.redis import get_redis
 from src.modules.auth import cognito as cognito_svc
@@ -36,37 +38,77 @@ from src.modules.auth.service import AuthService
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
+def _attach(response: Response, token: TokenResponse) -> TokenResponse:
+    if not token.access_token or not token.refresh_token:
+        return token
+    set_auth_cookies(
+        response,
+        access_token=token.access_token,
+        refresh_token=token.refresh_token,
+        access_max_age=token.access_expires_in or 0,
+        refresh_max_age=token.refresh_expires_in or 0,
+    )
+    return token
+
+
 @router.post("/login", response_model=TokenResponse)
-async def login(body: LoginRequest, db: Annotated[AsyncSession, Depends(get_db)]):
-    return await AuthService(db).login(body)
+@public
+async def login(body: LoginRequest, response: Response, db: Annotated[AsyncSession, Depends(get_db)]):
+    return _attach(response, await AuthService(db).login(body))
 
 
 @router.post("/complete-new-password", response_model=TokenResponse)
+@public
 async def complete_new_password(
     body: CompleteNewPasswordRequest,
+    response: Response,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    return await AuthService(db).complete_new_password(body)
+    return _attach(response, await AuthService(db).complete_new_password(body))
 
 
 @router.post("/refresh", response_model=TokenResponse)
-async def refresh(body: RefreshRequest, db: Annotated[AsyncSession, Depends(get_db)]):
-    return await AuthService(db).refresh(body.refresh_token)
+@public
+async def refresh(
+    response: Response,
+    request: Request,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    body: RefreshRequest | None = None,
+):
+    settings = get_settings()
+    raw = None
+    if body is not None and body.refresh_token:
+        raw = body.refresh_token
+    raw = raw or request.cookies.get(settings.refresh_cookie_name)
+    if not raw:
+        raise UnauthorizedError("Missing refresh token")
+    return _attach(response, await AuthService(db).refresh(raw))
 
 
 @router.post("/logout", response_model=MessageOut)
-async def logout(body: LogoutRequest, db: Annotated[AsyncSession, Depends(get_db)]):
-    await AuthService(db).logout(body.refresh_token)
+@public
+async def logout(
+    response: Response,
+    request: Request,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    body: LogoutRequest | None = None,
+):
+    settings = get_settings()
+    raw = body.refresh_token if body is not None and body.refresh_token else request.cookies.get(settings.refresh_cookie_name)
+    await AuthService(db).logout(raw)
+    clear_auth_cookies(response)
     return MessageOut(message="Signed out")
 
 
 @router.post("/forgot-password", response_model=MessageOut)
+@public
 async def forgot_password(body: ForgotPasswordRequest, db: Annotated[AsyncSession, Depends(get_db)]):
     await AuthService(db).forgot_password(body.email)
     return MessageOut(message="If an account exists, a reset code has been sent")
 
 
 @router.post("/confirm-forgot-password", response_model=MessageOut)
+@public
 async def confirm_forgot_password(
     body: ConfirmForgotPasswordRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -80,8 +122,19 @@ async def confirm_forgot_password(
 
 
 @router.post("/accept-invitation", response_model=TokenResponse)
-async def accept_invitation(body: AcceptInviteRequest, db: Annotated[AsyncSession, Depends(get_db)]):
-    return await AuthService(db).accept_invitation(body)
+@public
+async def accept_invitation(
+    body: AcceptInviteRequest, response: Response, db: Annotated[AsyncSession, Depends(get_db)]
+):
+    return _attach(response, await AuthService(db).accept_invitation(body))
+
+
+@router.post("/accept-staff-invitation", response_model=TokenResponse)
+@public
+async def accept_staff_invitation(
+    body: AcceptInviteRequest, response: Response, db: Annotated[AsyncSession, Depends(get_db)]
+):
+    return _attach(response, await AuthService(db).accept_staff_invitation(body))
 
 
 @router.get("/memberships", response_model=list[MembershipOut])
@@ -96,11 +149,12 @@ async def list_memberships(
 @router.post("/switch-school", response_model=TokenResponse)
 async def switch_school(
     body: SwitchSchoolRequest,
+    response: Response,
     user: Annotated[CurrentUser, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Issue a new access token for another school membership. Role is stamped on the token."""
-    return await AuthService(db).switch_school(user.id, body.school_id, body.role)
+    return _attach(response, await AuthService(db).switch_school(user.id, body.school_id, body.role))
 
 
 @router.get("/me", response_model=MeResponse)
@@ -144,6 +198,7 @@ async def update_me(
 
 
 @router.get("/cognito/google/start")
+@public
 async def cognito_google_start(
     next: str | None = Query(default=None),
 ):
@@ -156,6 +211,7 @@ async def cognito_google_start(
 
 
 @router.get("/cognito/callback")
+@public
 async def cognito_callback(
     db: Annotated[AsyncSession, Depends(get_db)],
     code: str = Query(...),
@@ -191,6 +247,7 @@ async def cognito_callback(
 
 
 @router.get("/cognito/result", response_model=TokenResponse)
+@public
 async def cognito_result(state: str = Query(...)):
     """Frontend polls this once to fetch the issued Sybeez JWT after OAuth."""
     r = await get_redis()

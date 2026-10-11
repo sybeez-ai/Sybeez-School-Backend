@@ -57,6 +57,28 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 480
     refresh_token_expire_days: int = 14
+    # Per-role refresh lifetime in hours. Daily roles are an absolute cap.
+    # Teacher, student, and parent default to 30 days (720h) and rotate.
+    session_ttl_hours: str = (
+        "PLATFORM_ADMIN:24,PLATFORM_STAFF:24,SCHOOL_ADMIN:24,FINANCE:24,HR:24,"
+        "HR_MANAGER:24,ACCOUNTANT:24,CASHIER:24,AUDITOR:24,PAYROLL_ADMIN:24,"
+        "PAYROLL_APPROVER:24,TEACHER:720,STUDENT:720,PARENT:720"
+    )
+
+    superadmin_email: str = "admin@sybeez.ai"
+    superadmin_secret_id: str = "sybeez-school/superadmin"
+    auth_provider: str = "local"  # local | cognito
+    cognito_client_id: str = ""
+
+    cookie_secure: str = "auto"  # auto | true | false
+    cookie_samesite: str = "lax"
+    cookie_domain: str = ""
+    access_cookie_name: str = "sybeez_access"
+    refresh_cookie_name: str = "sybeez_refresh"
+    csrf_cookie_name: str = "sybeez_csrf"
+    csrf_header_name: str = "X-CSRF-Token"
+
+    seed_demo_data: bool = False
 
     # Auth: local | cognito | both (Cognito password check, then Core JWT)
     auth_mode: str = "both"
@@ -175,6 +197,29 @@ class Settings(BaseSettings):
     @property
     def cors_origins(self) -> list[str]:
         return [o.strip() for o in self.api_cors_origins.split(",") if o.strip()]
+
+    @property
+    def session_ttl_by_role(self) -> dict[str, int]:
+        parsed: dict[str, int] = {}
+        for piece in (self.session_ttl_hours or "").split(","):
+            item = piece.strip()
+            if not item or ":" not in item:
+                continue
+            role, hours = item.split(":", 1)
+            try:
+                parsed[role.strip()] = int(hours.strip())
+            except ValueError:
+                continue
+        return parsed
+
+    @property
+    def use_secure_cookies(self) -> bool:
+        flag = (self.cookie_secure or "auto").strip().lower()
+        if flag in {"1", "true", "yes"}:
+            return True
+        if flag in {"0", "false", "no"}:
+            return False
+        return (self.app_env or "").lower() == "production"
 
     @property
     def is_dev(self) -> bool:

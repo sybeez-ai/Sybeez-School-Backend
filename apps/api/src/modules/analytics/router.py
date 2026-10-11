@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import CurrentUser, require_roles
+from src.modules.access.deps import require_permission
 from src.core.database import get_db
 from src.core.exceptions import ForbiddenError
 from src.db.models import Student
@@ -48,7 +49,7 @@ def _filters(
 
 
 @router.get("/health")
-async def analytics_health():
+async def analytics_health(_: Annotated[CurrentUser, Depends(require_permission("analytics.read"))]):
     return {"module": "analytics", "status": "ok"}
 
 

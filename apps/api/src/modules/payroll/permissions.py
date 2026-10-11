@@ -97,8 +97,29 @@ def _held(user: CurrentUser, extra: set[str]) -> set[str]:
 async def require_payroll(db: AsyncSession, user: CurrentUser, allowed: set[str]) -> set[str]:
     if user.school_id is None:
         raise ForbiddenError("School context required")
+    from src.modules.access.catalog import permissions_for
+    from src.modules.access.deps import effective_permissions
+
     extra = await grants_for(db, user.school_id, user.id)
     held = _held(user, extra)
+    perms = await effective_permissions(db, user)
+    defaults = set(permissions_for(user.role))
+    role = user.role.value
+    approve_revoked = "payroll.approve" in defaults and "payroll.approve" not in perms
+    read_revoked = "payroll.read" in defaults and "payroll.read" not in perms and "payroll.approve" not in perms
+    if approve_revoked and role in APPROVE:
+        held.discard(role)
+        if "payroll.read" in perms and role in PREPARE:
+            held.add(UserRole.ACCOUNTANT.value)
+        elif "payroll.read" in perms:
+            held.add(UserRole.AUDITOR.value)
+    if read_revoked and role in READ:
+        held.discard(role)
+    if "payroll.read" in perms and "payroll.read" not in defaults:
+        held.add(UserRole.AUDITOR.value)
+    if "payroll.approve" in perms and "payroll.approve" not in defaults:
+        held.add(UserRole.PAYROLL_APPROVER.value)
+    held |= extra
     if held.isdisjoint(allowed):
         raise ForbiddenError("You do not have access to this payroll action")
     return held

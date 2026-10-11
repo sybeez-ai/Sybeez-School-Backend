@@ -9,6 +9,7 @@ class LoginRequest(BaseModel):
     email: EmailStr
     password: str
     school_id: UUID | None = None
+    membership_id: UUID | None = None
     # portal login page: platform | school | hrm | payroll | finance | teacher | student | parent
     # hrm also accepts HR_MANAGER and PAYROLL_APPROVER
     portal: str | None = None
@@ -33,6 +34,12 @@ class TokenResponse(BaseModel):
     user_id: UUID | None = None
     full_name: str | None = None
     platform_role: str | None = None
+    access_expires_in: int | None = None
+    refresh_expires_in: int | None = None
+    # Present when the account has several memberships and login did not pick one.
+    selection_required: bool = False
+    memberships: list["MembershipOut"] = Field(default_factory=list)
+    platform_login_available: bool = False
     # Present when Cognito requires first-login password change
     challenge: str | None = None
     session: str | None = None
@@ -40,7 +47,7 @@ class TokenResponse(BaseModel):
 
 
 class RefreshRequest(BaseModel):
-    refresh_token: str
+    refresh_token: str | None = None
 
 
 class LogoutRequest(BaseModel):
