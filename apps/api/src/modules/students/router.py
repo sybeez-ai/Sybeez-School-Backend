@@ -51,7 +51,7 @@ class WithdrawBody(BaseModel):
 @router.get("", response_model=StudentPage)
 async def list_students(
     db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN, UserRole.TEACHER))],
+    user: Annotated[CurrentUser, Depends(require_permission("students.read"))],
     q: str | None = Query(None),
     academic_year_id: UUID | None = Query(None),
     grade_id: UUID | None = Query(None),
@@ -73,6 +73,7 @@ async def list_students(
         sort=sort,
         actor_user_id=user.id,
         actor_role=user.role,
+        user=user,
     )
 
 
@@ -107,13 +108,13 @@ async def confirm_student_import(
 async def get_student(
     student_id: UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN, UserRole.TEACHER))],
+    user: Annotated[CurrentUser, Depends(require_permission("students.read"))],
 ):
     svc = StudentService(db)
     school_id = _sid(user)
     if user.role == UserRole.TEACHER:
         await svc.assert_teacher_can_view(school_id, student_id, user.id)
-    return await svc.get(school_id, student_id)
+    return await svc.get(school_id, student_id, user)
 
 
 @router.post("/{student_id}/photo", response_model=StudentOut)

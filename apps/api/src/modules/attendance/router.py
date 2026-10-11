@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import CurrentUser, require_roles
+from src.modules.access.deps import require_permission
 from src.core.database import get_db
 from src.core.exceptions import ForbiddenError
 from src.modules.attendance.permissions import READ_ROLES, WRITE_ROLES
@@ -30,6 +31,7 @@ from src.modules.attendance.schemas import (
 from src.modules.attendance.service import AttendanceService
 from src.modules.reports.exporters import rows_to_csv
 from src.shared.enums import UserRole
+from src.shared.pagination import Page, PageQuery
 from src.modules.access.deps import public
 
 router = APIRouter(prefix="/attendance", tags=["attendance"])
@@ -39,6 +41,16 @@ def _sid(u: CurrentUser) -> UUID:
     if u.school_id is None:
         raise ForbiddenError("School context required")
     return u.school_id
+
+
+@router.get("", response_model=Page[AttendanceOut])
+async def list_attendance(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_permission("attendance.read"))],
+    page: PageQuery,
+):
+    items, total = await AttendanceService(db).list_visible(user, _sid(user), page)
+    return Page(items=items, total=total, page=page.page, page_size=page.page_size)
 
 
 @router.get("/health")

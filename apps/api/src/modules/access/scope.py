@@ -6,8 +6,8 @@ from sqlalchemy import Select, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import CurrentUser
-from src.db.models import Enrollment, Parent, Student, StudentParent, Teacher, TeacherAssignment
-from src.shared.enums import EnrollmentStatus, UserRole
+from src.db.models import Enrollment, Parent, SchoolMembership, Student, StudentParent, Teacher, TeacherAssignment
+from src.shared.enums import EnrollmentStatus, MembershipStatus, UserRole
 
 _DIRECTORY = {UserRole.PLATFORM_ADMIN, UserRole.SCHOOL_ADMIN, UserRole.FINANCE}
 _CLASS_DIRECTORY = {UserRole.PLATFORM_ADMIN, UserRole.SCHOOL_ADMIN, UserRole.FINANCE, UserRole.HR}
@@ -107,5 +107,14 @@ def restrict_student_rows(stmt: Select, user: CurrentUser, school_id: UUID, stud
 async def same_school_user(db: AsyncSession, user_id: UUID) -> bool:
     from sqlalchemy import text
 
-    result = await db.execute(text("SELECT rls_same_school_user(:uid)"), {"uid": user_id})
-    return bool(result.scalar_one())
+    school = (await db.execute(text("SELECT current_setting('app.school_id', true)"))).scalar_one()
+    if not school:
+        return False
+    result = await db.execute(
+        select(SchoolMembership.id).where(
+            SchoolMembership.user_id == user_id,
+            SchoolMembership.school_id == UUID(school),
+            SchoolMembership.status == MembershipStatus.ACTIVE.value,
+        )
+    )
+    return result.scalar_one_or_none() is not None

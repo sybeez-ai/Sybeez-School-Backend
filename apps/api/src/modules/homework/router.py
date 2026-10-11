@@ -287,7 +287,7 @@ async def my_submission(
     )
 
 
-@router.post("/{homework_id}/submission", response_model=SubmissionOut)
+@router.post("/{homework_id}/submission", response_model=SubmissionOut, status_code=201)
 async def submit_homework(
     homework_id: UUID,
     body: SubmissionCreate,

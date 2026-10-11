@@ -47,7 +47,18 @@ async def my_teacher_dashboard(
 @router.get("", response_model=list[TeacherOut])
 async def list_teachers(
     db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    user: Annotated[
+        CurrentUser,
+        Depends(
+            require_roles(
+                UserRole.SCHOOL_ADMIN,
+                UserRole.HR,
+                UserRole.HR_MANAGER,
+                UserRole.PAYROLL_ADMIN,
+                UserRole.PAYROLL_APPROVER,
+            )
+        ),
+    ],
     q: str | None = Query(None),
     status: str | None = Query(None),
     academic_year_id: UUID | None = Query(None),

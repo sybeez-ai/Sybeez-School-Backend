@@ -149,6 +149,7 @@ async def create_school_user(
     first_name: str | None = None,
     middle_name: str | None = None,
     last_name: str | None = None,
+    actor_id: UUID | None = None,
 ) -> tuple[User, SchoolMembership, str | None]:
     """Create school user in DB + Cognito. Returns (user, membership, temporary_password)."""
     user, temp = await get_or_create_user(
@@ -162,7 +163,9 @@ async def create_school_user(
     )
     if user.is_platform_admin and role != UserRole.PLATFORM_ADMIN:
         raise ConflictError("Cannot assign platform admin as school role via this path")
-    membership = await ensure_membership(db, user_id=user.id, school_id=school_id, role=role)
+    membership = await ensure_membership(
+        db, user_id=user.id, school_id=school_id, role=role, actor_id=actor_id
+    )
     return user, membership, temp
 
 

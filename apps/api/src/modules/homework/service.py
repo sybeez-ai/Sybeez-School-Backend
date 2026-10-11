@@ -4,6 +4,7 @@ from uuid import UUID, uuid4
 from fastapi import UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import attributes
 
 from src.core.exceptions import AppError, ConflictError, ForbiddenError, NotFoundError
 from src.db.models import (
@@ -205,6 +206,16 @@ class HomeworkService:
             url=_file_url(row.file_key),
         )
 
+    async def _ensure_loaded(self, row, *names: str) -> None:
+        unloaded = attributes.instance_state(row).unloaded
+        missing = [name for name in names if name in unloaded]
+        if missing:
+            await self.db.refresh(row, attribute_names=missing)
+
+    async def _attachment_list(self, row) -> list:
+        await self._ensure_loaded(row, "attachments")
+        return list(row.attachments or [])
+
     async def _to_homework_out(
         self,
         row: Homework,
@@ -232,7 +243,7 @@ class HomeworkService:
             status=row.status,
             created_at=row.created_at,
             updated_at=row.updated_at,
-            attachments=[self._att_out(a) for a in (row.attachments or [])],
+            attachments=[self._att_out(a) for a in await self._attachment_list(row)],
         )
         if with_stats:
             stats = await self.submission_stats(school_id=row.school_id, homework_id=row.id)
@@ -267,7 +278,7 @@ class HomeworkService:
             reviewed_by_name=await self._user_name(row.reviewed_by),
             reviewed_at=row.reviewed_at,
             created_at=row.created_at,
-            attachments=[self._att_out(a) for a in (row.attachments or [])],
+            attachments=[self._att_out(a) for a in await self._attachment_list(row)],
             homework_title=hw.title if hw else None,
             max_marks=hw.max_marks if hw else None,
         )

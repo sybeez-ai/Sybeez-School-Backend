@@ -41,7 +41,7 @@ from src.modules.platform.service import PlatformService
 from src.modules.platform.staff_service import StaffService
 from pydantic import BaseModel, EmailStr, Field
 from src.shared.enums import PlatformRole, SchoolStatus, UserRole
-from src.shared.pagination import Page
+from src.shared.pagination import Page, PageQuery
 
 router = APIRouter(prefix="/platform", tags=["platform"])
 
@@ -102,6 +102,17 @@ async def update_employee(
     actor: Annotated[CurrentUser, Depends(require_admin_or_above)],
 ):
     return await PlatformService(db).update_employee(employee_id, body, await _actor_user(db, actor))
+
+
+@router.get("/audit", response_model=Page[AuditLogOut])
+async def platform_audit(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _: Annotated[CurrentUser, Depends(require_super_admin)],
+    page: PageQuery,
+    action: str | None = Query(default=None),
+):
+    items, total = await AuditService(db).list_actions(page, action=action)
+    return Page(items=items, total=total, page=page.page, page_size=page.page_size)
 
 
 @router.get("/schools", response_model=Page[SchoolOut])

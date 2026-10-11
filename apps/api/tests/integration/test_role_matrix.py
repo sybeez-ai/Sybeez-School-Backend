@@ -26,7 +26,17 @@ def _auth(client: TestClient, email: str, password: str = PASSWORD) -> dict[str,
 
 def _ids(response) -> list[str]:
     assert response.status_code == 200, response.text
-    return [item["id"] for item in response.json()["items"]]
+    body = response.json()
+    items = body["items"] if isinstance(body, dict) else body
+    return [item["id"] for item in items]
+
+
+def _count(response) -> int:
+    assert response.status_code == 200, response.text
+    body = response.json()
+    if isinstance(body, list):
+        return len(body)
+    return int(body["total"])
 
 
 def _rls_count(
@@ -150,7 +160,8 @@ def world(client: TestClient):
         "/api/v1/students",
         headers=admin,
         json={
-            "full_name": "Student A",
+            "first_name": "Student",
+            "last_name": "A",
             "email": f"student-a-{suffix}@example.com",
             "password": PASSWORD,
             "class_id": classroom.json()["id"],
@@ -161,7 +172,12 @@ def world(client: TestClient):
     student_b = client.post(
         "/api/v1/students",
         headers=admin,
-        json={"full_name": "Student B", "email": f"student-b-{suffix}@example.com", "password": PASSWORD},
+        json={
+            "first_name": "Student",
+            "last_name": "B",
+            "email": f"student-b-{suffix}@example.com",
+            "password": PASSWORD,
+        },
     )
     assert student_b.status_code == 201, student_b.text
     parent = client.post(
@@ -194,7 +210,12 @@ def world(client: TestClient):
     south_student = client.post(
         "/api/v1/students",
         headers=_auth(client, f"south-admin-{suffix}@example.com"),
-        json={"full_name": "South Student", "email": f"south-student-{suffix}@example.com", "password": PASSWORD},
+        json={
+            "first_name": "South",
+            "last_name": "Student",
+            "email": f"south-student-{suffix}@example.com",
+            "password": PASSWORD,
+        },
     )
     assert south_student.status_code == 201, south_student.text
 
@@ -208,17 +229,17 @@ def world(client: TestClient):
             "teacher_id": teacher.json()["id"],
             "title": "Fractions",
             "status": "PUBLISHED",
+            "allow_resubmission": False,
         },
     )
     assert homework.status_code == 201, homework.text
     exam = client.post(
         "/api/v1/exams",
-        headers=teacher_headers,
+        headers=admin,
         json={
-            "class_id": classroom.json()["id"],
-            "subject_id": subject.json()["id"],
             "title": "Midterm",
-            "max_score": 100,
+            "academic_year_id": year.json()["id"],
+            "class_ids": [classroom.json()["id"]],
         },
     )
     assert exam.status_code == 201, exam.text
@@ -254,16 +275,15 @@ def world(client: TestClient):
     assert class_note.status_code == 201, class_note.text
 
     marked = client.post(
-        "/api/v1/attendance",
+        "/api/v1/attendance/mark",
         headers=teacher_headers,
         json={
-            "student_id": student_a.json()["id"],
             "class_id": classroom.json()["id"],
             "attended_on": date.today().isoformat(),
-            "status": "PRESENT",
+            "marks": [{"student_id": student_a.json()["id"], "status": "PRESENT"}],
         },
     )
-    assert marked.status_code == 201, marked.text
+    assert marked.status_code == 200, marked.text
     result = client.post(
         "/api/v1/results",
         headers=teacher_headers,
@@ -300,7 +320,7 @@ def world(client: TestClient):
         "homework": homework.json(),
         "exam": exam.json(),
         "result": result.json(),
-        "attendance": marked.json(),
+        "attendance": marked.json()[0],
         "roles": roles,
     }
 
@@ -386,13 +406,13 @@ def test_visibility_follows_child_self_and_class(client: TestClient, world):
 
     other = client.get("/api/v1/students", headers=world["roles"]["STUDENT_B"])
     assert _ids(other) == [student_b]
-    assert client.get("/api/v1/homework", headers=world["roles"]["STUDENT_B"]).json()["total"] == 0
-    assert client.get("/api/v1/timetable", headers=world["roles"]["STUDENT_B"]).json()["total"] == 0
-    assert client.get("/api/v1/attendance", headers=world["roles"]["STUDENT_B"]).json()["total"] == 0
+    assert _count(client.get("/api/v1/homework", headers=world["roles"]["STUDENT_B"])) == 0
+    assert _count(client.get("/api/v1/timetable", headers=world["roles"]["STUDENT_B"])) == 0
+    assert _count(client.get("/api/v1/attendance", headers=world["roles"]["STUDENT_B"])) == 0
 
     children = client.get("/api/v1/parents/me/children", headers=world["roles"]["PARENT"])
     assert children.status_code == 200, children.text
-    assert [row["id"] for row in children.json()] == [student_a]
+    assert [row["student_id"] for row in children.json()] == [student_a]
     assert _ids(client.get("/api/v1/students", headers=world["roles"]["TEACHER"])) == [student_a]
     assert set(_ids(client.get("/api/v1/students", headers=world["roles"]["FINANCE"]))) == {student_a, student_b}
     assert _ids(client.get("/api/v1/attendance", headers=world["roles"]["PARENT"])) == [world["attendance"]["id"]]
@@ -450,47 +470,44 @@ def test_cross_tenant_header_is_rejected(client: TestClient, world):
 
 def test_student_cannot_mark_attendance_or_submit_twice(client: TestClient, world):
     denied = client.post(
-        "/api/v1/attendance",
+        "/api/v1/attendance/mark",
         headers=world["roles"]["STUDENT"],
         json={
-            "student_id": world["student_a"]["id"],
             "class_id": world["classroom"]["id"],
             "attended_on": date.today().isoformat(),
-            "status": "ABSENT",
+            "marks": [{"student_id": world["student_a"]["id"], "status": "ABSENT"}],
         },
     )
     assert denied.status_code == 403
     bad = client.post(
-        "/api/v1/attendance",
+        "/api/v1/attendance/mark",
         headers=world["roles"]["TEACHER"],
         json={
-            "student_id": world["student_a"]["id"],
             "class_id": world["classroom"]["id"],
             "attended_on": date.today().isoformat(),
-            "status": "NOPE",
+            "marks": [{"student_id": world["student_a"]["id"], "status": "NOPE"}],
         },
     )
     assert bad.status_code == 422
     duplicate = client.post(
-        "/api/v1/attendance",
+        "/api/v1/attendance/mark",
         headers=world["roles"]["TEACHER"],
         json={
-            "student_id": world["student_a"]["id"],
             "class_id": world["classroom"]["id"],
             "attended_on": date.today().isoformat(),
-            "status": "LATE",
+            "marks": [{"student_id": world["student_a"]["id"], "status": "LATE"}],
         },
     )
-    assert duplicate.status_code == 409
+    assert duplicate.status_code == 200, duplicate.text
 
     submitted = client.post(
-        f"/api/v1/homework/{world['homework']['id']}/submissions",
+        f"/api/v1/homework/{world['homework']['id']}/submission",
         headers=world["roles"]["STUDENT"],
         json={"content": "1/2 + 1/4 = 3/4"},
     )
     assert submitted.status_code == 201, submitted.text
     again = client.post(
-        f"/api/v1/homework/{world['homework']['id']}/submissions",
+        f"/api/v1/homework/{world['homework']['id']}/submission",
         headers=world["roles"]["STUDENT"],
         json={"content": "again"},
     )
@@ -831,6 +848,8 @@ def test_school_admin_role_change_applies_before_the_token_expires(client: TestC
         json={"role": "FINANCE"},
     )
     assert changed.status_code == 200, changed.text
+    assert client.get("/api/v1/results", headers=clerk).status_code == 401
+    clerk = _auth(client, email)
     assert client.get("/api/v1/results", headers=clerk).status_code == 403
     students = client.get("/api/v1/students", headers=clerk)
     assert students.status_code == 200, students.text

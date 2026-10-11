@@ -9,7 +9,9 @@ from fastapi import UploadFile
 from sqlalchemy import and_, func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.api.dependencies import CurrentUser
 from src.core.exceptions import ConflictError, ForbiddenError, NotFoundError
+from src.modules.access.scope import restrict_students
 from src.db.models import (
     AcademicYear,
     ClassRoom,
@@ -119,6 +121,7 @@ class StudentService:
         sort: str = "name",
         actor_user_id: UUID | None = None,
         actor_role: UserRole | None = None,
+        user: CurrentUser | None = None,
     ) -> StudentPage:
         base = (
             select(Student)
@@ -196,6 +199,8 @@ class StudentService:
                     Enrollment.class_id.in_(class_teacher_sections),
                 )
             )
+        elif user is not None:
+            base = restrict_students(base, user, school_id)
 
         count_q = select(func.count()).select_from(base.order_by(None).subquery())
         total = int((await self.db.execute(count_q)).scalar_one())
@@ -214,8 +219,21 @@ class StudentService:
         items = [await self._to_out(s, include_history=False) for s in rows]
         return StudentPage(items=items, total=total, page=page, page_size=page_size)
 
-    async def get(self, school_id: UUID, student_id: UUID) -> StudentOut:
-        student = await self._get_student(school_id, student_id)
+    async def get(self, school_id: UUID, student_id: UUID, user: CurrentUser | None = None) -> StudentOut:
+        if user is None or user.role == UserRole.TEACHER:
+            student = await self._get_student(school_id, student_id)
+        else:
+            student = (
+                await self.db.execute(
+                    restrict_students(
+                        select(Student).where(Student.school_id == school_id, Student.id == student_id),
+                        user,
+                        school_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if student is None:
+                raise NotFoundError("Student not found")
         return await self._to_out(student, include_history=True)
 
     async def update(self, school_id: UUID, student_id: UUID, data: StudentUpdate) -> StudentOut:

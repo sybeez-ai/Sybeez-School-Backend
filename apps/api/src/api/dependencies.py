@@ -26,6 +26,7 @@ class CurrentUser:
     membership_id: UUID | None
     is_platform_admin: bool
     platform_role: str | None = None
+    portals: tuple[str, ...] = ()
 
 
 async def get_current_user(
@@ -93,6 +94,46 @@ async def get_current_user(
         if membership.role != role.value:
             raise UnauthorizedError("Session has ended")
 
+    if role == UserRole.PLATFORM_STAFF:
+        from src.db.models import PlatformStaff, PlatformStaffPortal
+
+        staff = (
+            await db.execute(
+                select(PlatformStaff).where(PlatformStaff.user_id == user.id, PlatformStaff.status == "ACTIVE")
+            )
+        ).scalar_one_or_none()
+        if staff is not None:
+            portals = tuple(
+                (
+                    await db.execute(
+                        select(PlatformStaffPortal.portal).where(PlatformStaffPortal.staff_id == staff.id)
+                    )
+                ).scalars().all()
+            )
+
+    header_school = request.headers.get("x-school-id")
+    if header_school:
+        try:
+            header_id = UUID(header_school)
+        except ValueError as exc:
+            raise ForbiddenError("Cross-tenant access denied") from exc
+        if school_id is None and role in {UserRole.PLATFORM_ADMIN, UserRole.PLATFORM_STAFF}:
+            school_id = header_id
+        elif school_id is not None and header_id != school_id:
+            raise ForbiddenError("Cross-tenant access denied")
+
+    if school_id is not None or portals:
+        from sqlalchemy import text
+
+        await db.execute(
+            text("SELECT set_config('app.school_id', :v, true)"),
+            {"v": "" if school_id is None else str(school_id)},
+        )
+        await db.execute(
+            text("SELECT set_config('app.portals', :v, true)"),
+            {"v": ",".join(portals)},
+        )
+
     return CurrentUser(
         id=user.id,
         email=user.email,
@@ -102,6 +143,7 @@ async def get_current_user(
         membership_id=membership_id,
         is_platform_admin=user.is_platform_admin,
         platform_role=user.platform_role or payload.get("platform_role"),
+        portals=portals,
     )
 
 

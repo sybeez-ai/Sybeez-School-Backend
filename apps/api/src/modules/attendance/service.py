@@ -5,7 +5,11 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.api.dependencies import CurrentUser
 from src.core.exceptions import AppError, ForbiddenError, NotFoundError
+from src.modules.access.scope import restrict_student_rows
+from src.shared.listing import fetch_page
+from src.shared.pagination import PageParams
 from src.db.models import (
     Attendance,
     AttendanceAuditLog,
@@ -797,6 +801,19 @@ class AttendanceService:
         row.decided_by = user_id
         row.decision_note = "Cancelled by requester"
         return await self._to_leave_out(row)
+
+    async def list_visible(
+        self, user: CurrentUser, school_id: UUID, page: PageParams
+    ) -> tuple[list[AttendanceOut], int]:
+        stmt = (
+            select(Attendance)
+            .where(Attendance.school_id == school_id)
+            .order_by(Attendance.attended_on.desc(), Attendance.created_at.desc())
+        )
+        stmt = restrict_student_rows(stmt, user, school_id, Attendance.student_id)
+        result, total = await fetch_page(self.db, stmt, page)
+        rows = [await self._to_attendance_out(row) for row in result.scalars().all()]
+        return rows, total
 
     async def overview(self, *, school_id: UUID, attended_on: date) -> OverviewOut:
         classes = (

@@ -249,7 +249,7 @@ async def timetable_grid(
 @router.get("", response_model=list[TimetableEntryOut])
 async def list_timetable(
     db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN, UserRole.TEACHER))],
+    user: Annotated[CurrentUser, Depends(require_permission("timetable.read"))],
     class_id: UUID | None = Query(None),
     teacher_id: UUID | None = Query(None),
     academic_year_id: UUID | None = Query(None),
@@ -261,6 +261,7 @@ async def list_timetable(
         teacher_id=teacher_id,
         academic_year_id=academic_year_id,
         day_of_week=day_of_week,
+        user=user,
     )
 
 

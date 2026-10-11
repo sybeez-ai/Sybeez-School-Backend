@@ -8,11 +8,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.api.dependencies import CurrentUser, require_roles
 from src.core.database import get_db
 from src.core.exceptions import ForbiddenError
+from src.modules.access.deps import public, require_permission
 from src.modules.exams.pdf import build_report_card_pdf
 from src.modules.exams.schemas import ChildBriefOut, StudentResultOut
 from src.modules.exams.service import ExamService
+from src.modules.results.schemas import ResultCreate, ResultOut
+from src.modules.results.service import ResultService
 from src.shared.enums import UserRole
-from src.modules.access.deps import public
+from src.shared.pagination import Page, PageQuery
 
 router = APIRouter(prefix="/results", tags=["results"])
 
@@ -27,6 +30,27 @@ def _sid(u: CurrentUser) -> UUID:
 @public
 async def results_health():
     return {"module": "results", "status": "ok"}
+
+
+@router.get("", response_model=Page[ResultOut])
+async def list_results(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_permission("results.read"))],
+    page: PageQuery,
+    exam_id: UUID | None = Query(None),
+    student_id: UUID | None = Query(None),
+):
+    items, total = await ResultService(db).list(user, _sid(user), page, exam_id=exam_id, student_id=student_id)
+    return Page(items=items, total=total, page=page.page, page_size=page.page_size)
+
+
+@router.post("", response_model=ResultOut, status_code=201)
+async def create_result(
+    body: ResultCreate,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_permission("results.write"))],
+):
+    return await ResultService(db).create(user, _sid(user), body)
 
 
 @router.get("/me", response_model=list[StudentResultOut])

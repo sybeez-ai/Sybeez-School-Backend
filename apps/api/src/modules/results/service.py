@@ -40,7 +40,11 @@ class ResultService:
         row.grade_label = grade_label(row.percentage)
 
     async def create(self, user: CurrentUser, school_id: UUID, data: ResultCreate) -> Result:
-        exam = await ExamService(self.db).get(user, school_id, data.exam_id)
+        exam = (
+            await self.db.execute(select(Exam).where(Exam.id == data.exam_id, Exam.school_id == school_id))
+        ).scalar_one_or_none()
+        if exam is None:
+            raise NotFoundError("Exam not found")
         row = Result(school_id=school_id, exam_id=exam.id, student_id=data.student_id, remarks=data.remarks, score=0)
         self._apply_score(row, exam, data.score)
         self.db.add(row)

@@ -4,7 +4,9 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.api.dependencies import CurrentUser
 from src.core.exceptions import AppError, ConflictError, ForbiddenError, NotFoundError
+from src.modules.access.scope import restrict_classes
 from src.db.models import (
     AcademicYear,
     ClassRoom,
@@ -635,8 +637,11 @@ class TimetableService:
         teacher_id: UUID | None = None,
         academic_year_id: UUID | None = None,
         day_of_week: int | None = None,
+        user: CurrentUser | None = None,
     ) -> list[TimetableEntryOut]:
         q = select(TimetableEntry).where(TimetableEntry.school_id == school_id)
+        if user is not None:
+            q = restrict_classes(q, user, school_id, TimetableEntry.class_id)
         if class_id:
             q = q.where(TimetableEntry.class_id == class_id)
         if teacher_id:

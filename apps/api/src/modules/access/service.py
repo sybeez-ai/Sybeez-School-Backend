@@ -113,7 +113,7 @@ class AccessService:
 
     async def grant_role(self, actor: CurrentUser, school_id: UUID, data: RoleGrantIn) -> SchoolMembership:
         self._assignable(actor, data.role)
-        user, membership = await create_school_user(
+        user, membership, _temp = await create_school_user(
             self.db,
             school_id=school_id,
             email=data.email,
