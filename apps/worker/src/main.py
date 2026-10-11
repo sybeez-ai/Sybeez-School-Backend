@@ -47,6 +47,12 @@ def consume_forever(stop: threading.Event | None = None) -> None:
 def main() -> None:
     import uvicorn
 
+    settings = get_settings()
+    if settings.db_iam_auth or (settings.database_url or "").strip():
+        from src.core.database import get_engine
+
+        get_engine()
+
     uvicorn.run(
         "src.asgi:app",
         host="0.0.0.0",

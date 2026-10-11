@@ -14,7 +14,6 @@ request. Unset school, user, and role fail closed.
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
-from urllib.parse import quote
 
 from fastapi import Request
 from sqlalchemy import event, text
@@ -28,27 +27,16 @@ settings = get_settings()
 
 def _make_engine():
     if settings.database_iam_auth:
-        import asyncpg
+        from src.core.rds_iam import create_iam_async_engine
 
-        async def _connect():
-            return await asyncpg.connect(
-                host=settings.database_host,
-                port=settings.database_port,
-                user=settings.database_user,
-                password=settings.rds_auth_token(),
-                database=settings.database_name,
-                ssl="require",
-            )
-
-        url = (
-            f"postgresql+asyncpg://{quote(settings.database_user)}@"
-            f"{settings.database_host}:{settings.database_port}/{settings.database_name}"
-        )
-        return create_async_engine(
-            url,
-            async_creator=_connect,
+        return create_iam_async_engine(
+            database_url=settings.database_url,
+            database_host=settings.database_host,
+            database_port=settings.database_port,
+            database_user=settings.database_user,
+            database_name=settings.database_name,
+            aws_region=settings.aws_region,
             echo=settings.is_dev,
-            pool_pre_ping=True,
         )
     return create_async_engine(
         settings.database_url,

@@ -122,6 +122,17 @@ def do_run_migrations(connection: Connection) -> None:
         context.run_migrations()
 
 
+def run_migrations_online() -> None:
+    from src.db.migrations.finance_stamp import align_database, assert_master_url
+
+    # Master URL only. IAM tokens are for sybeez_app on the API and worker.
+    assert_master_url(settings.database_url, iam=settings.database_iam_auth)
+    # Commit a legacy-finance restamp before Alembic reads alembic_version.
+    # An ambiguous stamp raises here, so the task exits before any other DDL.
+    align_database(settings.database_url)
+    asyncio.run(run_async_migrations())
+
+
 async def run_async_migrations() -> None:
     connectable = async_engine_from_config(
         config.get_section(config.config_ini_section, {}),
@@ -131,10 +142,6 @@ async def run_async_migrations() -> None:
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)
     await connectable.dispose()
-
-
-def run_migrations_online() -> None:
-    asyncio.run(run_async_migrations())
 
 
 if context.is_offline_mode():

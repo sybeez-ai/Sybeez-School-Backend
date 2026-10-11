@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -26,6 +26,7 @@ class Settings(BaseSettings):
         env_file=(".env", "../../.env"),
         env_file_encoding="utf-8",
         extra="ignore",
+        populate_by_name=True,
     )
 
     app_env: str = "development"
@@ -35,12 +36,16 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+asyncpg://sybeez:sybeez@localhost:5432/sybeez_school"
     database_url_sync: str = "postgresql://sybeez:sybeez@localhost:5432/sybeez_school"
-    # RDS: connect as sybeez_app (NOBYPASSRLS). Password auth or IAM token.
-    database_iam_auth: bool = False
+    # sybeez_app has rds_iam, so a password is rejected. DB_IAM_AUTH mints a token.
+    database_iam_auth: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("DB_IAM_AUTH", "DATABASE_IAM_AUTH"),
+    )
+    # Empty values are taken from DATABASE_URL. Set them to override the URL.
     database_host: str = ""
-    database_port: int = 5432
-    database_name: str = "sybeez_school"
-    database_user: str = "sybeez_app"
+    database_port: int | None = None
+    database_name: str = ""
+    database_user: str = ""
     database_ssl_mode: str = "disable"
     aws_region: str = "us-east-1"
     redis_url: str = "redis://localhost:6379/0"
@@ -105,11 +110,21 @@ class Settings(BaseSettings):
         if _is_insecure_secret(self.core_internal_token):
             problems.append("CORE_INTERNAL_TOKEN")
         if (self.database_ssl_mode or "").lower() != "require" and not self.database_iam_auth:
-            problems.append("DATABASE_SSL_MODE=require (or DATABASE_IAM_AUTH=true)")
-        if self.database_iam_auth and not (
-            self.database_host and self.database_user and self.aws_region
-        ):
-            problems.append("DATABASE_HOST, DATABASE_USER, and AWS_REGION for IAM auth")
+            problems.append("DATABASE_SSL_MODE=require (or DB_IAM_AUTH=true)")
+        if self.database_iam_auth:
+            from src.core.rds_iam import resolve_endpoint
+
+            try:
+                resolve_endpoint(
+                    database_url=self.database_url,
+                    database_host=self.database_host,
+                    database_port=self.database_port,
+                    database_user=self.database_user,
+                    database_name=self.database_name,
+                    aws_region=self.aws_region,
+                )
+            except ValueError as exc:
+                problems.append(str(exc))
         if not (self.s3_bucket or "").strip():
             problems.append("S3_BUCKET")
         backend = (self.jobs_backend or "redis").strip().lower()
@@ -150,17 +165,6 @@ class Settings(BaseSettings):
     @property
     def is_dev(self) -> bool:
         return self.app_env == "development"
-
-    def rds_auth_token(self) -> str:
-        """15-minute RDS IAM password from boto3.generate_db_auth_token."""
-        import boto3
-
-        return boto3.client("rds", region_name=self.aws_region).generate_db_auth_token(
-            DBHostname=self.database_host,
-            Port=self.database_port,
-            DBUsername=self.database_user,
-            Region=self.aws_region,
-        )
 
     @property
     def database_connect_args(self) -> dict:

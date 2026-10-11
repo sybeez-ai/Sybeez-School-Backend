@@ -9,7 +9,9 @@ RUN pip install --no-cache-dir \
     "redis>=5.2.0" \
     "pydantic-settings>=2.6.0" \
     "boto3>=1.35.0" \
-    "uvicorn>=0.32.0"
+    "uvicorn>=0.32.0" \
+    "sqlalchemy[asyncio]>=2.0.36" \
+    "asyncpg>=0.30.0"
 
 COPY . .
 RUN chown -R app:app /app

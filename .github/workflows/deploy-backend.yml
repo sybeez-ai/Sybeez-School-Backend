@@ -128,6 +128,8 @@ jobs:
           image: ${{ steps.login-ecr.outputs.registry }}/sybeez-school-api:${{ github.sha }}
 
       - name: Run migrations and fail the deploy if they fail
+        env:
+          MIGRATE_CONTAINER: ${{ vars.AWS_BACKEND_MIGRATE_CONTAINER || 'sybeez-school-migrate' }}
         run: |
           set -euo pipefail
           jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' \
@@ -137,11 +139,17 @@ jobs:
             --query 'taskDefinition.taskDefinitionArn' --output text)
           SUBNETS=$(printf '%s' "$AWS_BACKEND_SUBNETS" | tr -d ' ')
           PUBLIC_IP=$(printf '%s' "${AWS_BACKEND_ASSIGN_PUBLIC_IP:-DISABLED}" | tr '[:lower:]' '[:upper:]')
+          # Force alembic upgrade head. env.py restamps a legacy finance 0030
+          # to 0027 before migrating, and raises (non-zero exit) if the stamp
+          # matches neither chain. This task's DATABASE_URL is the master user.
+          OVERRIDES=$(jq -n --arg name "$MIGRATE_CONTAINER" \
+            '{containerOverrides:[{name:$name,command:["alembic","upgrade","head"]}]}')
           TASK_ARN=$(aws ecs run-task \
             --cluster "$ECS_CLUSTER" \
             --task-definition "$MIGRATE_ARN" \
             --launch-type FARGATE \
             --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$AWS_BACKEND_SECURITY_GROUP],assignPublicIp=$PUBLIC_IP}" \
+            --overrides "$OVERRIDES" \
             --query 'tasks[0].taskArn' --output text)
           echo "Migration task: $TASK_ARN"
           aws ecs wait tasks-stopped --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN"
