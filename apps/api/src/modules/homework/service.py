@@ -167,29 +167,20 @@ class HomeworkService:
 
         assigned = (
             await self.db.execute(
-                select(TeacherAssignment).where(
+                select(TeacherAssignment.id)
+                .where(
                     TeacherAssignment.school_id == school_id,
                     TeacherAssignment.teacher_id == teacher.id,
                     TeacherAssignment.class_id == class_id,
                     TeacherAssignment.subject_id == subject_id,
                 )
+                .limit(1)
             )
         ).scalar_one_or_none()
         if assigned:
             return classroom
+        # The section's class teacher may set homework for any subject in their own section.
         if classroom.class_teacher_id == teacher.id:
-            return classroom
-        # Also allow any assignment to this class (subject flexibility for MVP)
-        any_class = (
-            await self.db.execute(
-                select(TeacherAssignment).where(
-                    TeacherAssignment.school_id == school_id,
-                    TeacherAssignment.teacher_id == teacher.id,
-                    TeacherAssignment.class_id == class_id,
-                )
-            )
-        ).scalar_one_or_none()
-        if any_class:
             return classroom
         raise ForbiddenError(
             "You are not assigned to teach this subject/section. Ask admin to add a teaching assignment."

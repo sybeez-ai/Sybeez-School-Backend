@@ -49,6 +49,10 @@ async def list_records(
             return await svc.list_for_class(school_id=user.school_id, class_id=class_id)
         return await svc.list_for_student(school_id=user.school_id, user_id=user.id)
     if class_id:
+        if user.role == UserRole.TEACHER:
+            await svc.assert_user_teaches_class(
+                school_id=user.school_id, user_id=user.id, class_id=class_id
+            )
         return await svc.list_for_class(school_id=user.school_id, class_id=class_id)
     if user.role == UserRole.SCHOOL_ADMIN:
         return await svc.list_all(school_id=user.school_id)
