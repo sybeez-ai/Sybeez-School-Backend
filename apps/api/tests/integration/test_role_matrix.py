@@ -854,3 +854,45 @@ def test_school_admin_role_change_applies_before_the_token_expires(client: TestC
     students = client.get("/api/v1/students", headers=clerk)
     assert students.status_code == 200, students.text
     assert world["student_a"]["id"] in _ids(students)
+
+
+def test_school_admin_grants_portals_without_resetting_the_password(client: TestClient, world):
+    suffix = world["suffix"]
+    admin = world["roles"]["SCHOOL_ADMIN"]
+    email = f"portal-{suffix}@example.com"
+    granted = client.post(
+        "/api/v1/access/role-grants",
+        headers=admin,
+        json={"email": email, "full_name": "Portal Person", "password": PASSWORD, "role": "STAFF"},
+    )
+    assert granted.status_code == 201, granted.text
+    membership_id = granted.json()["id"]
+
+    finance = client.post(
+        f"/api/v1/access/memberships/{membership_id}/portals", headers=admin, json={"portal": "finance"}
+    )
+    assert finance.status_code == 201, finance.text
+    assert finance.json()["role"] == "ACCOUNTANT"
+    again = client.post(
+        f"/api/v1/access/memberships/{membership_id}/portals", headers=admin, json={"portal": "finance"}
+    )
+    assert again.status_code == 201 and again.json()["id"] == finance.json()["id"]
+
+    # Same password still works, and the finance portal now accepts it.
+    login = client.post(
+        "/api/v1/auth/login", json={"email": email, "password": PASSWORD, "portal": "finance"}
+    )
+    assert login.status_code == 200, login.text
+    assert login.json()["role"] == "ACCOUNTANT"
+
+    bad = client.post(
+        f"/api/v1/access/memberships/{membership_id}/portals", headers=admin, json={"portal": "platform"}
+    )
+    assert bad.status_code == 422
+    revoked = client.post(f"/api/v1/access/memberships/{finance.json()['id']}/revoke", headers=admin)
+    assert revoked.status_code == 200 and revoked.json()["status"] == "LEFT"
+    teacher = world["roles"]["TEACHER"]
+    denied = client.post(
+        f"/api/v1/access/memberships/{membership_id}/portals", headers=teacher, json={"portal": "hrm"}
+    )
+    assert denied.status_code == 403

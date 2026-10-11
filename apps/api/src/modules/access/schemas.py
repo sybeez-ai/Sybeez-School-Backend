@@ -37,6 +37,19 @@ class RoleChangeIn(BaseModel):
     role: UserRole
 
 
+# Per-person portal grants. Each portal maps to the school role its login accepts.
+PORTAL_GRANT_ROLES: dict[str, str] = {
+    "finance": "ACCOUNTANT",
+    "payroll": "PAYROLL_ADMIN",
+    "hrm": "HR_MANAGER",
+    "teacher": "TEACHER",
+}
+
+
+class PortalGrantIn(BaseModel):
+    portal: str = Field(pattern="^(finance|payroll|hrm|teacher)$")
+
+
 class PermissionChangeIn(BaseModel):
     permission: str = Field(min_length=3, max_length=64)
     effect: str = Field(pattern="^(GRANT|REVOKE)$")

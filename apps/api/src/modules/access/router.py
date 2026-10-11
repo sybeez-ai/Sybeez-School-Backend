@@ -15,6 +15,7 @@ from src.modules.access.schemas import (
     MatrixOut,
     MembershipOut,
     PermissionChangeIn,
+    PortalGrantIn,
     RoleChangeIn,
     RoleGrantIn,
 )
@@ -149,6 +150,24 @@ async def change_role(
     user: Annotated[CurrentUser, Depends(require_permission("access.grant"))],
 ):
     membership = await AccessService(db).change_role(user, _school(user), membership_id, body)
+    return MembershipOut(
+        id=membership.id,
+        user_id=membership.user_id,
+        school_id=membership.school_id,
+        role=membership.role,
+        status=membership.status,
+    )
+
+
+@router.post("/memberships/{membership_id}/portals", response_model=MembershipOut, status_code=201)
+async def grant_portal(
+    membership_id: UUID,
+    body: PortalGrantIn,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_permission("access.grant"))],
+):
+    """Grant finance, payroll, HRM, or teacher portal access to an existing member."""
+    membership = await AccessService(db).grant_portal(user, _school(user), membership_id, body)
     return MembershipOut(
         id=membership.id,
         user_id=membership.user_id,

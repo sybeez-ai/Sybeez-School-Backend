@@ -19,9 +19,16 @@ from src.modules.access.catalog import (
     SCHOOL_ASSIGNABLE_ROLES,
 )
 from src.modules.access.deps import effective_permissions
-from src.modules.access.schemas import InvitationIn, PermissionChangeIn, RoleChangeIn, RoleGrantIn
+from src.modules.access.schemas import (
+    PORTAL_GRANT_ROLES,
+    InvitationIn,
+    PermissionChangeIn,
+    PortalGrantIn,
+    RoleChangeIn,
+    RoleGrantIn,
+)
 from src.modules.auth.repository import hash_token
-from src.modules.schools.provisioning import create_school_user
+from src.modules.schools.provisioning import create_school_user, ensure_membership
 from src.shared.enums import InvitationStatus, MembershipStatus, UserRole
 from src.shared.pagination import PageParams
 from src.shared.utils import generate_token, utcnow
@@ -166,6 +173,22 @@ class AccessService:
             details={"user_id": str(membership.user_id), "role": data.role.value},
         )
         return membership
+
+    async def grant_portal(
+        self, actor: CurrentUser, school_id: UUID, membership_id: UUID, data: PortalGrantIn
+    ) -> SchoolMembership:
+        """Give an existing school member another portal without touching their password."""
+        base = await self._membership(school_id, membership_id)
+        self._reject_self(actor, base)
+        if base.status != MembershipStatus.ACTIVE.value:
+            raise ConflictError("Restore this person's access before granting a portal")
+        role = UserRole(PORTAL_GRANT_ROLES[data.portal])
+        self._assignable(actor, role)
+        if base.role in {UserRole.STUDENT.value, UserRole.PARENT.value}:
+            raise ForbiddenError("Students and parents cannot be given staff portals")
+        return await ensure_membership(
+            self.db, user_id=base.user_id, school_id=school_id, role=role, actor_id=actor.id
+        )
 
     async def revoke_membership(self, actor: CurrentUser, school_id: UUID, membership_id: UUID) -> SchoolMembership:
         membership = await self._membership(school_id, membership_id)
