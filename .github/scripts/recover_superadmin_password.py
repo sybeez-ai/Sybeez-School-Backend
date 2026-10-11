@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 diff = subprocess.check_output(
-    ["git", "show", "5f2b87f", "--", "apps/api/src/db/seed.py"],
+    ["git", "show", "5f2b87f3ec9e68a659b7e3e19f97949661a333ae", "--", "apps/api/src/db/seed.py"],
     text=True,
 )
 match = re.search(r'^-PLATFORM_SUPER_ADMIN_PASSWORD = "([^"]+)"', diff, re.M)
