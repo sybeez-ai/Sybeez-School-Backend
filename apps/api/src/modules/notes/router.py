@@ -27,7 +27,8 @@ async def notes_health():
     return {"module": "notes", "status": "ok"}
 
 
-@router.get("/", response_model=list[NoteOut])
+@router.get("", response_model=list[NoteOut])
+@router.get("/", response_model=list[NoteOut], include_in_schema=False)
 async def list_notes(
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[CurrentUser, Depends(require_roles(UserRole.STUDENT, UserRole.TEACHER))],
@@ -35,7 +36,8 @@ async def list_notes(
     return await NotesService(db).list_notes(_sid(user), user.id)
 
 
-@router.post("/", status_code=201, response_model=NoteOut)
+@router.post("", status_code=201, response_model=NoteOut)
+@router.post("/", status_code=201, response_model=NoteOut, include_in_schema=False)
 async def create_note(
     body: NoteCreate,
     db: Annotated[AsyncSession, Depends(get_db)],

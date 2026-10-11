@@ -122,6 +122,18 @@ async def get_current_user(
         elif school_id is not None and header_id != school_id:
             raise ForbiddenError("Cross-tenant access denied")
 
+    tenant = db.info.get("rls_tenant")
+    if isinstance(tenant, dict) and tenant.get("bypass") != "on":
+        # Keep later transactions (after a commit) on the same resolved context,
+        # including an X-School-Id scope chosen by platform staff.
+        tenant.update(
+            school_id="" if school_id is None else str(school_id),
+            user_id=str(user.id),
+            role=role.value,
+            membership_id="" if membership_id is None else str(membership_id),
+            portals=",".join(portals),
+        )
+
     if school_id is not None or portals:
         from sqlalchemy import text
 

@@ -155,6 +155,12 @@ async def switch_school(
     return _attach(response, await AuthService(db).switch_school(user.id, body.school_id, body.role))
 
 
+async def _permissions(db: AsyncSession, user: CurrentUser) -> list[str]:
+    from src.modules.access.deps import effective_permissions
+
+    return sorted(await effective_permissions(db, user))
+
+
 @router.get("/me", response_model=MeResponse)
 async def me(
     user: Annotated[CurrentUser, Depends(get_current_user)],
@@ -175,6 +181,7 @@ async def me(
         platform_role=user.platform_role,
         is_active=bool(row.is_active),
         portals=sorted(user.portals),
+        permissions=await _permissions(db, user),
     )
 
 
@@ -194,6 +201,8 @@ async def update_me(
         is_platform_admin=user.is_platform_admin,
         platform_role=user.platform_role,
         is_active=bool(updated.is_active),
+        portals=sorted(user.portals),
+        permissions=await _permissions(db, user),
     )
 
 

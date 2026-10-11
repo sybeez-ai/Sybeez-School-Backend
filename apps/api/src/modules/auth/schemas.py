@@ -84,6 +84,8 @@ class MeResponse(BaseModel):
     platform_role: str | None = None
     is_active: bool = True
     portals: list[str] = []
+    # Effective permission codes (role defaults + membership/staff grants); same for web and mobile.
+    permissions: list[str] = []
 
 
 class MembershipOut(BaseModel):

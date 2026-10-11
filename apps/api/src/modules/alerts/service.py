@@ -214,6 +214,9 @@ async def enable_rls_bypass(db: AsyncSession) -> None:
 async def release_due_deliveries(db: AsyncSession, *, now: datetime | None = None, limit: int = 200) -> dict:
     await enable_rls_bypass(db)
     moment = now or _utcnow()
+    if moment.tzinfo is None:
+        # Callers (cron, tests) may pass a naive UTC time; scheduled_for is TIMESTAMPTZ.
+        moment = moment.replace(tzinfo=timezone.utc)
     rows = list(
         (
             await db.execute(

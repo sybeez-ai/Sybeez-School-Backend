@@ -40,7 +40,6 @@ def _forward_headers(request: Request) -> dict[str, str]:
     return headers
 
 
-@router.api_route("/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
 async def proxy_to_ai(
     path: str,
     request: Request,
@@ -89,4 +88,11 @@ async def proxy_to_ai(
         status_code=upstream.status_code,
         media_type=content_type or None,
         headers=passthrough,
+    )
+
+
+# One route per method so each has its own OpenAPI operationId (typed clients need unique ids).
+for _method in ("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"):
+    router.add_api_route(
+        "/{path:path}", proxy_to_ai, methods=[_method], operation_id=f"proxy_to_ai_{_method.lower()}"
     )

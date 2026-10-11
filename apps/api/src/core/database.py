@@ -72,6 +72,14 @@ def _apply_rls_local(session, _transaction, connection) -> None:
         {"v": str(tenant.get("role") or "")},
     )
     connection.execute(
+        text("SELECT set_config('app.membership_id', :v, true)"),
+        {"v": str(tenant.get("membership_id") or "")},
+    )
+    connection.execute(
+        text("SELECT set_config('app.portals', :v, true)"),
+        {"v": str(tenant.get("portals") or "")},
+    )
+    connection.execute(
         text("SELECT set_config('app.rls_bypass', :v, true)"),
         {"v": "on" if tenant.get("bypass") == "on" else "off"},
     )
