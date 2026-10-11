@@ -22,7 +22,7 @@ HR_ONBOARDING = "HR_ONBOARDING"
 HR_DOCUMENT = "HR_DOCUMENT"
 
 # Student/parent leave shares the LEAVE_* categories, so the HRM inbox is selected by entity type.
-HR_ENTITY_TYPES = ("hr_leave", "hr_request", "hr_workflow", "hr_document", "hr_letter")
+HR_ENTITY_TYPES = ("hr_leave", "hr_request", "hr_workflow", "hr_document", "hr_letter", "payroll_payslip")
 
 ADMIN_LINKS = {
     "leave": "/hrm/leave",

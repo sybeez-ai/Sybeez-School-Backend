@@ -42,7 +42,9 @@ from src.modules.hr_notifications.service import (
 from src.modules.hr_settings.service import load_rules
 from src.shared.utils import utcnow
 
-# Payroll has no separate publish step: only PAID slips are final, so only they reach employees.
+# Legacy slips are visible once PAID. Production payroll publishes first (PUBLISHED)
+# and marks PAID when the bank payment is confirmed. Employees see both.
+EMPLOYEE_VISIBLE_PAYSLIP_STATUSES = ("PAID", "PUBLISHED")
 EMPLOYEE_VISIBLE_PAYSLIP = "PAID"
 
 
@@ -275,7 +277,7 @@ class HRService:
                 select(
                     PayrollRun,
                     func.count(PayrollPayslip.id).filter(PayrollPayslip.status != "CANCELLED"),
-                    func.count(PayrollPayslip.id).filter(PayrollPayslip.status == EMPLOYEE_VISIBLE_PAYSLIP),
+                    func.count(PayrollPayslip.id).filter(PayrollPayslip.status.in_(EMPLOYEE_VISIBLE_PAYSLIP_STATUSES)),
                 )
                 .outerjoin(
                     PayrollPayslip,
@@ -476,7 +478,7 @@ class HRService:
         teacher = await self._teacher_for_user(school_id, user_id)
         stmt = self._payslip_query(school_id).where(
             PayrollPayslip.teacher_id == teacher.id,
-            PayrollPayslip.status == EMPLOYEE_VISIBLE_PAYSLIP,
+            PayrollPayslip.status.in_(EMPLOYEE_VISIBLE_PAYSLIP_STATUSES),
         )
         if year:
             stmt = stmt.where(func.extract("year", PayrollRun.period_start) == year)
@@ -500,7 +502,7 @@ class HRService:
             teacher = await self.db.get(Teacher, slip.teacher_id)
             if teacher is None or teacher.user_id != viewer_user_id:
                 raise ForbiddenError("Not allowed")
-            if slip.status != EMPLOYEE_VISIBLE_PAYSLIP:
+            if slip.status not in EMPLOYEE_VISIBLE_PAYSLIP_STATUSES:
                 raise NotFoundError("Payslip not found")
 
         school = await self.db.get(School, school_id)

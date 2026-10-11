@@ -73,6 +73,13 @@ class Settings(BaseSettings):
     whatsapp_cloud_access_token: str = ""
     whatsapp_cloud_phone_number_id: str = ""
 
+    # Object storage. Empty bucket keeps files on local disk outside production.
+    # Set the bucket name from the environment or from Secrets Manager. Never commit a key.
+    s3_bucket: str = ""
+    s3_region: str = ""
+    s3_public_base_url: str = ""
+    payroll_rate_limit_per_minute: int = 120
+
     def validate_runtime(self) -> None:
         """Fail closed in production for unsafe defaults."""
         if (self.app_env or "").lower() != "production":
@@ -86,6 +93,8 @@ class Settings(BaseSettings):
             problems.append("AI_SERVICE_TOKEN")
         if _is_insecure_secret(self.core_internal_token):
             problems.append("CORE_INTERNAL_TOKEN")
+        if not (self.s3_bucket or "").strip():
+            problems.append("S3_BUCKET")
 
         # If Cognito is enabled, required identifiers must be present.
         auth_mode = (self.auth_mode or "").lower().strip()

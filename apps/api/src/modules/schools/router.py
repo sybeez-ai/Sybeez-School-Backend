@@ -7,7 +7,7 @@ from src.api.dependencies import CurrentUser, require_school_scope
 from src.core.database import get_db
 from src.core.exceptions import ForbiddenError
 from src.modules.audit.repository import AuditRepository
-from src.modules.schools.schemas import SchoolProfile, SchoolProfileUpdate
+from src.modules.schools.schemas import BranchList, SchoolProfile, SchoolProfileUpdate
 from src.modules.schools.service import SchoolsService
 from src.shared.enums import UserRole
 
@@ -20,6 +20,15 @@ async def my_school(
     user: Annotated[CurrentUser, Depends(require_school_scope)],
 ):
     return await SchoolsService(db).get_my_school(user.school_id)
+
+
+@router.get("/me/branches", response_model=BranchList)
+async def my_school_branches(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_school_scope)],
+):
+    names = await SchoolsService(db).list_branches(user.school_id)
+    return BranchList(branches=[{"name": name} for name in names])
 
 
 @router.patch("/me", response_model=SchoolProfile)
