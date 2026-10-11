@@ -9,7 +9,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: backend-${{ github.ref }}
+  # Pull requests must not cancel a release deploy. They share github.ref
+  # with the push, and cancel-in-progress on the pull request was stopping
+  # the provision task before it ran.
+  group: backend-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
