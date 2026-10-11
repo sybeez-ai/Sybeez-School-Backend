@@ -71,12 +71,14 @@ from src.modules.teachers.router import router as teachers_router
 from src.modules.teaching_records.router import router as teaching_records_router
 from src.modules.timetable.router import router as timetable_router
 from src.modules.users.router import router as users_router
+from src.modules.devices.router import router as devices_router
 
 api_router = APIRouter()
 api_router.include_router(health_router)
 api_router.include_router(internal_router)
 api_router.include_router(ai_gateway_router, prefix=API_V1_PREFIX)
 api_router.include_router(auth_router, prefix=API_V1_PREFIX)
+api_router.include_router(devices_router, prefix=API_V1_PREFIX)
 api_router.include_router(access_router, prefix=API_V1_PREFIX)
 api_router.include_router(platform_router, prefix=API_V1_PREFIX)
 api_router.include_router(schools_router, prefix=API_V1_PREFIX)

@@ -25,6 +25,7 @@ from src.db.models.diary import (
     PersonalHabitCheckin,
 )
 from src.db.models.personal_note import PersonalNote
+from src.db.models.push_device import PushDevice
 from src.db.models.permission import MembershipPermissionOverride, Permission, RolePermission
 from src.db.models.platform_staff import (
     PlatformStaff,
@@ -197,6 +198,7 @@ from src.db.models.timetable import Room, TimetableEntry, TimetablePeriod, Timet
 from src.db.models.user import User
 
 __all__ = [
+    "PushDevice",
     "User",
     "SchoolMembership",
     "Invitation",
