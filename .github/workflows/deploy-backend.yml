@@ -57,6 +57,9 @@ jobs:
           pip install -e apps/worker
       - name: Lint
         run: ruff check --config pyproject.toml apps/api apps/worker packages
+      - name: Migrate test database
+        working-directory: apps/api
+        run: python -m alembic upgrade head
       - name: Unit and integration tests
         run: |
           cd apps/api && pytest -q

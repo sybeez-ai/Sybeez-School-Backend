@@ -33,7 +33,7 @@ The OIDC role needs at least:
 
 ## What a push to `release` does
 
-1. Lint and tests, with Postgres 16 + pgvector and Redis.
+1. Lint, then `alembic upgrade head` on the empty Postgres 16 + pgvector service database, then tests. Redis 7 is up for the same job.
 2. Assume `AWS_BACKEND_ROLE_ARN` in `ap-south-1`.
 3. Build `infra/docker/api.Dockerfile` and `apps/worker/Dockerfile`. Push both to ECR tagged with the git SHA and `latest`.
 4. Render task definition `sybeez-school-migrate` with the new API image, run it once on `sybeez-school-cluster`, and wait until it stops. The deploy fails if the container exit code is not 0. The workflow overrides the container command to `alembic upgrade head` (working directory `/app`). Before any other DDL, that command restamps a legacy finance database (see below) or exits non-zero if the stamp is ambiguous.
