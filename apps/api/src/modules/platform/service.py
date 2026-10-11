@@ -28,6 +28,8 @@ from src.modules.fees.tenant import bind_tenant
 from src.modules.audit.repository import AuditRepository
 from src.modules.platform.repository import PlatformRepository
 from src.modules.platform.schemas import (
+    SchoolAdminLoginCreate,
+    SchoolAdminLoginOut,
     InvitationCreate,
     PlatformEmployeeCreate,
     PlatformEmployeeOut,
@@ -644,8 +646,7 @@ class PlatformService:
         )
         return admin_email, temporary_password
 
-    async def create_school_admin_login(self, actor: CurrentUser, school_id: UUID, data) -> "SchoolAdminLoginOut":
-        from src.modules.platform.schemas import SchoolAdminLoginOut
+    async def create_school_admin_login(self, actor: CurrentUser, school_id: UUID, data: SchoolAdminLoginCreate) -> SchoolAdminLoginOut:
 
         school = await self.repo.get_school(school_id)
         if school is None:
