@@ -16,6 +16,8 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator
 
 from fastapi import Request
+import logging
+
 from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import Session
@@ -25,6 +27,8 @@ from src.core.exceptions import ForbiddenError
 
 settings = get_settings()
 
+
+logger = logging.getLogger(__name__)
 
 def _make_engine():
     if settings.database_iam_auth:
@@ -111,6 +115,9 @@ async def get_db(request: Request) -> AsyncGenerator[AsyncSession, None]:
         except Exception as exc:
             await session.rollback()
             if "row-level security" in str(exc).lower():
+                # Name the policy/table (never row values) so 403s are diagnosable.
+                detail = str(getattr(exc, "orig", exc)).splitlines()[0][:200]
+                logger.warning("RLS violation on %s %s: %s", request.method, request.url.path, detail)
                 raise ForbiddenError(
                     "You cannot access or change rows outside your school, class, or child scope"
                 ) from exc
