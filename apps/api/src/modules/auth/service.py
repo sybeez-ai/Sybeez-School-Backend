@@ -234,7 +234,7 @@ class AuthService:
 
 
     _PORTAL_ROLES = {
-        "platform": {UserRole.PLATFORM_ADMIN},
+        "platform": {UserRole.PLATFORM_ADMIN, UserRole.PLATFORM_STAFF},
         "school": {UserRole.SCHOOL_ADMIN},
         "hrm": {UserRole.SCHOOL_ADMIN, UserRole.HR, UserRole.HR_MANAGER, UserRole.PAYROLL_APPROVER},
         "payroll": {
@@ -256,6 +256,27 @@ class AuthService:
         "parent": {UserRole.PARENT},
         "staff": {UserRole.STAFF},
     }
+
+    # Login portal key -> platform staff portal grant (platform_staff_portals.portal).
+    _STAFF_PORTAL_KEYS = {
+        "platform": "platform",
+        "school": "school_admin",
+        "hrm": "hrm",
+        "payroll": "payroll",
+        "finance": "finance",
+    }
+
+    async def _staff_portals_without_membership(self, user_id: UUID) -> set[str] | None:
+        """Granted portals for an active platform staff member with no school membership."""
+        from src.db.models import PlatformStaffPortal
+
+        staff = await self._platform_staff(user_id)
+        if staff is None or await self._active_memberships(user_id):
+            return None
+        rows = await self.db.execute(
+            select(PlatformStaffPortal.portal).where(PlatformStaffPortal.staff_id == staff.id)
+        )
+        return set(rows.scalars().all())
 
     async def _assert_portal_role(self, user: User, portal: str | None, *, school_id_hint=None) -> None:
         """Credentials created for a role may only sign in on that portal."""
@@ -280,6 +301,19 @@ class AuthService:
             if role is None:
                 membership = await self.repo.get_membership(user.id, school_id_hint)
                 if membership is None:
+                    staff_portals = (
+                        None
+                        if user.is_platform_admin or school_id_hint is not None
+                        else await self._staff_portals_without_membership(user.id)
+                    )
+                    if staff_portals is not None:
+                        granted = self._STAFF_PORTAL_KEYS.get(key)
+                        if granted and granted in staff_portals:
+                            return
+                        raise ForbiddenError(
+                            f"This account has not been granted the {key} portal. "
+                            "Ask a Sybeez super admin to grant access."
+                        )
                     if user.is_platform_admin:
                         role = UserRole.PLATFORM_ADMIN
                     else:

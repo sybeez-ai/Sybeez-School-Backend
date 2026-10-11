@@ -174,6 +174,7 @@ async def me(
         is_platform_admin=user.is_platform_admin,
         platform_role=user.platform_role,
         is_active=bool(row.is_active),
+        portals=sorted(user.portals),
     )
 
 

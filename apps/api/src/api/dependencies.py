@@ -239,6 +239,21 @@ def require_super_admin(
 require_super_admin.__super_admin__ = True
 
 
+async def require_platform_member(
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+) -> CurrentUser:
+    """Platform console read access: any platform team member (is_platform_admin) or
+    platform staff granted the ``platform`` portal. Writes keep stricter gates."""
+    if user.role == UserRole.PLATFORM_ADMIN and user.is_platform_admin:
+        return user
+    if user.role == UserRole.PLATFORM_STAFF and "platform" in user.portals:
+        return user
+    raise ForbiddenError("This account has no access to the Platform portal")
+
+
+require_platform_member.__roles__ = (UserRole.PLATFORM_ADMIN.value, UserRole.PLATFORM_STAFF.value)
+
+
 def require_admin_or_above(
     user: Annotated[CurrentUser, Depends(require_roles(UserRole.PLATFORM_ADMIN))],
 ) -> CurrentUser:

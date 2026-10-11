@@ -83,6 +83,7 @@ class MeResponse(BaseModel):
     is_platform_admin: bool
     platform_role: str | None = None
     is_active: bool = True
+    portals: list[str] = []
 
 
 class MembershipOut(BaseModel):
