@@ -12,10 +12,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-# Full object id. A short SHA is fetched as a ref name and GitHub rejects it.
-SEED_COMMIT = "5f2b87f3ec9e68a659b7e3e19f97949661a333ae"
 diff = subprocess.check_output(
-    ["git", "show", SEED_COMMIT, "--", "apps/api/src/db/seed.py"],
+    ["git", "show", "5f2b87f3ec9e68a659b7e3e19f97949661a333ae", "--", "apps/api/src/db/seed.py"],
     text=True,
 )
 match = re.search(r'^-PLATFORM_SUPER_ADMIN_PASSWORD = "([^"]+)"', diff, re.M)
