@@ -6,7 +6,7 @@ Salary is calculated the day the period's staff attendance is locked, including 
 
 ## Merge order
 
-This branch adds Alembic revision `0040_payroll_production` with `down_revision = 0035_hr_settings`. Land it on `HRM` after `0035`.
+This branch adds Alembic revision `0040` (`0040_payroll_production.py`, `down_revision = 0035`) and revision `0041` (`0041_payroll_daily.py`, `down_revision = 0040`). Land them on `HRM` after `0035`. `alembic upgrade head` on an empty Postgres 16 database applies `0001` through `0041`.
 
 Finance PR #1 uses revision ids `0028`, `0029`, and `0030` for different files than HRM's `0028_hr_integrity`, `0029_hr_employees`, and `0030_hr_departments`. Do not reuse those ids. When finance merges, renumber its revisions so they are not `0028`–`0035` or `0040`, then point `0040` at the new head if finance must run first. If the `sybeez_definer` role exists at upgrade time, payroll `SECURITY DEFINER` functions are altered to that owner.
 
@@ -34,7 +34,7 @@ Dashboard routes allow school admin, platform admin, payroll admin, HR, accounta
 - Professional tax seeds Karnataka, Maharashtra, and Tamil Nadu. Karnataka: nil below ₹25,000, otherwise ₹200 (₹300 in February). Maharashtra: men 0 / 175 / 200 with February ₹300; women exempt to ₹25,000. Tamil Nadu half-year slabs are spread as amount/6 and may not sum exactly to the half-year figure. Gender `OTHER` follows the male slabs. Admins replace slabs per state.
 - New tax regime is the default (Budget 2025 slabs, standard deduction ₹75,000, rebate when taxable income is at most ₹12,00,000). Old regime is a per-employee opt-in. Cess 4%. Monthly TDS is annual/12. One-time arrears are taxed once.
 - Pay date is the last working day (`LAST_WORKING_DAY`) or a fixed day. Rounding is `NEAREST_RUPEE` or `PAISE`. LOP base is `BASIC` or `GROSS`. Unmarked working day is 1 LOP, half day is 0.5, approved paid leave is 0. Optional and restricted holidays do not reduce working days. Zero working days pays the full month.
-- Bank file is `GENERIC_NEFT` CSV. `register_bank_format` adds another layout.
+- Bank file is `GENERIC_NEFT` CSV. Settings also accept `HDFC`, `ICICI`, `SBI`, and `AXIS`. A bank response CSV marks each row paid (with a UTR) or failed. Retry puts only failed payments back to pending. The next bank file includes pending rows only.
 - Shift default 09:00–16:00, grace 10 minutes, full day 360 minutes, half day 180. Geofence is off. Late and early are flags; they are not LOP by themselves.
 - Bonus default off. Gratuity 15/26 × (basic + DA) × years, minimum 5 years, cap ₹20,00,000.
 - Starter template "Standard" is BASIC ₹30,000, HRA 40% of basic, DA 0%. That is a starter, not a statutory rate.
@@ -166,3 +166,34 @@ Existing `/hr/attendance` daily, history, summary, mark, bulk, patch, and delete
 `GET /api/v1/schools/me/branches` returns `{ branches: [{ name }] }` for the signed-in school. Names come from weekly offs, holidays, and statutory profiles. Empty branch names are the whole school and are left out.
 
 The HRM login portal (`portal=hrm`) accepts school admin, HR manager, and payroll approver.
+
+## Daily payroll
+
+List routes accept `q`, `limit` (1–500), and `offset`. The JSON stays a list. `X-Total-Count` is the count after search, before the page slice. Omit `limit` to return every matching row from `offset`.
+
+Generating a period is idempotent: a second generate for the same dates returns the open run and `created: false`. Rejected and cancelled runs do not block a new generate.
+
+| Method | Path | Request | Response |
+| --- | --- | --- | --- |
+| POST | `/payroll/runs/{id}/recalculate` | `{ reason }` | Rebuilds a draft or rejected run. Restores arrears, claims, and loan EMI, then calculates again. Sets the run back to draft. |
+| POST | `/payroll/runs/{id}/cancel` | `{ reason }` required | Cancels a draft, rejected, or submitted run. Payslips become `CANCELLED` and inputs are restored. |
+| POST | `/payroll/runs/{id}/lock` | `{ reason }` | Only when the run is `PAID`. A locked run rejects payment changes, bank responses, and retries. |
+| GET | `/payroll/runs/{id}/payslips.zip` |  | Zip of payslip PDFs for the run. |
+| GET | `/payroll/runs/{id}/pf-ecr` |  | EPFO ECR text, fields separated by `#~#`. |
+| GET | `/payroll/runs/{id}/register.csv` |  | Salary register CSV |
+| GET | `/payroll/runs/{id}/register.xlsx` |  | Salary register workbook |
+| POST | `/payroll/runs/{id}/bank-response` | multipart CSV `account_number,status,utr,reason` | `{ updated, errors: [{ row, field, message }] }`. `SUCCESS` counts as paid. A paid row needs a UTR. |
+| POST | `/payroll/runs/{id}/payments/retry` | `{ reason }` required | `{ retried }`. Only `FAILED` payments return to `PENDING`. |
+| POST | `/payroll/salary-revisions` | salary assignment body plus `compute_arrears` (default true) | Closes the open assignment and, when the new pay is higher and the date is in a past month, creates arrears for the completed months. |
+| GET | `/payroll/loans/{id}/schedule` |  | `{ loan_id, balance, emi, annual_rate, status, schedule }` |
+| POST | `/payroll/loans/{id}/prepay` | `{ amount, reason }` | Reduces the balance. A prepayment that clears the balance closes the loan. |
+| POST | `/payroll/loans/{id}/close` | `{ reason }` | Sets the balance to zero and status `CLOSED`. |
+| POST | `/payroll/imports/employees` | multipart CSV `employee_code,full_name,email,phone,pan` | `{ created, updated, errors }`. New rows are non-teaching staff. Invalid rows are skipped and listed. |
+| POST | `/payroll/imports/banks` | multipart CSV `employee_code,account_holder,account_number,ifsc,bank_name` | `{ updated, errors }` |
+| GET | `/payroll/exports/{kind}?file_format=csv\|xlsx` | `kind` is `loans`, `arrears`, or `reimbursements` | File download |
+
+Each payslip stores `lop_detail`: `[{ date, status, source, lop_days }]`. `source` is `UNMARKED_WORKING_DAY`, `ABSENT`, `HALF_DAY`, or `UNPAID_LEAVE`.
+
+`payroll_loan_events` records EMI, prepayment, closure, and reversal. Migration `0041` forces row level security on that table, same as the other payroll tables. Tables outside payroll are unchanged: the rest of the API does not set `app.school_id` on every request, so forcing RLS there would block those routes.
+
+Payslip template codes remain `CLASSIC`, `COMPACT`, and `STATUTORY` on payroll settings.

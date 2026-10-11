@@ -447,24 +447,31 @@ class DayMark:
 
 
 def lop_days(marks: list[DayMark], workable: list[date]) -> Decimal:
+    return sum((Decimal(row["lop_days"]) for row in lop_audit(marks, workable)), ZERO)
+
+
+def lop_audit(marks: list[DayMark], workable: list[date]) -> list[dict]:
+    """One row per loss-of-pay day, naming where the deduction came from."""
     by_day = {mark.day: mark for mark in marks}
-    total = ZERO
+    rows: list[dict] = []
     for day in workable:
         mark = by_day.get(day)
-        if mark is None or mark.status == "UNMARKED":
-            total += Decimal("1")
+        status = (mark.status if mark else "UNMARKED").upper()
+        paid_leave = bool(mark and mark.paid_leave)
+        if status == "PRESENT" or (status == "LEAVE" and paid_leave):
             continue
-        status = mark.status.upper()
-        if status == "PRESENT":
-            continue
-        if status == "HALF_DAY":
-            total += Decimal("0.5")
-            continue
-        if status == "LEAVE" and mark.paid_leave:
-            continue
-        if status == "ABSENT" or status == "LEAVE":
-            total += Decimal("1")
-    return total
+        if mark is None or status == "UNMARKED":
+            source, lost = "UNMARKED_WORKING_DAY", "1"
+        elif status == "HALF_DAY":
+            source, lost = "HALF_DAY", "0.5"
+        elif status == "ABSENT":
+            source, lost = "ABSENT", "1"
+        elif status == "LEAVE":
+            source, lost = "UNPAID_LEAVE", "1"
+        else:
+            source, lost = status, "1"
+        rows.append({"date": day.isoformat(), "status": status, "source": source, "lop_days": lost})
+    return rows
 
 
 @dataclass(frozen=True)
@@ -564,6 +571,7 @@ class PayResult:
     pt: Decimal = ZERO
     tds: TdsResult | None = None
     form16: dict | None = None
+    lop_detail: list[dict] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -772,6 +780,7 @@ def compute_pay(ctx: PayContext) -> PayResult:
         pt=pt_amount,
         tds=tax,
         form16=form16_lines(tax, employee_name=ctx.employee_name, pan=ctx.pan, financial_year=fy),
+        lop_detail=lop_audit(ctx.marks, days),
     )
 
 
@@ -914,9 +923,13 @@ def approval_transition(
             raise ValueError("Approve the run before publishing payslips")
         return "PUBLISHED"
     if action == "LOCK":
-        if status not in {"APPROVED", "PUBLISHED", "PAID"}:
-            raise ValueError("Lock a run only after approval")
+        if status != "PAID":
+            raise ValueError("Lock a run only after it is paid")
         return "LOCKED"
+    if action == "CANCEL":
+        if status not in {"DRAFT", "REJECTED", "PENDING_APPROVAL"}:
+            raise ValueError("Cancel a run only before it is approved")
+        return "CANCELLED"
     raise ValueError("Unknown payroll action")
 
 

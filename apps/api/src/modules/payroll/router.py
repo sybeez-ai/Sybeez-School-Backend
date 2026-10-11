@@ -14,6 +14,7 @@ from src.api.dependencies import CurrentUser, get_current_user
 from src.core.database import get_db
 from src.core.exceptions import AppError
 from src.modules.payroll.dashboard import PayrollDashboard
+from src.modules.payroll.ops import page_rows
 from src.modules.payroll.ratelimit import payroll_rate_limit
 from src.modules.payroll.schemas import (
     ArrearIn,
@@ -26,6 +27,7 @@ from src.modules.payroll.schemas import (
     HolidayIn,
     LoanIn,
     LoanPause,
+    LoanPrepay,
     PaymentUpdate,
     PreviewIn,
     PtReplace,
@@ -34,6 +36,7 @@ from src.modules.payroll.schemas import (
     RoleGrantIn,
     RunAction,
     SalaryAssign,
+    SalaryRevision,
     SettingsUpdate,
     SettlementIn,
     StatutoryProfileIn,
@@ -73,6 +76,28 @@ def _bundle(item: dict) -> dict:
     return {"template": dump(item["template"]), "lines": [dump(line) for line in item["lines"]]}
 
 
+def page_query(
+    q: str | None = Query(default=None, max_length=120),
+    limit: int | None = Query(default=None, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+) -> dict:
+    return {"q": q, "limit": limit, "offset": offset}
+
+
+Page = Annotated[dict, Depends(page_query)]
+
+
+def _cut(response: Response, rows: list, page: dict, text_of) -> list:
+    sliced, total = page_rows(rows, q=page["q"], limit=page["limit"], offset=page["offset"], text_of=text_of)
+    response.headers["X-Total-Count"] = str(total)
+    return sliced
+
+
+def _blob(row) -> str:
+    data = dump(row) or {}
+    return " ".join(str(value) for value in data.values() if value is not None)
+
+
 @router.get("/settings")
 async def get_settings(user: User, db: Db):
     row = await _svc(db, user).get_settings()
@@ -86,8 +111,8 @@ async def update_settings(body: SettingsUpdate, user: User, db: Db):
 
 
 @router.get("/settings/versions")
-async def setting_versions(user: User, db: Db):
-    return [dump(row) for row in await _svc(db, user).list_setting_versions()]
+async def setting_versions(user: User, db: Db, response: Response, page: Page):
+    return _cut(response, [dump(row) for row in await _svc(db, user).list_setting_versions()], page, lambda row: _blob(row))
 
 
 @router.post("/settings/logo")
@@ -110,8 +135,8 @@ async def payslip_templates(user: User, db: Db):
 
 
 @router.get("/components")
-async def list_components(user: User, db: Db):
-    return [dump(row) for row in await _svc(db, user).list_components()]
+async def list_components(user: User, db: Db, response: Response, page: Page):
+    return _cut(response, [dump(row) for row in await _svc(db, user).list_components()], page, lambda row: _blob(row))
 
 
 @router.post("/components", status_code=201)
@@ -125,8 +150,8 @@ async def retire_component(component_id: UUID, body: ReasonBody, user: User, db:
 
 
 @router.get("/salary-templates")
-async def list_templates(user: User, db: Db):
-    return [_bundle(item) for item in await _svc(db, user).list_templates()]
+async def list_templates(user: User, db: Db, response: Response, page: Page):
+    return _cut(response, [_bundle(item) for item in await _svc(db, user).list_templates()], page, lambda row: _blob(row.get("template")))
 
 
 @router.post("/salary-templates", status_code=201)
@@ -135,8 +160,13 @@ async def create_template(body: TemplateCreate, user: User, db: Db):
 
 
 @router.get("/salary-assignments")
-async def list_salary_assignments(user: User, db: Db, employee_id: UUID | None = None):
-    return await _svc(db, user).list_assignments(employee_id)
+async def list_salary_assignments(user: User, db: Db, response: Response, page: Page, employee_id: UUID | None = None):
+    return _cut(response, await _svc(db, user).list_assignments(employee_id), page, lambda row: _blob(row))
+
+
+@router.post("/salary-revisions", status_code=201)
+async def revise_salary(body: SalaryRevision, user: User, db: Db):
+    return dump(await _svc(db, user).revise_salary(body.model_dump()))
 
 
 @router.post("/salary-assignments", status_code=201)
@@ -166,8 +196,8 @@ async def my_profile(user: User, db: Db):
 
 
 @router.get("/weekly-offs")
-async def list_weekly_offs(user: User, db: Db):
-    return [dump(row) for row in await _svc(db, user).list_weekly_offs()]
+async def list_weekly_offs(user: User, db: Db, response: Response, page: Page):
+    return _cut(response, [dump(row) for row in await _svc(db, user).list_weekly_offs()], page, lambda row: _blob(row))
 
 
 @router.put("/weekly-offs")
@@ -176,8 +206,8 @@ async def replace_weekly_offs(body: WeeklyOffReplace, user: User, db: Db):
 
 
 @router.get("/holidays")
-async def list_holidays(user: User, db: Db, year: int | None = None):
-    return [dump(row) for row in await _svc(db, user).list_holidays(year)]
+async def list_holidays(user: User, db: Db, response: Response, page: Page, year: int | None = None):
+    return _cut(response, [dump(row) for row in await _svc(db, user).list_holidays(year)], page, lambda row: _blob(row))
 
 
 @router.post("/holidays", status_code=201)
@@ -192,8 +222,8 @@ async def delete_holiday(holiday_id: UUID, user: User, db: Db, reason: str = Que
 
 
 @router.get("/pt-slabs")
-async def list_pt_slabs(user: User, db: Db, state: str | None = None):
-    return [dump(row) for row in await _svc(db, user).list_pt_slabs(state)]
+async def list_pt_slabs(user: User, db: Db, response: Response, page: Page, state: str | None = None):
+    return _cut(response, [dump(row) for row in await _svc(db, user).list_pt_slabs(state)], page, lambda row: _blob(row))
 
 
 @router.put("/pt-slabs/{state}")
@@ -202,8 +232,8 @@ async def replace_pt_slabs(state: str, body: PtReplace, user: User, db: Db):
 
 
 @router.get("/loans")
-async def list_loans(user: User, db: Db, employee_id: UUID | None = None):
-    return [dump(row) for row in await _svc(db, user).list_loans(employee_id)]
+async def list_loans(user: User, db: Db, response: Response, page: Page, employee_id: UUID | None = None):
+    return _cut(response, [dump(row) for row in await _svc(db, user).list_loans(employee_id)], page, lambda row: _blob(row))
 
 
 @router.post("/loans", status_code=201)
@@ -216,9 +246,24 @@ async def pause_loan(loan_id: UUID, body: LoanPause, user: User, db: Db):
     return dump(await _svc(db, user).pause_loan(loan_id, body.paused_until, body.reason))
 
 
+@router.get("/loans/{loan_id}/schedule")
+async def loan_schedule(loan_id: UUID, user: User, db: Db):
+    return await _svc(db, user).loan_schedule(loan_id)
+
+
+@router.post("/loans/{loan_id}/prepay")
+async def prepay_loan(loan_id: UUID, body: LoanPrepay, user: User, db: Db):
+    return dump(await _svc(db, user).prepay_loan(loan_id, body.amount, body.reason))
+
+
+@router.post("/loans/{loan_id}/close")
+async def close_loan(loan_id: UUID, body: ReasonBody, user: User, db: Db):
+    return dump(await _svc(db, user).close_loan(loan_id, body.reason))
+
+
 @router.get("/arrears")
-async def list_arrears(user: User, db: Db, employee_id: UUID | None = None, status: str | None = None):
-    return [dump(row) for row in await _svc(db, user).list_arrears(employee_id, status)]
+async def list_arrears(user: User, db: Db, response: Response, page: Page, employee_id: UUID | None = None, status: str | None = None):
+    return _cut(response, [dump(row) for row in await _svc(db, user).list_arrears(employee_id, status)], page, lambda row: _blob(row))
 
 
 @router.post("/arrears", status_code=201)
@@ -227,8 +272,8 @@ async def create_arrear(body: ArrearIn, user: User, db: Db):
 
 
 @router.get("/reimbursements")
-async def list_reimbursements(user: User, db: Db, employee_id: UUID | None = None, status: str | None = None):
-    return [dump(row) for row in await _svc(db, user).list_reimbursements(employee_id, status)]
+async def list_reimbursements(user: User, db: Db, response: Response, page: Page, employee_id: UUID | None = None, status: str | None = None):
+    return _cut(response, [dump(row) for row in await _svc(db, user).list_reimbursements(employee_id, status)], page, lambda row: _blob(row))
 
 
 @router.post("/reimbursements", status_code=201)
@@ -255,11 +300,18 @@ async def my_declaration(body: DeclarationIn, user: User, db: Db):
 async def list_declarations(
     user: User,
     db: Db,
+    response: Response,
+    page: Page,
     financial_year: str | None = Query(default=None, max_length=9),
     employee_id: UUID | None = None,
     status: str | None = None,
 ):
-    return [dump(row) for row in await _svc(db, user).list_declarations(financial_year, employee_id, status)]
+    return _cut(
+        response,
+        [dump(row) for row in await _svc(db, user).list_declarations(financial_year, employee_id, status)],
+        page,
+        lambda row: _blob(row),
+    )
 
 
 @router.put("/declarations")
@@ -283,8 +335,8 @@ async def verify_declaration(declaration_id: UUID, body: ReasonBody, user: User,
 
 
 @router.get("/roles")
-async def list_roles(user: User, db: Db):
-    return [dump(row) for row in await _svc(db, user).list_grants()]
+async def list_roles(user: User, db: Db, response: Response, page: Page):
+    return _cut(response, [dump(row) for row in await _svc(db, user).list_grants()], page, lambda row: _blob(row))
 
 
 @router.post("/roles", status_code=201)
@@ -299,13 +351,14 @@ async def revoke_role(grant_id: UUID, user: User, db: Db, reason: str = Query(mi
 
 
 @router.get("/audit")
-async def list_audit(user: User, db: Db, limit: int = Query(default=200, ge=1, le=500)):
-    return [dump(row) for row in await _svc(db, user).list_audit(limit)]
+async def list_audit(user: User, db: Db, response: Response, page: Page):
+    rows = [dump(row) for row in await _svc(db, user).list_audit(page["limit"] or 200)]
+    return _cut(response, rows, {**page, "limit": None}, lambda row: _blob(row))
 
 
 @router.get("/compliance")
-async def list_compliance(user: User, db: Db):
-    return [dump(row) for row in await _svc(db, user).list_compliance()]
+async def list_compliance(user: User, db: Db, response: Response, page: Page):
+    return _cut(response, [dump(row) for row in await _svc(db, user).list_compliance()], page, lambda row: _blob(row))
 
 
 @router.post("/compliance", status_code=201)
@@ -325,8 +378,55 @@ async def generate_run(body: GenerateIn, user: User, db: Db):
 
 
 @router.get("/runs")
-async def list_runs(user: User, db: Db):
-    return [dump(row) for row in await _svc(db, user).list_runs()]
+async def list_runs(user: User, db: Db, response: Response, page: Page):
+    return _cut(response, [dump(row) for row in await _svc(db, user).list_runs()], page, lambda row: _blob(row))
+
+
+@router.post("/runs/{run_id}/recalculate")
+async def recalculate_run(run_id: UUID, body: RunAction, user: User, db: Db):
+    result = await _svc(db, user).recalculate_run(run_id, body.reason)
+    return {"run": dump(result["run"]), "created": result["created"], "skipped": result["skipped"], "recalculated": True}
+
+
+@router.post("/runs/{run_id}/cancel")
+async def cancel_run(run_id: UUID, body: RunAction, user: User, db: Db):
+    return dump(await _svc(db, user).transition(run_id, "cancel", body.reason))
+
+
+@router.get("/runs/{run_id}/payslips.zip")
+async def payslips_zip(run_id: UUID, user: User, db: Db):
+    content, name = await _svc(db, user).payslips_zip(run_id)
+    return RawResponse(content=content, media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+@router.get("/runs/{run_id}/pf-ecr")
+async def pf_ecr(run_id: UUID, user: User, db: Db):
+    body, mime = await _svc(db, user).pf_ecr(run_id)
+    return RawResponse(content=body, media_type=mime, headers={"Content-Disposition": f'attachment; filename="pf-ecr-{run_id}.txt"'})
+
+
+@router.get("/runs/{run_id}/register.csv")
+async def register_csv(run_id: UUID, user: User, db: Db):
+    body, mime, name = await _svc(db, user).register_file(run_id, "csv")
+    return RawResponse(content=body, media_type=mime, headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+@router.get("/runs/{run_id}/register.xlsx")
+async def register_xlsx(run_id: UUID, user: User, db: Db):
+    body, mime, name = await _svc(db, user).register_file(run_id, "xlsx")
+    return RawResponse(content=body, media_type=mime, headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+@router.post("/runs/{run_id}/bank-response")
+async def bank_response(run_id: UUID, user: User, db: Db, file: UploadFile = File(...)):
+    return await _svc(db, user).import_bank_response(run_id, await file.read())
+
+
+@router.post("/runs/{run_id}/payments/retry")
+async def retry_payments(run_id: UUID, body: RunAction, user: User, db: Db):
+    if not body.reason:
+        raise AppError("A reason is required to retry payments", status_code=422)
+    return await _svc(db, user).retry_failed_payments(run_id, body.reason)
 
 
 @router.get("/runs/{run_id}")
@@ -411,8 +511,24 @@ async def update_payment(payslip_id: UUID, body: PaymentUpdate, user: User, db: 
 
 
 @router.get("/payslips/me")
-async def my_payslips(user: User, db: Db, year: int | None = None):
-    return [dump(row) for row in await _svc(db, user).my_payslips(year)]
+async def my_payslips(user: User, db: Db, response: Response, page: Page, year: int | None = None):
+    return _cut(response, [dump(row) for row in await _svc(db, user).my_payslips(year)], page, lambda row: _blob(row))
+
+
+@router.post("/imports/employees")
+async def import_employees(user: User, db: Db, file: UploadFile = File(...)):
+    return await _svc(db, user).import_employees(await file.read())
+
+
+@router.post("/imports/banks")
+async def import_banks(user: User, db: Db, file: UploadFile = File(...)):
+    return await _svc(db, user).import_banks(await file.read())
+
+
+@router.get("/exports/{kind}")
+async def export_table(kind: str, user: User, db: Db, file_format: str = Query(default="csv", pattern="^(csv|xlsx)$")):
+    body, mime, name = await _svc(db, user).export_table(kind, file_format)
+    return RawResponse(content=body, media_type=mime, headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
 @router.get("/payslips/{payslip_id}/pdf")
@@ -427,9 +543,9 @@ async def payslip_pdf(payslip_id: UUID, user: User, db: Db, intent: str = Query(
 
 
 @router.get("/notifications")
-async def payslip_notifications(user: User, db: Db, limit: int = Query(default=50, ge=1, le=200)):
-    rows = await _svc(db, user).list_payslip_notifications(limit)
-    return [
+async def payslip_notifications(user: User, db: Db, response: Response, page: Page):
+    rows = await _svc(db, user).list_payslip_notifications(page["limit"] or 50)
+    listed = [
         {
             "id": str(row.id),
             "title": row.title,
@@ -442,6 +558,7 @@ async def payslip_notifications(user: User, db: Db, limit: int = Query(default=5
         }
         for row in rows
     ]
+    return _cut(response, listed, {**page, "limit": None}, lambda row: f"{row.get('title')} {row.get('body')}")
 
 
 @router.get("/form16/me")

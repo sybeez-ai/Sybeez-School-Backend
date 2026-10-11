@@ -328,6 +328,29 @@ class PayrollLoan(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="ACTIVE")
 
 
+class PayrollLoanEvent(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """One EMI, prepayment, closure, or reversal against a loan."""
+
+    __tablename__ = "payroll_loan_events"
+    __table_args__ = (
+        CheckConstraint("principal >= 0 AND interest >= 0 AND balance_after >= 0", name="loan_event_amounts"),
+        CheckConstraint(_in("kind", ("EMI", "PREPAY", "CLOSE", "REVERSAL")), name="loan_event_kind"),
+    )
+
+    school_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    loan_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("payroll_loans.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    payslip_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    principal: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=Decimal("0"))
+    interest: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=Decimal("0"))
+    balance_after: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
 class PayrollArrear(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "payroll_arrears"
     __table_args__ = (
