@@ -49,6 +49,7 @@ from src.modules.questions.router import router as questions_router
 from src.modules.reports.router import router as reports_router
 from src.modules.results.router import router as results_router
 from src.modules.schools.router import router as schools_router
+from src.modules.payroll.assistant.router import router as payroll_assistant_router
 from src.modules.payroll.router import router as payroll_router
 from src.modules.staff_attendance.router import router as staff_attendance_router
 from src.modules.staff_attendance.self_router import router as staff_self_attendance_router
@@ -110,6 +111,7 @@ api_router.include_router(hr_router, prefix=API_V1_PREFIX)
 api_router.include_router(employees_router, prefix=API_V1_PREFIX)
 api_router.include_router(hr_org_router, prefix=API_V1_PREFIX)
 api_router.include_router(payroll_router, prefix=API_V1_PREFIX)
+api_router.include_router(payroll_assistant_router, prefix=API_V1_PREFIX)
 api_router.include_router(staff_self_attendance_router, prefix=API_V1_PREFIX)
 api_router.include_router(staff_attendance_router, prefix=API_V1_PREFIX)
 api_router.include_router(hr_letters_router, prefix=API_V1_PREFIX)

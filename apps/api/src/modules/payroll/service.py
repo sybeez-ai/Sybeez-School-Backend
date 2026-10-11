@@ -26,6 +26,8 @@ from src.db.models import (
     PayrollArrear,
     PayrollAuditLog,
     PayrollLoan,
+    PayrollLoanEvent,
+    PayrollOpeningYtd,
     PayrollPayment,
     PayrollPayslip,
     PayrollPayslipLine,
@@ -52,6 +54,8 @@ from src.db.models import (
 )
 from src.modules.employees.service import sync_teacher_employees
 from src.modules.payroll.bank import render_bank_file
+from src.modules.payroll.flow import PayrollFlow
+from src.modules.payroll.ops import assignment_calc, validate_component_fields
 from src.modules.payroll.calc import (
     SEEDED_PT_SLABS,
     ComponentDef,
@@ -66,6 +70,7 @@ from src.modules.payroll.calc import (
     completed_years,
     compute_pay,
     eval_formula,
+    canonical_financial_year,
     financial_year_label,
     gratuity,
     last_working_day,
@@ -117,7 +122,7 @@ def _jsonable(value):
     return value
 
 
-class PayrollService:
+class PayrollService(PayrollFlow):
     def __init__(self, db: AsyncSession, user: CurrentUser, *, bypass: bool = False):
         if user.school_id is None:
             raise ForbiddenError("School context required")
@@ -266,6 +271,18 @@ class PayrollService:
         await self._allow(SETTINGS_WRITE)
         row = await self.ensure_settings()
         reason = require_text(data.pop("reason", "") or "", max_len=2000, field="reason")
+        if data.get("bank_format"):
+            from src.modules.payroll.bank import BANK_FORMATS
+
+            code = str(data["bank_format"]).upper()
+            if code not in BANK_FORMATS:
+                raise AppError("bank_format must be GENERIC_NEFT, HDFC, ICICI, SBI, or AXIS", status_code=422)
+            data["bank_format"] = code
+        if data.get("template_code"):
+            code = str(data["template_code"]).upper()
+            if code not in {"CLASSIC", "COMPACT", "STATUTORY"}:
+                raise AppError("template_code must be CLASSIC, COMPACT, or STATUTORY", status_code=422)
+            data["template_code"] = code
         before = _settings_dict(row)
         _apply_settings(row, data)
         row.updated_by = self.actor_id
@@ -328,6 +345,17 @@ class PayrollService:
                 raise AppError(str(exc), status_code=422) from exc
         if calc == "PERCENT" and not data.get("percent_of"):
             raise AppError("percent_of is required", status_code=422)
+        try:
+            validate_component_fields(
+                kind=kind,
+                calc_type=calc,
+                amount=_d(data["amount"]) if data.get("amount") is not None else None,
+                percent=_d(data["percent"]) if data.get("percent") is not None else None,
+                percent_of=(data.get("percent_of") or None),
+                formula=formula,
+            )
+        except ValueError as exc:
+            raise AppError(str(exc), status_code=422) from exc
         row = SalaryComponent(
             id=uuid4(),
             school_id=self.school_id,
@@ -1051,61 +1079,8 @@ class PayrollService:
         )
         self.db.add(run)
         await self.db.flush()
-        employees = list(
-            (
-                await self.db.execute(
-                    select(Employee).where(Employee.school_id == self.school_id, Employee.status == "ACTIVE")
-                )
-            ).scalars()
-        )
-        skipped = []
         try:
-            for employee in employees:
-                assignment = await self._assignment(employee.id, period_end)
-                if assignment is None:
-                    skipped.append(str(employee.id))
-                    continue
-                pay, loan_rows = await self._compute_employee(employee.id, period_start, period_end, persist_loans=True)
-                slip = PayrollPayslip(
-                    id=uuid4(),
-                    school_id=self.school_id,
-                    payroll_run_id=run.id,
-                    teacher_id=employee.teacher_id,
-                    employee_id=employee.id,
-                    gross_amount=pay.gross,
-                    deductions_amount=pay.deductions,
-                    net_amount=pay.net,
-                    status="DRAFT",
-                    working_days=pay.working_days,
-                    lop_days=pay.lop_days,
-                    paid_days=pay.paid_days,
-                    tax_regime=pay.tds.regime if pay.tds else None,
-                    form16=pay.form16,
-                )
-                self.db.add(slip)
-                for line in pay.lines:
-                    self.db.add(
-                        PayrollPayslipLine(
-                            id=uuid4(),
-                            school_id=self.school_id,
-                            payslip_id=slip.id,
-                            code=line.code,
-                            name=line.name,
-                            kind=line.kind,
-                            amount=line.amount,
-                            display_order=line.display_order,
-                        )
-                    )
-                self.db.add(
-                    PayrollPayment(
-                        id=uuid4(),
-                        school_id=self.school_id,
-                        payslip_id=slip.id,
-                        amount=pay.net,
-                        status="PENDING",
-                    )
-                )
-                await self._consume_inputs(employee.id, slip.id, loan_rows, pay)
+            skipped = await self._fill_statutory(run, period_start, period_end)
             if source == "ATTENDANCE_LOCK":
                 run.approval_status = "PENDING_APPROVAL"
                 run.submitted_by = self.actor_id
@@ -1212,6 +1187,7 @@ class PayrollService:
                 )
             ).scalars()
         )
+        opening = await self._opening_ytd(employee.id, financial_year_label(end))
         basic_guess = next((c.amount for c in components if c.code == "BASIC"), _ZERO)
         da_guess = next((c.amount for c in components if c.code == "DA"), _ZERO)
         bonus = statutory_bonus(
@@ -1268,6 +1244,8 @@ class PayrollService:
             bonus=bonus,
             employee_name=name,
             pan=profile.pan if profile else None,
+            prior_gross=opening.ytd_gross if opening else _ZERO,
+            prior_tds=opening.ytd_tds if opening else _ZERO,
         )
         draft = compute_pay(PayContext(**common, loan_emi=_ZERO))
         room = draft.gross - draft.deductions
@@ -1307,7 +1285,7 @@ class PayrollService:
                     code=component.code,
                     name=component.name,
                     kind=component.kind,
-                    calc_type=component.calc_type,
+                    calc_type=assignment_calc(component.calc_type, raw),
                     amount=amount or _ZERO,
                     percent=percent,
                     percent_of=component.percent_of,
@@ -1419,6 +1397,18 @@ class PayrollService:
             if loan.balance <= 0:
                 loan.status = "CLOSED"
                 loan.balance = _ZERO
+            self.db.add(
+                PayrollLoanEvent(
+                    id=uuid4(),
+                    school_id=self.school_id,
+                    loan_id=loan.id,
+                    payslip_id=payslip_id,
+                    kind="EMI",
+                    principal=principal,
+                    interest=_interest,
+                    balance_after=loan.balance,
+                )
+            )
             remaining -= take
 
     async def list_runs(self) -> list[PayrollRun]:
@@ -1465,6 +1455,8 @@ class PayrollService:
             raise AppError("This action applies to a statutory payroll run", status_code=422)
         if action in {"approve", "reject"} and UserRole.AUDITOR.value in held and held.isdisjoint(APPROVE - {UserRole.AUDITOR.value}):
             raise ForbiddenError("Auditors cannot decide payroll")
+        if action == "cancel" and not reason:
+            raise AppError("A reason is required to cancel a payroll run", status_code=422)
         settings = await self.ensure_settings()
         try:
             new_status = approval_transition(
@@ -1497,6 +1489,10 @@ class PayrollService:
         elif action == "lock":
             run.locked_at = _now()
             run.approval_status = "LOCKED"
+        elif action == "cancel":
+            if not reason:
+                raise AppError("A reason is required to cancel a payroll run", status_code=422)
+            await self.cancel_slips(run)
         await self._audit(f"run.{action}", "payroll_run", run.id, before, {"approval_status": run.approval_status}, reason)
         if action == "approve":
             await self._publish_run(run, settings, reason or "Approved")
@@ -1620,6 +1616,10 @@ class PayrollService:
 
     async def form16(self, employee_id: UUID | None, financial_year: str) -> dict:
         await self._bind()
+        try:
+            financial_year = canonical_financial_year(financial_year)
+        except ValueError as exc:
+            raise AppError(str(exc), status_code=422) from exc
         if employee_id is None:
             employee = await self._employee_for_user()
         else:
@@ -1658,14 +1658,34 @@ class PayrollService:
                 _ZERO,
             )
         latest = slips[-1].form16 if slips and slips[-1].form16 else {}
+        opening = await self._opening_ytd(employee.id, financial_year)
+        if opening:
+            gross += opening.ytd_gross
+            tds_total += opening.ytd_tds
         return {
             "employee_id": str(employee.id),
             "financial_year": financial_year,
             "payslip_count": len(slips),
             "gross": str(gross),
             "tds_deducted": str(tds_total),
+            "opening_gross": str(opening.ytd_gross if opening else _ZERO),
+            "opening_tds": str(opening.ytd_tds if opening else _ZERO),
+            "opening_pf": str(opening.ytd_pf if opening else _ZERO),
+            "opening_esi": str(opening.ytd_esi if opening else _ZERO),
+            "opening_pt": str(opening.ytd_pt if opening else _ZERO),
             "snapshot": latest,
         }
+
+    async def _opening_ytd(self, employee_id: UUID, financial_year: str) -> PayrollOpeningYtd | None:
+        return (
+            await self.db.execute(
+                select(PayrollOpeningYtd).where(
+                    PayrollOpeningYtd.school_id == self.school_id,
+                    PayrollOpeningYtd.employee_id == employee_id,
+                    PayrollOpeningYtd.financial_year == financial_year,
+                )
+            )
+        ).scalar_one_or_none()
 
     async def form16_pdf(self, employee_id: UUID | None, financial_year: str) -> tuple[bytes, str]:
         data = await self.form16(employee_id, financial_year)
@@ -1844,6 +1864,11 @@ class PayrollService:
                             )
                         )
                     ).scalar_one_or_none()
+                payment = (
+                    await self.db.execute(select(PayrollPayment).where(PayrollPayment.payslip_id == slip.id))
+                ).scalars().first()
+                if payment is None or payment.status != "PENDING":
+                    continue
                 if bank is None:
                     continue
                 export_rows.append(
@@ -1856,12 +1881,8 @@ class PayrollService:
                         "employee_code": employee.employee_code if employee else "",
                     }
                 )
-                payment = (
-                    await self.db.execute(select(PayrollPayment).where(PayrollPayment.payslip_id == slip.id))
-                ).scalars().first()
-                if payment and payment.status == "PENDING":
-                    payment.status = "EXPORTED"
-                    payment.exported_at = _now()
+                payment.status = "EXPORTED"
+                payment.exported_at = _now()
             body, mime = render_bank_file(settings.bank_format, export_rows)
         except Exception as exc:
             track_alert("payroll_bank_file_failed", run_id=str(run.id), error=type(exc).__name__)
@@ -1875,6 +1896,9 @@ class PayrollService:
         slip = await self.db.get(PayrollPayslip, payslip_id)
         if slip is None or slip.school_id != self.school_id:
             raise NotFoundError("Payslip not found")
+        run = await self._run(slip.payroll_run_id)
+        if run.approval_status == "LOCKED":
+            raise AppError("A locked run cannot be changed", status_code=422)
         payment = (
             await self.db.execute(select(PayrollPayment).where(PayrollPayment.payslip_id == slip.id))
         ).scalars().first()
@@ -1896,6 +1920,7 @@ class PayrollService:
             payment.paid_at = _now()
             slip.status = "PAID"
             slip.paid_on = date.today()
+        await self._sync_paid(slip.payroll_run_id)
         await self._audit("payment.update", "payroll_payment", payment.id, before, {"status": status}, data.get("reason"))
         await self.db.flush()
         return payment

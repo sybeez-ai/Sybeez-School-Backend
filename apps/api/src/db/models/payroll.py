@@ -328,6 +328,29 @@ class PayrollLoan(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="ACTIVE")
 
 
+class PayrollLoanEvent(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """One EMI, prepayment, closure, or reversal against a loan."""
+
+    __tablename__ = "payroll_loan_events"
+    __table_args__ = (
+        CheckConstraint("principal >= 0 AND interest >= 0 AND balance_after >= 0", name="loan_event_amounts"),
+        CheckConstraint(_in("kind", ("EMI", "PREPAY", "CLOSE", "REVERSAL")), name="loan_event_kind"),
+    )
+
+    school_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    loan_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("payroll_loans.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    payslip_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    principal: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=Decimal("0"))
+    interest: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=Decimal("0"))
+    balance_after: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
 class PayrollArrear(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "payroll_arrears"
     __table_args__ = (
@@ -444,6 +467,94 @@ class PayrollPayment(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     exported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class PayrollAssistantAction(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """A write the assistant proposed. It runs only after the user confirms it."""
+
+    __tablename__ = "payroll_assistant_actions"
+    __table_args__ = (
+        CheckConstraint(_in("status", ("PROPOSED", "EXECUTED")), name="assistant_action_status"),
+        Index(
+            "uq_payroll_assistant_idempotency",
+            "school_id",
+            "user_id",
+            "idempotency_key",
+            unique=True,
+            postgresql_where=text("idempotency_key IS NOT NULL"),
+        ),
+    )
+
+    school_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    action: Mapped[str] = mapped_column(String(48), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="PROPOSED")
+    idempotency_key: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    result: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
+
+class PayrollAssistantImport(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """A parsed pay sheet. Payroll rows are written only after confirm."""
+
+    __tablename__ = "payroll_assistant_imports"
+    __table_args__ = (
+        CheckConstraint(_in("status", ("PREVIEW", "IMPORTED")), name="assistant_import_status"),
+        Index(
+            "uq_payroll_assistant_import_idempotency",
+            "school_id",
+            "user_id",
+            "idempotency_key",
+            unique=True,
+            postgresql_where=text("idempotency_key IS NOT NULL"),
+        ),
+    )
+
+    school_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(120), nullable=False, default="application/octet-stream")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="PREVIEW")
+    mapping: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    preview: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    idempotency_key: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    result: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
+
+class PayrollOpeningYtd(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """Figures already paid this financial year before the school started on this payroll."""
+
+    __tablename__ = "payroll_opening_ytd"
+    __table_args__ = (
+        UniqueConstraint("employee_id", "financial_year", name="uq_opening_ytd_employee_fy"),
+        ForeignKeyConstraint(
+            ["employee_id", "school_id"],
+            ["employees.id", "employees.school_id"],
+            name="fk_opening_ytd_employee_school",
+            ondelete="CASCADE",
+        ),
+    )
+
+    school_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    employee_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    financial_year: Mapped[str] = mapped_column(String(9), nullable=False)
+    ytd_gross: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=Decimal("0"))
+    ytd_tds: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=Decimal("0"))
+    ytd_pf: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=Decimal("0"))
+    ytd_esi: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=Decimal("0"))
+    ytd_pt: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=Decimal("0"))
+    source: Mapped[str] = mapped_column(String(32), nullable=False, default="IMPORT")
 
 
 class PayrollAuditLog(Base, UUIDPrimaryKeyMixin):

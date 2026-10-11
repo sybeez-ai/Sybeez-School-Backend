@@ -92,7 +92,8 @@ def _align(connection: Connection) -> str:
         f"Detected legacy finance revision {version} "
         f"(finance objects present, HRM objects for that id absent). "
         f"Restamped alembic_version to {STAMP_TARGET}. "
-        "upgrade will apply HRM 0028 through payroll 0040, then idempotent finance 0041-0043.",
+        "upgrade will apply HRM 0028 through payroll 0040, then idempotent finance 0041-0043, "
+        "then payroll 0044-0046.",
         file=sys.stderr,
         flush=True,
     )

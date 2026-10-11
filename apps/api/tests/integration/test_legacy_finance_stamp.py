@@ -87,7 +87,7 @@ async def test_legacy_finance_0030_upgrades_to_head():
         assert upgraded.returncode == 0, upgraded.stdout + "\n" + upgraded.stderr
         assert "Detected legacy finance revision 0030" in upgraded.stderr
         assert "Restamped alembic_version to 0027" in upgraded.stderr
-        assert await _version(name) == "0043"
+        assert await _version(name) == "0046"
 
         conn = await asyncpg.connect(user="sybeez", password="sybeez", host="127.0.0.1", database=name)
         try:
@@ -95,6 +95,8 @@ async def test_legacy_finance_0030_upgrades_to_head():
             assert await conn.fetchval("SELECT to_regclass('public.employees')") == "employees"
             assert await conn.fetchval("SELECT to_regclass('public.finance_staff_scopes')") == "finance_staff_scopes"
             assert await conn.fetchval("SELECT to_regclass('public.payroll_runs')") == "payroll_runs"
+            assert await conn.fetchval("SELECT to_regclass('public.payroll_assistant_imports')") == "payroll_assistant_imports"
+            assert await conn.fetchval("SELECT to_regclass('public.payroll_loan_events')") == "payroll_loan_events"
             mode = await conn.fetchval(
                 """
                 SELECT 1 FROM information_schema.columns
@@ -141,7 +143,7 @@ async def test_hrm_0030_is_not_restamped():
         upgraded = _alembic(name, "upgrade", "head")
         assert upgraded.returncode == 0, upgraded.stdout + "\n" + upgraded.stderr
         assert "Restamped" not in upgraded.stderr
-        assert await _version(name) == "0043"
+        assert await _version(name) == "0046"
     finally:
         await admin.execute(
             "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()",

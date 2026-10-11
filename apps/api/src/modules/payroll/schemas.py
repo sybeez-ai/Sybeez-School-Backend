@@ -298,3 +298,11 @@ class InternalGenerate(BaseModel):
     period_end: date
     locked_by: UUID
     source: str = "ATTENDANCE_LOCK"
+
+
+class SalaryRevision(SalaryAssign):
+    compute_arrears: bool = True
+
+
+class LoanPrepay(ReasonBody):
+    amount: Decimal = Field(gt=0)

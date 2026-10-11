@@ -6,9 +6,9 @@ Salary is calculated the day the period's staff attendance is locked, including 
 
 ## Merge order
 
-This branch adds Alembic revision `0040_payroll_production` with `down_revision = 0035_hr_settings`. Land it on `HRM` after `0035`.
+`alembic upgrade head` on an empty Postgres 16 database applies `0001` through `0046`.
 
-Finance PR #1 used revision ids `0028`, `0029`, and `0030` for different files than HRM's `0028_hr_integrity`, `0029_hr_employees`, and `0030_hr_departments`. Those finance revisions are renumbered to `0041_finance_production` (`down_revision = 0040`), `0042_platform_rls`, and `0043_ai_shared_columns`. The chain is linear and ends at `0043`. Payroll policies from `0040` stay in place; `0042` still forces RLS on those tables. If the `sybeez_definer` role exists at upgrade time, payroll `SECURITY DEFINER` functions are altered to that owner.
+Finance PR #1 used revision ids `0028`, `0029`, and `0030` for different files than HRM's `0028_hr_integrity`, `0029_hr_employees`, and `0030_hr_departments`. Those finance revisions are `0041_finance_production` (`down_revision = 0040`), `0042_platform_rls`, and `0043_ai_shared_columns`. Payroll daily, assistant, and import used the same ids on the payroll branch. On `release` they are `0044_payroll_daily` (`down_revision = 0043`), `0045_payroll_assistant`, and `0046_payroll_assistant_import`. The chain is linear and ends at `0046`. Payroll policies from `0040` stay in place; `0042` still forces RLS on those tables and does not replace them. `0044`–`0046` force RLS on the tables they add. If the `sybeez_definer` role exists at upgrade time, payroll `SECURITY DEFINER` functions are altered to that owner.
 
 Production requires `S3_BUCKET`. The app stores object keys only and does not create AWS resources. Development writes under `apps/api/media` when the bucket is empty.
 
@@ -34,7 +34,7 @@ Dashboard routes allow school admin, platform admin, payroll admin, HR, accounta
 - Professional tax seeds Karnataka, Maharashtra, and Tamil Nadu. Karnataka: nil below ₹25,000, otherwise ₹200 (₹300 in February). Maharashtra: men 0 / 175 / 200 with February ₹300; women exempt to ₹25,000. Tamil Nadu half-year slabs are spread as amount/6 and may not sum exactly to the half-year figure. Gender `OTHER` follows the male slabs. Admins replace slabs per state.
 - New tax regime is the default (Budget 2025 slabs, standard deduction ₹75,000, rebate when taxable income is at most ₹12,00,000). Old regime is a per-employee opt-in. Cess 4%. Monthly TDS is annual/12. One-time arrears are taxed once.
 - Pay date is the last working day (`LAST_WORKING_DAY`) or a fixed day. Rounding is `NEAREST_RUPEE` or `PAISE`. LOP base is `BASIC` or `GROSS`. Unmarked working day is 1 LOP, half day is 0.5, approved paid leave is 0. Optional and restricted holidays do not reduce working days. Zero working days pays the full month.
-- Bank file is `GENERIC_NEFT` CSV. `register_bank_format` adds another layout.
+- Bank file is `GENERIC_NEFT` CSV. Settings also accept `HDFC`, `ICICI`, `SBI`, and `AXIS`. A bank response CSV marks each row paid (with a UTR) or failed. Retry puts only failed payments back to pending. The next bank file includes pending rows only.
 - Shift default 09:00–16:00, grace 10 minutes, full day 360 minutes, half day 180. Geofence is off. Late and early are flags; they are not LOP by themselves.
 - Bonus default off. Gratuity 15/26 × (basic + DA) × years, minimum 5 years, cap ₹20,00,000.
 - Starter template "Standard" is BASIC ₹30,000, HRA 40% of basic, DA 0%. That is a starter, not a statutory rate.
@@ -135,7 +135,7 @@ Prefix `/api/v1`. Errors are `{ "error": { "code", "message" } }`. Money is a de
 | GET | `/payroll/payslips/me?year` |  | Own published or paid payslips |
 | GET | `/payroll/payslips/{id}/pdf?intent=view\|download` |  | PDF. `intent=view` increments `view_count` for the owner. `download` increments `download_count`. |
 | GET | `/payroll/notifications?limit` |  | The caller's payslip notifications for this school only: `{ id, title, body, category, link_path, is_read, created_at, payslip_id }` |
-| GET | `/payroll/form16/me?financial_year` |  | Form 16 data, `YYYY-YYYY` |
+| GET | `/payroll/form16/me?financial_year` |  | Form 16 data. `2026-27` or `2026-2027` |
 | GET | `/payroll/form16/me/pdf?financial_year` |  | Form 16 PDF |
 | GET | `/payroll/form16/{employee_id}?financial_year` |  | Same data for one employee |
 | GET | `/payroll/form16/{employee_id}/pdf?financial_year` |  | Form 16 PDF for one employee |
@@ -166,3 +166,124 @@ Existing `/hr/attendance` daily, history, summary, mark, bulk, patch, and delete
 `GET /api/v1/schools/me/branches` returns `{ branches: [{ name, id, code, address, active }] }` for the signed-in school. `name` comes from weekly offs, holidays, statutory profiles, and finance campus rows. Finance rows also include `id` and `code` so the fee desk can send `X-Branch-Id`. Cashiers see only assigned finance branches. Empty branch names are the whole school and are left out.
 
 The HRM login portal (`portal=hrm`) accepts school admin, HR manager, and payroll approver.
+
+## Daily payroll
+
+List routes accept `q`, `limit` (1–500), and `offset`. The JSON stays a list. `X-Total-Count` is the count after search, before the page slice. Omit `limit` to return every matching row from `offset`.
+
+Generating a period is idempotent: a second generate for the same dates returns the open run and `created: false`. Rejected and cancelled runs do not block a new generate.
+
+| Method | Path | Request | Response |
+| --- | --- | --- | --- |
+| POST | `/payroll/runs/{id}/recalculate` | `{ reason }` | Rebuilds a draft or rejected run. Restores arrears, claims, and loan EMI, then calculates again. Sets the run back to draft. |
+| POST | `/payroll/runs/{id}/cancel` | `{ reason }` required | Cancels a draft, rejected, or submitted run. Payslips become `CANCELLED` and inputs are restored. |
+| POST | `/payroll/runs/{id}/lock` | `{ reason }` | Only when the run is `PAID`. A locked run rejects payment changes, bank responses, and retries. |
+| GET | `/payroll/runs/{id}/payslips.zip` |  | Zip of payslip PDFs for the run. |
+| GET | `/payroll/runs/{id}/pf-ecr` |  | EPFO ECR text, fields separated by `#~#`. |
+| GET | `/payroll/runs/{id}/register.csv` |  | Salary register CSV |
+| GET | `/payroll/runs/{id}/register.xlsx` |  | Salary register workbook |
+| POST | `/payroll/runs/{id}/bank-response` | multipart CSV `account_number,status,utr,reason` | `{ updated, errors: [{ row, field, message }] }`. `SUCCESS` counts as paid. A paid row needs a UTR. |
+| POST | `/payroll/runs/{id}/payments/retry` | `{ reason }` required | `{ retried }`. Only `FAILED` payments return to `PENDING`. |
+| POST | `/payroll/salary-revisions` | salary assignment body plus `compute_arrears` (default true) | Closes the open assignment and, when the new pay is higher and the date is in a past month, creates arrears for the completed months. |
+| GET | `/payroll/loans/{id}/schedule` |  | `{ loan_id, balance, emi, annual_rate, status, schedule }` |
+| POST | `/payroll/loans/{id}/prepay` | `{ amount, reason }` | Reduces the balance. A prepayment that clears the balance closes the loan. |
+| POST | `/payroll/loans/{id}/close` | `{ reason }` | Sets the balance to zero and status `CLOSED`. |
+| POST | `/payroll/imports/employees` | multipart CSV `employee_code,full_name,email,phone,pan` | `{ created, updated, errors }`. New rows are non-teaching staff. Invalid rows are skipped and listed. |
+| POST | `/payroll/imports/banks` | multipart CSV `employee_code,account_holder,account_number,ifsc,bank_name` | `{ updated, errors }` |
+| GET | `/payroll/exports/{kind}?file_format=csv\|xlsx` | `kind` is `loans`, `arrears`, or `reimbursements` | File download |
+
+Each payslip stores `lop_detail`: `[{ date, status, source, lop_days }]`. `source` is `UNMARKED_WORKING_DAY`, `ABSENT`, `HALF_DAY`, or `UNPAID_LEAVE`.
+
+`payroll_loan_events` records EMI, prepayment, closure, and reversal. Migration `0044` forces row level security on that table, same as the other payroll tables. Tables outside payroll are unchanged: the rest of the API does not set `app.school_id` on every request, so forcing RLS there would block those routes.
+
+Payslip template codes remain `CLASSIC`, `COMPACT`, and `STATUTORY` on payroll settings.
+
+## Payroll assistant
+
+The bottom chat and voice overlay in the payroll portal call this API. The model never writes payroll by itself. Read tools use `PayrollService` and `PayrollDashboard` with the caller's role and the request's row-level security. Bank numbers and PAN are masked in tool results, in the streamed answer, and in the audit row.
+
+`PAYROLL_ASSISTANT_PROVIDER` is `local` (no outbound model; the tools still run), `openai` (OpenAI-compatible `POST {PAYROLL_ASSISTANT_BASE_URL}/chat/completions`), or `ai_service` (reuses `AI_SERVICE_URL` at `POST /api/v1/ai/chat`). `PAYROLL_ASSISTANT_SECRET_ID` loads `provider`, `api_key`, `model`, and `base_url` from AWS Secrets Manager and overrides the env values. The key is not written to logs.
+
+This backend proxies the teacher AI at `/api/v1/ai/*` and can stream `text/event-stream` from that service. It has no speech-to-text or text-to-speech route, so the payroll assistant does not add a voice passthrough. The portal keeps voice on whatever path already serves it.
+
+Both assistant routes use the payroll rate limit and a separate assistant limit (`PAYROLL_ASSISTANT_RATE_LIMIT_PER_MINUTE`, default 20). Every chat, tool, proposal, and confirm is a payroll audit row.
+
+`POST /payroll/assistant/chat` body `{ messages: [{ role: "user"|"assistant", content }] }`. Response is `text/event-stream`:
+
+| Event | Data |
+| --- | --- |
+| `tool` | `{ name, arguments }` |
+| `tool_result` | `{ name, result }` for a read |
+| `navigate` | `{ route, label, params }` route intent for the frontend |
+| `proposal` | `{ proposal_id, action, summary, payload }` a write that has not run |
+| `token` | `{ text }` a piece of the answer |
+| `error` | `{ message }` |
+| `done` | `{}` |
+
+Read tools: `search_employee`, `get_employee_pay`, `get_run_status`, `list_pending`, `explain_payslip`, `get_statutory_dues`, `get_report`.
+
+Navigation tools return these routes:
+
+| Tool | Route |
+| --- | --- |
+| `open_dashboard` | `/payroll` |
+| `open_runs` | `/payroll/runs` |
+| `open_run` | `/payroll/runs/{run_id}` |
+| `open_employee` | `/payroll/employees/{employee_id}` |
+| `open_payslip` | `/payroll/payslips/{payslip_id}` |
+| `open_settings` | `/payroll/settings` |
+| `open_loans` | `/payroll/loans` |
+| `open_reports` | `/payroll/runs/{run_id}/reports` |
+| `open_approvals` | `/payroll/approvals` |
+
+Write tools (`submit_run`, `approve_run`, `reject_run`, `cancel_run`, `lock_run`, `recalculate_run`, `retry_failed_payments`, `decide_reimbursement`) insert a `PROPOSED` row in `payroll_assistant_actions` and return a proposal. They do not change the run.
+
+`POST /payroll/assistant/confirm` body `{ proposal_id, idempotency_key }`. The key is 8–80 characters, letters, digits, and `_. :-`. The same key and proposal returns the stored result and does not run the action again. A key already used for a different proposal is a conflict. Confirm calls the same service method as the REST route, so the role check runs again. Migration `0042` forces row level security on `payroll_assistant_actions`.
+
+### Importing a pay sheet
+
+`POST /payroll/assistant/import` is multipart. The file field is `file` (xlsx, xls, csv, or pdf, up to 5 MB and 2,000 data rows). Optional form fields are `financial_year` (`2026-27` or `2026-2027`; stored as `2026-27`) and `effective_from` (`YYYY-MM-DD`). Sources are Tally pay sheets (including HTML saved as `.xls`), salary registers, and employee or bank lists.
+
+Headers are mapped with a fixed synonym list (for example `Name of Employee`, `Employee No.`, `PAN`, `A/c No.`, `IFS Code`, `Basic Salary`, `House Rent Allowance`, `Dearness Allowance`, `YTD Earnings`, `YTD TDS`). When `PAYROLL_ASSISTANT_PROVIDER` is `openai` or `ai_service`, unknown headers are sent to that model. A suggestion is kept only when it names an allow-listed field or a salary component that already exists for the school. `BASIC`, `HRA`, and `DA` are always known. Monthly `PF`, `ESI`, `PT`, `TDS`, `Gross`, and `Net` columns are ignored. Every cell is then checked in code. The model never decides that a row is valid.
+
+The response is a preview:
+
+| Field | Meaning |
+| --- | --- |
+| `id` | Preview id |
+| `accepted` | Rows that will be created or updated |
+| `rejected` | Rows that will not be imported. Each item has `row`, `employee_code`, `field`, `reason`, and `value` |
+| `counts` | Accepted rows, and rejected rows |
+| `mapping` | Header to field |
+
+`reason` is one of `missing PAN`, `invalid IFSC`, `unknown component: {header}`, `unreadable cell: {header}`, `duplicate code`, `missing employee code`, or `missing employee name`. PAN and account numbers in this JSON are masked. The preview row stored for confirm keeps the real values.
+
+Nothing in payroll is written by the preview: no employee, statutory profile, bank account, salary assignment, or opening year-to-date row. The preview itself is stored in `payroll_assistant_imports` and audited as `assistant.import.preview`, which is what confirm reads.
+
+`POST /payroll/assistant/import/{id}/confirm` body `{ idempotency_key }` uses the same key rules as assistant confirm. It applies every accepted row in one transaction: non-teaching employees (an existing teaching name is left as it is), statutory profile, primary bank account, one salary template for the file, a salary assignment effective on `effective_from` with rupee overrides and no arrears, and `payroll_opening_ytd` for that financial year. An amount-only override is paid as a fixed rupee amount, including HRA and DA. If a component disappeared after the preview, the confirm fails and writes nothing. The same key returns the stored result. A different import using that key is a conflict. Confirm is audited as `assistant.import.confirm`. An all-rejected file confirms with zero creates.
+
+`GET /payroll/assistant/import/{id}/rejects.csv` returns `row,employee_code,field,reason,value`. PAN and account numbers in the file are masked. The caller must be allowed to change payroll settings, which is the same role as the upload.
+
+Import routes use both payroll rate limits. Migration `0046` forces row level security on `payroll_assistant_imports` and `payroll_opening_ytd`.
+
+Opening year-to-date gross is added to Form 16, and opening TDS is included in `tds_deducted`. The next pay run adds that gross once and reduces the remaining monthly TDS by the tax already paid. A run with no opening figures is unchanged.
+
+### Report downloads
+
+`get_report` is a read tool, not a proposal. Arguments are `kind` plus `run_id` or `period_start` and `period_end`. `payslip` also needs `payslip_id`. `form16` takes `financial_year` and an optional `employee_id`.
+
+| `kind` | File | Who can ask |
+| --- | --- | --- |
+| `payslip` | One payslip PDF | The same people who can open that payslip |
+| `payslips_zip` | Zip of the run's payslips | Prepare |
+| `bank` | Bank file. Pending payments are marked exported, same as the bank export route | Prepare |
+| `pf_ecr` | PF ECR text | Prepare |
+| `esi` | ESI challan CSV | Read |
+| `pt` | Professional tax CSV | Read |
+| `tds_24q` | TDS 24Q CSV | Read |
+| `form16` | Form 16 PDF | Read, or the employee's own form |
+| `register` | Salary register CSV | Read |
+| `audit` | Audit log CSV. Reasons are masked | Audit read |
+| `loans`, `arrears`, `reimbursements` | The existing CSV exports | Prepare |
+
+The tool result is `{ kind, filename, expires_in, url }`. `expires_in` is 600 seconds. When `S3_BUCKET` is set the URL is an S3 presigned GET. Otherwise it is `GET /payroll/assistant/downloads/{token}`, signed with the API secret, and that GET does not use a bearer token. Permission is checked when the link is created. The link is audited as `assistant.tool.get_report`. A local planner phrase such as "download the salary register" or "download the audit log" selects this tool.

@@ -95,6 +95,15 @@ class Settings(BaseSettings):
     s3_region: str = ""
     s3_public_base_url: str = ""
     payroll_rate_limit_per_minute: int = 120
+    # Payroll assistant. local answers from the payroll tools without an outbound model.
+    # openai uses an OpenAI-compatible chat API. ai_service reuses AI_SERVICE_URL.
+    # PAYROLL_ASSISTANT_SECRET_ID may hold {"provider","api_key","model","base_url"} in Secrets Manager.
+    payroll_assistant_provider: str = "local"
+    payroll_assistant_model: str = "gpt-4o-mini"
+    payroll_assistant_api_key: str = ""
+    payroll_assistant_base_url: str = "https://api.openai.com/v1"
+    payroll_assistant_secret_id: str = ""
+    payroll_assistant_rate_limit_per_minute: int = 20
 
     def validate_runtime(self) -> None:
         """Fail closed in production for unsafe defaults."""
@@ -132,6 +141,11 @@ class Settings(BaseSettings):
             problems.append("JOBS_BACKEND must be redis or sqs")
         if backend == "sqs" and not (self.sqs_queue_url or "").strip():
             problems.append("SQS_QUEUE_URL")
+        assistant = (self.payroll_assistant_provider or "local").lower()
+        if assistant == "openai" and not (
+            (self.payroll_assistant_api_key or "").strip() or (self.payroll_assistant_secret_id or "").strip()
+        ):
+            problems.append("PAYROLL_ASSISTANT_API_KEY or PAYROLL_ASSISTANT_SECRET_ID")
 
         # If Cognito is enabled, required identifiers must be present.
         auth_mode = (self.auth_mode or "").lower().strip()

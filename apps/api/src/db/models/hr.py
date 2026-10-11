@@ -592,6 +592,7 @@ class PayrollPayslip(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     working_days: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), nullable=True)
     lop_days: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), nullable=True)
     paid_days: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), nullable=True)
+    lop_detail: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     pdf_object_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     tax_regime: Mapped[str | None] = mapped_column(String(8), nullable=True)

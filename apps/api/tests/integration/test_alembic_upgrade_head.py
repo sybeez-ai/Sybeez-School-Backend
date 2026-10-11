@@ -39,7 +39,7 @@ async def test_upgrade_head_on_empty_postgres():
         conn = await asyncpg.connect(user="sybeez", password="sybeez", host="127.0.0.1", database=name)
         try:
             versions = await conn.fetch("SELECT version_num FROM alembic_version")
-            assert [row["version_num"] for row in versions] == ["0043"]
+            assert [row["version_num"] for row in versions] == ["0046"]
             created_by = await conn.fetchval(
                 "SELECT 1 FROM information_schema.columns WHERE table_name = 'schools' AND column_name = 'created_by_id'"
             )
@@ -70,6 +70,34 @@ async def test_upgrade_head_on_empty_postgres():
                 "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'payroll_runs'"
             )
             assert tables == 1
+            imports = await conn.fetchval(
+                "SELECT relforcerowsecurity FROM pg_class WHERE relname = 'payroll_assistant_imports'"
+            )
+            assert imports is True
+            loan_events = await conn.fetchval(
+                "SELECT relforcerowsecurity FROM pg_class WHERE relname = 'payroll_loan_events'"
+            )
+            assert loan_events is True
+            lop_detail = await conn.fetchval(
+                "SELECT 1 FROM information_schema.columns WHERE table_name = 'payroll_payslips' AND column_name = 'lop_detail'"
+            )
+            assert lop_detail == 1
+            events = await conn.fetchval(
+                "SELECT relforcerowsecurity FROM pg_class WHERE relname = 'payroll_loan_events'"
+            )
+            assert events is True
+            assistant = await conn.fetchval(
+                "SELECT relforcerowsecurity FROM pg_class WHERE relname = 'payroll_assistant_actions'"
+            )
+            assert assistant is True
+            imports = await conn.fetchval(
+                "SELECT relforcerowsecurity FROM pg_class WHERE relname = 'payroll_assistant_imports'"
+            )
+            assert imports is True
+            opening = await conn.fetchval(
+                "SELECT relforcerowsecurity FROM pg_class WHERE relname = 'payroll_opening_ytd'"
+            )
+            assert opening is True
         finally:
             await conn.close()
     finally:
