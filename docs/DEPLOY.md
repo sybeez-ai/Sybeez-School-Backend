@@ -62,8 +62,6 @@ Put these on the ECS task definitions, not in git.
 
 `JOBS_BACKEND` defaults to `redis`, so a task definition that omits it keeps the current Redis list `sybeez:jobs`.
 
-`COGNITO_DOMAIN` is the Hosted UI host. Password login does not need it, so a missing domain does not stop the API process. Google sign-in returns a conflict until that variable is set.
-
 ## Production database already at finance revision 0030
 
 RDS `sybeez-school-db` was built from the finance branch (PR #1). Its `alembic_version` is `0030`, and that id is the **old finance** revision:
