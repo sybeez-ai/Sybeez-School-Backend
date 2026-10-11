@@ -19,6 +19,8 @@ class UserRole(StrEnum):
     # Platform-branch role names. Release payroll and finance use the roles above.
     FINANCE = "FINANCE"
     HR = "HR"
+    # Non-teaching employee: HR self-service only (own leave, letters, and files).
+    STAFF = "STAFF"
 
 
 class PlatformRole(StrEnum):

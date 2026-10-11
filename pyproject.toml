@@ -8,6 +8,7 @@ requires-python = ">=3.12"
 asyncio_mode = "auto"
 testpaths = ["apps/api/tests"]
 pythonpath = ["apps/api"]
+addopts = "--import-mode=importlib"
 
 [tool.ruff]
 line-length = 120

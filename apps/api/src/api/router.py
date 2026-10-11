@@ -25,15 +25,18 @@ from src.modules.enrollments.router import router as enrollments_router
 from src.modules.exams.router import router as exams_router
 from src.modules.fees.router import router as fees_router
 from src.modules.finance.desk_router import desk as finance_desk_router
+from src.modules.finance.expenses import router as finance_expenses_router
 from src.modules.finance.router import router as finance_router
 from src.modules.grades.router import router as grades_router
 from src.modules.health.router import router as health_router
 from src.modules.homework.router import router as homework_router
 from src.modules.hr.router import router as hr_router
-from src.modules.hr_files.router import router as hr_files_router
-from src.modules.hr_letters.router import router as hr_letters_router
-from src.modules.hr_org.router import router as hr_org_router
 from src.modules.hr_dashboard.router import router as hr_dashboard_router
+from src.modules.hr_files.router import router as hr_files_router
+from src.modules.hr_leave_policy.router import router as hr_leave_policy_router
+from src.modules.hr_letters.router import router as hr_letters_router
+from src.modules.hr_operations.router import router as hr_operations_router
+from src.modules.hr_org.router import router as hr_org_router
 from src.modules.hr_requests.router import router as hr_requests_router
 from src.modules.hr_settings.router import router as hr_settings_router
 from src.modules.hr_workflows.router import router as hr_workflows_router
@@ -51,7 +54,9 @@ from src.modules.progress.router import router as progress_router
 from src.modules.questions.router import router as questions_router
 from src.modules.reports.router import router as reports_router
 from src.modules.results.router import router as results_router
+from src.modules.school_admin.router import router as school_admin_router
 from src.modules.schools.router import router as schools_router
+from src.modules.staff_portal.router import router as staff_portal_router
 from src.modules.payroll.assistant.router import router as payroll_assistant_router
 from src.modules.payroll.router import router as payroll_router
 from src.modules.staff_attendance.router import router as staff_attendance_router
@@ -97,7 +102,10 @@ api_router.include_router(attendance_router, prefix=API_V1_PREFIX)
 api_router.include_router(exams_router, prefix=API_V1_PREFIX)
 api_router.include_router(fees_router, prefix=API_V1_PREFIX)
 api_router.include_router(finance_router, prefix=API_V1_PREFIX)
+api_router.include_router(finance_expenses_router, prefix=API_V1_PREFIX)
 api_router.include_router(finance_desk_router, prefix=API_V1_PREFIX)
+api_router.include_router(school_admin_router, prefix=API_V1_PREFIX)
+api_router.include_router(staff_portal_router, prefix=API_V1_PREFIX)
 api_router.include_router(diary_router, prefix=API_V1_PREFIX)
 api_router.include_router(notes_router, prefix=API_V1_PREFIX)
 api_router.include_router(personal_life_router, prefix=API_V1_PREFIX)
@@ -125,7 +133,9 @@ api_router.include_router(hr_files_router, prefix=API_V1_PREFIX)
 api_router.include_router(hr_workflows_router, prefix=API_V1_PREFIX)
 api_router.include_router(hr_requests_router, prefix=API_V1_PREFIX)
 api_router.include_router(hr_settings_router, prefix=API_V1_PREFIX)
+api_router.include_router(hr_leave_policy_router, prefix=API_V1_PREFIX)
 api_router.include_router(hr_dashboard_router, prefix=API_V1_PREFIX)
+api_router.include_router(hr_operations_router, prefix=API_V1_PREFIX)
 api_router.include_router(intelligence_router, prefix=API_V1_PREFIX)
 api_router.include_router(announcements_router, prefix=API_V1_PREFIX)
 api_router.include_router(messaging_router, prefix=API_V1_PREFIX)

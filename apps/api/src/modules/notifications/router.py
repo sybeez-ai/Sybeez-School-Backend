@@ -57,12 +57,16 @@ async def mark_read(
         UserRole.STUDENT,
         UserRole.PARENT,
         UserRole.TEACHER,
+        UserRole.STAFF,
         UserRole.SCHOOL_ADMIN,
+        UserRole.HR,
         UserRole.HR_MANAGER,
         UserRole.PAYROLL_ADMIN,
         UserRole.PAYROLL_APPROVER,
         UserRole.ACCOUNTANT,
+        UserRole.CASHIER,
         UserRole.AUDITOR,
+        UserRole.FINANCE,
     ))],
 ):
     row = await db.get(Notification, notification_id)

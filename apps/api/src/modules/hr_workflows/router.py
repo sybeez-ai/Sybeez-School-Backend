@@ -8,6 +8,7 @@ from src.api.dependencies import CurrentUser, require_roles
 from src.modules.hr.access import require_hr_admin
 from src.core.database import get_db
 from src.core.exceptions import ForbiddenError
+from src.modules.hr.audit import SELF_SERVICE_ROLES
 from src.modules.hr_workflows.schemas import (
     OwnerOut,
     TaskIn,
@@ -26,7 +27,7 @@ from src.shared.enums import UserRole
 router = APIRouter(prefix="/hr", tags=["hr-workflows"])
 
 Admin = Annotated[CurrentUser, Depends(require_hr_admin)]
-Teacher = Annotated[CurrentUser, Depends(require_roles(UserRole.TEACHER))]
+Teacher = Annotated[CurrentUser, Depends(require_roles(*SELF_SERVICE_ROLES))]
 Db = Annotated[AsyncSession, Depends(get_db)]
 
 
@@ -64,8 +65,8 @@ async def workflow_owners(user: Admin, db: Db):
 
 
 @router.get("/workflows/template", response_model=TemplateOut)
-async def workflow_template(user: Admin, workflow_type: WorkflowType):
-    return HrWorkflowService.template(workflow_type)
+async def workflow_template(user: Admin, db: Db, workflow_type: WorkflowType):
+    return await HrWorkflowService(db).template(_sid(user), workflow_type)
 
 
 @router.post("/workflows", response_model=WorkflowOut, status_code=201)

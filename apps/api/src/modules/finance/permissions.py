@@ -53,6 +53,8 @@ ACTIONS: dict[str, set[str]] = {
     "refund.request": {UserRole.SCHOOL_ADMIN.value, UserRole.ACCOUNTANT.value, UserRole.CASHIER.value},
     "staff_scope.write": {UserRole.SCHOOL_ADMIN.value},
     "route.manage": {UserRole.SCHOOL_ADMIN.value, UserRole.ACCOUNTANT.value},
+    "expense.write": {UserRole.SCHOOL_ADMIN.value, UserRole.ACCOUNTANT.value, UserRole.CASHIER.value},
+    "expense.approve": {UserRole.SCHOOL_ADMIN.value, UserRole.ACCOUNTANT.value},
 }
 
 

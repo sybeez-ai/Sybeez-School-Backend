@@ -40,6 +40,20 @@ async def _wipe(school_ids: list, user_ids: list) -> None:
         await db.execute(text("SET session_replication_role = replica"))
         await db.execute(text("DELETE FROM fee_webhook_events WHERE event_id LIKE 'evt-route-%'"))
         for school_id in school_ids:
+            for table in (
+                "fee_webhook_events",
+                "fee_audit_logs",
+                "fee_ledger_entries",
+                "fee_route_transfers",
+                "fee_payment_refunds",
+                "fee_receipts",
+                "fee_payment_allocations",
+                "fee_payments",
+                "fee_invoice_items",
+                "fee_invoices",
+                "student_fee_accounts",
+            ):
+                await db.execute(text(f"DELETE FROM {table} WHERE school_id = :id"), {"id": school_id})
             await db.execute(text("DELETE FROM schools WHERE id = :id"), {"id": school_id})
         for user_id in user_ids:
             await db.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
@@ -164,12 +178,13 @@ async def test_capture_is_idempotent_and_transfer_failure_keeps_the_receipt(monk
             payment_id = payment.id
             invoice_id = invoice.id
 
+        gateway_payment_id = f"pay_route_{uuid4().hex[:10]}"
         payload = {
             "event": "payment.captured",
             "payload": {
                 "payment": {
                     "entity": {
-                        "id": "pay_route_1",
+                        "id": gateway_payment_id,
                         "order_id": order_id,
                         "status": "captured",
                         "amount": 100000,
@@ -179,7 +194,7 @@ async def test_capture_is_idempotent_and_transfer_failure_keeps_the_receipt(monk
             },
         }
         raw, headers = _signed(payload)
-        headers["x-razorpay-event-id"] = "evt-route-cap"
+        headers["x-razorpay-event-id"] = f"evt-route-cap-{uuid4().hex[:10]}"
         async with AsyncSessionLocal() as db:
             first = await PaymentService(db).handle_webhook("razorpay", json.loads(raw), headers, raw)
         async with AsyncSessionLocal() as db:
@@ -192,8 +207,8 @@ async def test_capture_is_idempotent_and_transfer_failure_keeps_the_receipt(monk
             "payload": {
                 "transfer": {
                     "entity": {
-                        "id": "trf_fail",
-                        "source": "pay_route_1",
+                        "id": f"trf_fail_{uuid4().hex[:10]}",
+                        "source": gateway_payment_id,
                         "recipient": "acc_school",
                         "amount": 97500,
                         "currency": "INR",
@@ -204,7 +219,7 @@ async def test_capture_is_idempotent_and_transfer_failure_keeps_the_receipt(monk
             },
         }
         raw_failed, failed_headers = _signed(failed)
-        failed_headers["x-razorpay-event-id"] = "evt-route-trf"
+        failed_headers["x-razorpay-event-id"] = f"evt-route-trf-{uuid4().hex[:10]}"
         async with AsyncSessionLocal() as db:
             outcome = await PaymentService(db).handle_webhook(
                 "razorpay", json.loads(raw_failed), failed_headers, raw_failed
@@ -217,7 +232,7 @@ async def test_capture_is_idempotent_and_transfer_failure_keeps_the_receipt(monk
             assert again["duplicate"] is True
             row = await db.get(Payment, payment_id)
             assert row.status == PaymentStatus.SUCCESS.value
-            assert row.gateway_payment_id == "pay_route_1"
+            assert row.gateway_payment_id == gateway_payment_id
             receipts = (
                 await db.execute(select(func.count()).select_from(FeeReceipt).where(FeeReceipt.payment_id == payment_id))
             ).scalar_one()
@@ -253,7 +268,7 @@ async def test_refund_reverses_the_school_transfer_once(monkeypatch):
         del self, payment_id
         seen["reverse_all"] = reverse_all
         seen["amount"] = amount
-        return GatewayRefundResult(success=True, refund_id="rfnd_route_1", amount=amount)
+        return GatewayRefundResult(success=True, refund_id=seen.get("refund_id", "rfnd_route_1"), amount=amount)
 
     monkeypatch.setattr(RazorpayGateway, "refund", _refund)
     monkeypatch.setenv("RAZORPAY_WEBHOOK_SECRET", "whsec_route")
@@ -278,6 +293,10 @@ async def test_refund_reverses_the_school_transfer_once(monkeypatch):
                 balance_amount=Decimal("0.00"),
                 status=FeeInvoiceStatus.PAID.value,
             )
+            refund_order = f"order_refund_{uuid4().hex[:10]}"
+            refund_payment = f"pay_refund_{uuid4().hex[:10]}"
+            refund_id = f"rfnd_route_{uuid4().hex[:10]}"
+            seen["refund_id"] = refund_id
             payment = Payment(
                 id=uuid4(),
                 school_id=school.id,
@@ -289,8 +308,8 @@ async def test_refund_reverses_the_school_transfer_once(monkeypatch):
                 method=PaymentMethod.ONLINE.value,
                 status=PaymentStatus.SUCCESS.value,
                 gateway="razorpay",
-                gateway_order_id="order_refund_1",
-                gateway_payment_id="pay_refund_1",
+                gateway_order_id=refund_order,
+                gateway_payment_id=refund_payment,
                 paid_at=datetime.now(timezone.utc),
             )
             transfer = FeeRouteTransfer(
@@ -298,8 +317,8 @@ async def test_refund_reverses_the_school_transfer_once(monkeypatch):
                 school_id=school.id,
                 payment_id=payment.id,
                 linked_account_id="acc_school",
-                gateway_order_id="order_refund_1",
-                gateway_payment_id="pay_refund_1",
+                gateway_order_id=refund_order,
+                gateway_payment_id=refund_payment,
                 currency="INR",
                 payment_amount=Decimal("1000.00"),
                 transfer_amount=Decimal("1000.00"),
@@ -319,17 +338,18 @@ async def test_refund_reverses_the_school_transfer_once(monkeypatch):
             approved = await PaymentService(db).approve_refund(school_id, approver_id, requested.id)
         assert seen["reverse_all"] is True
         assert approved.status == RefundStatus.SUCCESS.value
-        assert approved.gateway_refund_id == "rfnd_route_1"
+        assert approved.gateway_refund_id == refund_id
 
+        refund_event_id = f"evt-route-rfnd-{uuid4().hex[:10]}"
         refund_event = {
             "event": "refund.processed",
             "payload": {
-                "refund": {"entity": {"id": "rfnd_route_1", "payment_id": "pay_refund_1", "amount": 100000, "status": "processed"}},
-                "payment": {"entity": {"id": "pay_refund_1", "order_id": "order_refund_1", "amount": 100000, "currency": "INR"}},
+                "refund": {"entity": {"id": refund_id, "payment_id": refund_payment, "amount": 100000, "status": "processed"}},
+                "payment": {"entity": {"id": refund_payment, "order_id": refund_order, "amount": 100000, "currency": "INR"}},
             },
         }
         raw, headers = _signed(refund_event)
-        headers["x-razorpay-event-id"] = "evt-route-rfnd"
+        headers["x-razorpay-event-id"] = refund_event_id
         async with AsyncSessionLocal() as db:
             await PaymentService(db).handle_webhook("razorpay", json.loads(raw), headers, raw)
             await PaymentService(db).handle_webhook("razorpay", json.loads(raw), headers, raw)
@@ -359,7 +379,7 @@ async def test_refund_reverses_the_school_transfer_once(monkeypatch):
             ).scalar_one()
             assert ledger == 1
             events = (
-                await db.execute(select(func.count()).select_from(FeeWebhookEvent).where(FeeWebhookEvent.event_id == "evt-route-rfnd"))
+                await db.execute(select(func.count()).select_from(FeeWebhookEvent).where(FeeWebhookEvent.event_id == refund_event_id))
             ).scalar_one()
             assert events == 1
     finally:

@@ -85,7 +85,7 @@ On `release`, `0028`–`0030` are HRM (`hr_integrity`, `hr_employees`, `hr_depar
 | `0029` | table `employees` | function `app.can_see` |
 | `0030` | table `departments` | `app.can_see` or `finance_staff_scopes`, and no `departments` |
 
-3. Finance match: in one transaction, `UPDATE alembic_version SET version_num = '0027' WHERE version_num = '<old>'`. `0027` is the last revision both histories share. The log line is `Detected legacy finance revision 0030` and `Restamped alembic_version to 0027`. The same process then applies HRM `0028` through payroll `0040` (not on this database yet) and re-applies `0041`–`0043`. Those finance revisions are idempotent (`IF NOT EXISTS`, `CREATE OR REPLACE`, `DROP POLICY IF EXISTS`, duplicate-object handlers). It then applies `0044`–`0046` (payroll daily, assistant, and import) and `0047`–`0050` (platform access, additive RLS helpers, staff sessions, and `app.can_see` role aliases), then `0053` (WhatsApp template alerts, school settings, opt-out, and delivery columns), then `0054` (Razorpay Route linked accounts and transfers). `0051` and `0052` are unused and reserved for the hrm-integration branch. `0048` does not replace payroll or finance policies. `0050` replaces `app.can_see` only.
+3. Finance match: in one transaction, `UPDATE alembic_version SET version_num = '0027' WHERE version_num = '<old>'`. `0027` is the last revision both histories share. The log line is `Detected legacy finance revision 0030` and `Restamped alembic_version to 0027`. The same process then applies HRM `0028` through payroll `0040` (not on this database yet) and re-applies `0041`–`0043`. Those finance revisions are idempotent (`IF NOT EXISTS`, `CREATE OR REPLACE`, `DROP POLICY IF EXISTS`, duplicate-object handlers). It then applies `0044`–`0046` (payroll daily, assistant, and import) and `0047`–`0050` (platform access, additive RLS helpers, staff sessions, and `app.can_see` role aliases), then `0053` (WhatsApp template alerts, school settings, opt-out, and delivery columns), then `0054` (Razorpay Route linked accounts and transfers), then `0055`–`0057` (HR constraint names, HR specification, and HR operations), then `0058` (one login per HR employee, published payslips only for that employee), then `0059` (school expenses). `0051` and `0052` stay unused so they are not inserted ahead of the applied `0053` stamp. `0048` does not replace payroll or finance policies. `0050` replaces `app.can_see` only.
 4. HRM match: the stamp stays, and upgrade continues at `0031`.
 5. Neither marker, or both: the process raises `Refusing to upgrade`, does not change `alembic_version`, and exits non-zero. The workflow waits for the task to stop and fails the deploy when the container exit code is not 0. Fix the schema by hand before rerunning. Do not stamp past the HRM revisions to hide the mismatch.
 
@@ -112,7 +112,7 @@ UPDATE alembic_version SET version_num = '0027' WHERE version_num = '0030';
 alembic upgrade head
 ```
 
-The migrate task already does both. A second run sees `0054` and does not restamp.
+The migrate task already does both. A second run sees `0059` and does not restamp.
 
 ## IAM database auth
 

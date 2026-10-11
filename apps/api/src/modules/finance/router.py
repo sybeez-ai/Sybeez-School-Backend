@@ -406,7 +406,7 @@ async def report_day_book(
 ):
     assert_finance(svc.role, "reports.read")
     rows = await svc.report_day_book(on, branch_id)
-    cols = ["receipt", "status", "student", "amount", "method", "collector", "time"]
+    cols = ["kind", "receipt", "status", "student", "amount", "method", "collector", "time"]
     return _export(rows, cols, format, "day-book", "Day book")
 
 

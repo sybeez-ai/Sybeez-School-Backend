@@ -312,6 +312,17 @@ _AUDITOR = frozenset(
 )
 _PAYROLL_ADMIN = _PAYROLL | frozenset({"hr.read", "users.read", "teachers.write"})
 
+# Non-teaching employees sign in for their own HR records. School HR data stays
+# behind hr.read / hr.manage, which a school admin can grant per person.
+_STAFF = frozenset(
+    {
+        "session.read",
+        "schools.read",
+        "notifications.read",
+        "announcements.read",
+    }
+)
+
 ROLE_PERMISSIONS: dict[UserRole, frozenset[str]] = {
     UserRole.PLATFORM_ADMIN: ALL_PERMISSIONS,
     UserRole.PLATFORM_STAFF: frozenset(),
@@ -327,6 +338,7 @@ ROLE_PERMISSIONS: dict[UserRole, frozenset[str]] = {
     UserRole.PARENT: _PARENT,
     UserRole.FINANCE: _FINANCE,
     UserRole.HR: _HR,
+    UserRole.STAFF: _STAFF,
 }
 
 # Roles a school admin may invite or assign. Platform admin is not one of them.
@@ -344,6 +356,7 @@ SCHOOL_ASSIGNABLE_ROLES: frozenset[UserRole] = frozenset(
         UserRole.AUDITOR,
         UserRole.PAYROLL_ADMIN,
         UserRole.PAYROLL_APPROVER,
+        UserRole.STAFF,
     }
 )
 

@@ -85,7 +85,7 @@ def create_app() -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
-        expose_headers=["Content-Disposition", "X-Request-ID"],
+        expose_headers=["Content-Disposition", "X-Request-ID", "X-Total-Count"],
     )
     app.add_middleware(RequestIdMiddleware)
     app.add_middleware(TimingMiddleware)

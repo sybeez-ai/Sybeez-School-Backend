@@ -10,8 +10,8 @@ class LoginRequest(BaseModel):
     password: str
     school_id: UUID | None = None
     membership_id: UUID | None = None
-    # portal login page: platform | school | hrm | payroll | finance | teacher | student | parent
-    # hrm also accepts HR_MANAGER and PAYROLL_APPROVER
+    # portal login page: platform | school | hrm | payroll | finance | teacher | student | parent | staff
+    # hrm also accepts HR, HR_MANAGER, and PAYROLL_APPROVER. staff is UserRole.STAFF self-service.
     portal: str | None = None
 
 
