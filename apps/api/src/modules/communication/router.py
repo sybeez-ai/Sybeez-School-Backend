@@ -95,10 +95,13 @@ async def unread_count(
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[
         CurrentUser,
-        Depends(require_roles(*INBOX_ROLES)),
+        Depends(require_roles(*INBOX_ROLES, UserRole.PLATFORM_ADMIN, UserRole.PLATFORM_STAFF)),
     ],
     scope: Literal["hr"] | None = Query(None),
 ):
+    if user.role in {UserRole.PLATFORM_ADMIN, UserRole.PLATFORM_STAFF} and user.school_id is None:
+        # Platform consoles have no school inbox; the shell bell polls this endpoint.
+        return UnreadCountOut(count=0)
     return await CommunicationService(db).unread_count(user.id, _scope(user, scope))
 
 

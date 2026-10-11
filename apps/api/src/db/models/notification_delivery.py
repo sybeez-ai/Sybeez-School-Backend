@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import ForeignKey, Integer, String, Text
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -58,7 +58,9 @@ class NotificationDelivery(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         ForeignKey("notification_deliveries.id", ondelete="SET NULL"),
         nullable=True,
     )
-    scheduled_for: Mapped[datetime | None] = mapped_column(nullable=True)
+    # The column is TIMESTAMPTZ (migration 0053); map it timezone-aware so asyncpg accepts
+    # the aware UTC datetimes the alerts service binds.
+    scheduled_for: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     dedupe_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
     message_mode: Mapped[str] = mapped_column(String(16), nullable=False, default="text")
 

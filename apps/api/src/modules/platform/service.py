@@ -8,8 +8,9 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.exceptions import ConflictError, ForbiddenError, NotFoundError
+from src.core.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationError
 from src.api.dependencies import CurrentUser
+from src.core.config import get_settings
 from src.db.models import (
     Invitation,
     Parent,
@@ -44,6 +45,11 @@ from src.shared.utils import generate_token, utcnow
 def _slugify(name: str) -> str:
     base = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:60]
     return base or f"school-{secrets.token_hex(3)}"
+
+
+def _name_key(name: str) -> str:
+    """Normalise a school name for duplicate checks: 'St. Marry' == 'st marry'."""
+    return re.sub(r"[^a-z0-9]+", "", (name or "").lower())
 
 
 def _is_admin_or_above(platform_role: str | None) -> bool:
@@ -129,6 +135,9 @@ class PlatformService:
         return students, teachers
 
     async def _to_school_out(self, school: School) -> SchoolOut:
+        # Subscriptions and memberships are tenant tables under forced RLS; the platform
+        # session carries no school, so bind this school before reading them.
+        await bind_tenant(self.db, school.id)
         plan, sub_status = await self._plan_for_school(school.id)
         admin_email, admin_user_id, admin_name = await self._primary_admin(school.id)
         students, teachers = await self._people_counts(school.id)
@@ -159,7 +168,29 @@ class PlatformService:
             admin_name=admin_name,
         )
 
+    async def _similar_school(self, name: str) -> School | None:
+        key = _name_key(name)
+        if not key:
+            return None
+        rows = (await self.db.execute(select(School).where(School.status != SchoolStatus.ARCHIVED.value))).scalars().all()
+        return next((row for row in rows if _name_key(row.name) == key), None)
+
     async def create_school(self, actor: CurrentUser, data: SchoolCreate) -> SchoolOut:
+        name = data.name.strip()
+        if len(name) < 2:
+            raise ValidationError("School name must be at least 2 characters")
+        data.name = name
+        if data.slug and await self.repo.get_by_slug(data.slug):
+            raise ConflictError(f"The URL slug '{data.slug}' is already used by another school")
+        if not data.allow_duplicate_name:
+            twin = await self._similar_school(name)
+            if twin is not None:
+                raise ConflictError(
+                    f"A school named '{twin.name}' already exists (slug {twin.slug}). "
+                    "Open that school instead, or confirm to create another one."
+                )
+        if not data.admin.password:
+            data.admin.password = cognito_svc.generate_temporary_password()
         base_slug = data.slug or _slugify(data.name)
         slug = await self._unique_slug(base_slug)
         code = await self._unique_school_code()
@@ -601,7 +632,7 @@ class PlatformService:
         admin_email, _, _ = await self._primary_admin(school_id)
         if not admin_email:
             raise NotFoundError("School admin not found")
-        cognito_svc.admin_set_temporary_password(email=admin_email, temporary_password=temporary_password)
+        await self._reset_password(admin_email, temporary_password)
         await self.audit.write(
             action="platform.school.admin.reset_password",
             actor_id=actor.id,
@@ -612,6 +643,32 @@ class PlatformService:
             details={"admin_email": admin_email},
         )
         return admin_email, temporary_password
+
+    async def _reset_password(self, email: str, temporary_password: str) -> None:
+        """Reset via Cognito when allowed; otherwise switch the account to a local hash.
+
+        The API task role may lack Cognito admin permissions (AccessDeniedException).
+        In that case (or when Cognito is not configured) the user signs in with the
+        local password hash, which login prefers when cognito_sub is empty.
+        """
+        from src.core.security import hash_password
+
+        user = (
+            await self.db.execute(select(User).where(User.email == email.lower().strip()))
+        ).scalar_one_or_none()
+        if user is None:
+            raise NotFoundError("User not found")
+        if cognito_svc.cognito_configured() and user.cognito_sub:
+            try:
+                cognito_svc.admin_set_temporary_password(email=email, temporary_password=temporary_password)
+                return
+            except ConflictError as exc:
+                if "AccessDenied" not in str(exc) or (get_settings().auth_mode or "both").lower() == "cognito":
+                    raise
+        user.password_hash = hash_password(temporary_password)
+        user.cognito_sub = None
+        user.is_active = True
+        await self.db.flush()
 
     async def clear_school_admin_mfa(self, actor: CurrentUser, school_id: UUID) -> str:
         school = await self.repo.get_school(school_id)
