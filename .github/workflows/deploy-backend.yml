@@ -210,6 +210,7 @@ jobs:
           image: ${{ steps.login-ecr.outputs.registry }}/sybeez-school-api:${{ github.sha }}
 
       - name: Deploy API
+        id: deploy-api
         uses: aws-actions/amazon-ecs-deploy-task-definition@v2
         with:
           task-definition: ${{ steps.render-api.outputs.task-definition }}
@@ -342,3 +343,70 @@ jobs:
           }
           ensure "$API_SERVICE" 2 "$API_CONTAINER"
           ensure "$WORKER_SERVICE" 1 "$WORKER_CONTAINER"
+
+      - name: Provision the platform super admin
+        env:
+          API_CONTAINER: ${{ vars.AWS_BACKEND_API_CONTAINER || 'sybeez-school-api' }}
+          TASK_DEF: ${{ steps.deploy-api.outputs.task-definition-arn }}
+          SUPERADMIN_INITIAL_PASSWORD: ${{ secrets.SUPERADMIN_INITIAL_PASSWORD }}
+        run: |
+          set -euo pipefail
+          umask 077
+          cleanup() { rm -f provision-overrides.json; }
+          trap cleanup EXIT
+          if [ -z "${TASK_DEF:-}" ]; then
+            echo "API task definition ARN is missing"
+            exit 1
+          fi
+          if [ -n "${SUPERADMIN_INITIAL_PASSWORD:-}" ]; then
+            echo "Passing the super admin password from the GitHub Actions secret"
+            jq -n --arg name "$API_CONTAINER" --arg pw "$SUPERADMIN_INITIAL_PASSWORD" \
+              '{containerOverrides:[{name:$name,command:["python","-m","src.modules.platform.provision_superadmin"],environment:[{name:"SUPERADMIN_INITIAL_PASSWORD",value:$pw}]}]}' \
+              > provision-overrides.json
+          else
+            echo "SUPERADMIN_INITIAL_PASSWORD is unset; the task will read Secrets Manager"
+            jq -n --arg name "$API_CONTAINER" \
+              '{containerOverrides:[{name:$name,command:["python","-m","src.modules.platform.provision_superadmin"]}]}' \
+              > provision-overrides.json
+          fi
+          SUBNETS=$(printf '%s' "$AWS_BACKEND_SUBNETS" | tr -d ' ')
+          PUBLIC_IP=$(printf '%s' "${AWS_BACKEND_ASSIGN_PUBLIC_IP:-DISABLED}" | tr '[:lower:]' '[:upper:]')
+          TASK_ARN=$(aws ecs run-task \
+            --cluster "$ECS_CLUSTER" \
+            --task-definition "$TASK_DEF" \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$AWS_BACKEND_SECURITY_GROUP],assignPublicIp=$PUBLIC_IP}" \
+            --overrides file://provision-overrides.json \
+            --query 'tasks[0].taskArn' --output text)
+          rm -f provision-overrides.json
+          if [ -z "$TASK_ARN" ] || [ "$TASK_ARN" = "None" ]; then
+            echo "Provision task did not start"
+            exit 1
+          fi
+          echo "Provision task: $TASK_ARN"
+          aws ecs wait tasks-stopped --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN"
+          aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN" \
+            --query 'tasks[0].{stoppedReason:stoppedReason,containers:containers[].{name:name,exitCode:exitCode,reason:reason}}' \
+            --output json
+          EXIT=$(aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN" \
+            --query "tasks[0].containers[?name=='${API_CONTAINER}'].exitCode | [0]" --output text)
+          if [ "$EXIT" != "0" ]; then
+            echo "Provision task failed (exit=$EXIT)"
+            LOG_GROUP=$(aws ecs describe-task-definition --task-definition "$TASK_DEF" \
+              --query "taskDefinition.containerDefinitions[?name=='${API_CONTAINER}'].logConfiguration.options.\"awslogs-group\" | [0]" \
+              --output text || true)
+            LOG_PREFIX=$(aws ecs describe-task-definition --task-definition "$TASK_DEF" \
+              --query "taskDefinition.containerDefinitions[?name=='${API_CONTAINER}'].logConfiguration.options.\"awslogs-stream-prefix\" | [0]" \
+              --output text || true)
+            TASK_ID="${TASK_ARN##*/}"
+            if [ -n "$LOG_GROUP" ] && [ "$LOG_GROUP" != "None" ] && [ -n "$LOG_PREFIX" ] && [ "$LOG_PREFIX" != "None" ]; then
+              echo "CloudWatch: $LOG_GROUP ${LOG_PREFIX}/${API_CONTAINER}/${TASK_ID}"
+              aws logs get-log-events \
+                --log-group-name "$LOG_GROUP" \
+                --log-stream-name "${LOG_PREFIX}/${API_CONTAINER}/${TASK_ID}" \
+                --limit 200 \
+                --query 'events[].message' \
+                --output text || true
+            fi
+            exit 1
+          fi
