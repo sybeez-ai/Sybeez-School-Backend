@@ -10,12 +10,21 @@ from src.core.constants import APP_NAME, APP_VERSION
 from src.core.exceptions import AppError
 from src.core.logging import setup_logging
 from src.core.middleware import RequestIdMiddleware, TimingMiddleware
+from src.core.database import AsyncSessionLocal
 from src.core.redis import close_redis
+from src.modules.platform.bootstrap import bootstrap_superadmin
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     setup_logging()
+    async with AsyncSessionLocal() as session:
+        try:
+            await bootstrap_superadmin(session)
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
     yield
     await close_redis()
 

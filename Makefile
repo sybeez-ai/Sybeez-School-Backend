@@ -25,7 +25,7 @@ revision:
 	cd apps/api && alembic -c alembic.ini revision --autogenerate -m "$(m)"
 
 seed:
-	cd apps/api && python -m src.db.seed
+	cd apps/api && SEED_DEMO_DATA=$${SEED_DEMO_DATA:-true} python -m src.db.seed
 
 test:
 	cd apps/api && pytest -q

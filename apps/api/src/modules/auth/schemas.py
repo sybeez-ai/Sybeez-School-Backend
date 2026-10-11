@@ -17,10 +17,12 @@ class TokenResponse(BaseModel):
     school_id: UUID | None = None
     user_id: UUID
     full_name: str
+    access_expires_in: int = 0
+    refresh_expires_in: int = 0
 
 
 class RefreshRequest(BaseModel):
-    refresh_token: str
+    refresh_token: str | None = None
 
 
 class AcceptInviteRequest(BaseModel):

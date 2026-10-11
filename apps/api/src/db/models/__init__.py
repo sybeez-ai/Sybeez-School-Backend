@@ -14,6 +14,13 @@ from src.db.models.knowledge import KnowledgeChunk, KnowledgeDocument
 from src.db.models.learning_session import LearningSession
 from src.db.models.membership import SchoolMembership
 from src.db.models.notification import Notification
+from src.db.models.permission import MembershipPermissionOverride, Permission, RolePermission
+from src.db.models.platform_staff import (
+    PlatformStaff,
+    PlatformStaffInvitation,
+    PlatformStaffPermission,
+    PlatformStaffPortal,
+)
 from src.db.models.parent import Parent
 from src.db.models.progress import Progress, StudentProgress
 from src.db.models.question import Question
@@ -75,4 +82,11 @@ __all__ = [
     "Notification",
     "AuditLog",
     "SecurityEvent",
+    "Permission",
+    "RolePermission",
+    "MembershipPermissionOverride",
+    "PlatformStaff",
+    "PlatformStaffPortal",
+    "PlatformStaffPermission",
+    "PlatformStaffInvitation",
 ]

@@ -24,6 +24,28 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 15
     refresh_token_expire_days: int = 14
+    # Per-role refresh lifetime in hours. Daily roles are an absolute cap.
+    # Teacher, student, and parent default to 30 days (720h) and rotate.
+    session_ttl_hours: str = (
+        "PLATFORM_ADMIN:24,PLATFORM_STAFF:24,SCHOOL_ADMIN:24,FINANCE:24,HR:24,"
+        "PAYROLL_APPROVER:24,TEACHER:720,STUDENT:720,PARENT:720"
+    )
+
+    superadmin_email: str = "admin@sybeez.ai"
+    superadmin_secret_id: str = "sybeez-school/superadmin"
+    aws_region: str = ""
+    auth_provider: str = "local"  # local | cognito
+    cognito_user_pool_id: str = ""
+    cognito_client_id: str = ""
+    cognito_region: str = ""
+
+    cookie_secure: str = "auto"  # auto | true | false
+    cookie_samesite: str = "lax"
+    cookie_domain: str = ""
+    access_cookie_name: str = "sybeez_access"
+    refresh_cookie_name: str = "sybeez_refresh"
+
+    seed_demo_data: bool = False
 
     # AI Teacher service (FE → AI chatbot; Core ↔ AI internal context)
     ai_service_url: str = "http://localhost:8001"
@@ -39,6 +61,22 @@ class Settings(BaseSettings):
     @property
     def is_dev(self) -> bool:
         return self.app_env == "development"
+
+    @property
+    def use_secure_cookies(self) -> bool:
+        value = self.cookie_secure.strip().lower()
+        if value == "auto":
+            return self.app_env == "production"
+        return value in {"1", "true", "yes"}
+
+    @property
+    def session_ttl_by_role(self) -> dict[str, int]:
+        parsed: dict[str, int] = {}
+        for part in self.session_ttl_hours.split(","):
+            name, _, hours = part.strip().partition(":")
+            if name and hours:
+                parsed[name.strip().upper()] = int(hours.strip())
+        return parsed
 
     @property
     def internal_service_tokens(self) -> set[str]:

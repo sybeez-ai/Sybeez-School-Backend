@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.exceptions import ConflictError, NotFoundError
 from src.db.models import Invitation, School, Subscription
+from src.modules.access.audit import write_audit
 from src.modules.auth.repository import hash_token
 from src.modules.platform.repository import PlatformRepository
 from src.modules.platform.schemas import InvitationCreate, SchoolCreate, SchoolOut, SchoolUpdate
@@ -100,6 +101,16 @@ class PlatformService:
             message=data.message,
         )
         await self.repo.create_invitation(inv)
+        await write_audit(
+            self.db,
+            school_id=school_id,
+            actor_id=invited_by,
+            action="role.grant",
+            resource_type="invitation",
+            resource_id=str(inv.id),
+            message=f"Platform invited {inv.email} as {inv.role}",
+            details={"email": inv.email, "role": inv.role, "status": "pending"},
+        )
         return inv, raw
 
     async def dashboard(self):

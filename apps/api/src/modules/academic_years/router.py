@@ -4,12 +4,12 @@ from uuid import UUID
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.dependencies import CurrentUser, require_roles, require_school_scope
+from src.api.dependencies import CurrentUser
 from src.core.database import get_db
 from src.core.exceptions import ForbiddenError
 from src.modules.academic_years.schemas import AcademicYearCreate, AcademicYearOut
 from src.modules.academic_years.service import AcademicYearService
-from src.shared.enums import UserRole
+from src.modules.access.deps import require_permission
 
 router = APIRouter(prefix="/academic-years", tags=["academic_years"])
 
@@ -23,7 +23,7 @@ def _school(user: CurrentUser) -> UUID:
 @router.get("", response_model=list[AcademicYearOut])
 async def list_years(
     db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_school_scope)],
+    user: Annotated[CurrentUser, Depends(require_permission("academic_years.read"))],
 ):
     return await AcademicYearService(db).list(_school(user))
 
@@ -32,6 +32,6 @@ async def list_years(
 async def create_year(
     body: AcademicYearCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    user: Annotated[CurrentUser, Depends(require_permission("academic_years.write"))],
 ):
     return await AcademicYearService(db).create(_school(user), body)

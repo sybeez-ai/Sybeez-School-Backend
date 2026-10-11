@@ -14,6 +14,16 @@ class TimetableEntryCreate(BaseModel):
     room: str | None = None
 
 
+class TimetableEntryUpdate(BaseModel):
+    class_id: UUID | None = None
+    subject_id: UUID | None = None
+    teacher_id: UUID | None = None
+    day_of_week: int | None = Field(default=None, ge=0, le=6)
+    starts_at: time | None = None
+    ends_at: time | None = None
+    room: str | None = Field(default=None, max_length=64)
+
+
 class TimetableEntryOut(BaseModel):
     id: UUID
     school_id: UUID
