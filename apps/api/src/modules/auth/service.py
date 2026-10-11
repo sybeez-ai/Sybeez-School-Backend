@@ -328,39 +328,39 @@ class AuthService:
         if role not in allowed:
             if role == UserRole.SCHOOL_ADMIN:
                 raise ForbiddenError(
-                    "This account is a school admin. Sign in at /login/school only."
+                    "This account is a school admin. Sign in at /school-admin/login only."
                 )
             if role == UserRole.HR:
                 raise ForbiddenError(
-                    "This account is an HR user. Sign in at /login/hrm only."
+                    "This account is an HR user. Sign in at /hrm/login only."
                 )
             if role == UserRole.HR_MANAGER:
                 raise ForbiddenError(
-                    "This account is an HR manager. Sign in at /login/hrm only."
+                    "This account is an HR manager. Sign in at /hrm/login only."
                 )
             if role == UserRole.PAYROLL_APPROVER:
                 raise ForbiddenError(
-                    "This account is a payroll approver. Sign in at /login/hrm only."
+                    "This account is a payroll approver. Sign in at /hrm/login only."
                 )
             if role == UserRole.PLATFORM_ADMIN:
                 raise ForbiddenError(
-                    "This account is a platform admin. Sign in at /login/platform only."
+                    "This account is a platform admin. Sign in at /platform/login only."
                 )
             if role == UserRole.TEACHER:
                 raise ForbiddenError(
-                    "This account is a teacher. Sign in at /login/teacher only."
+                    "This account is a teacher. Sign in at /teacher/login only."
                 )
             if role == UserRole.STUDENT:
                 raise ForbiddenError(
-                    "This account is a student. Sign in at /login/student only."
+                    "This account is a student. Sign in at /student/login only."
                 )
             if role == UserRole.PARENT:
                 raise ForbiddenError(
-                    "This account is a parent. Sign in at /login/parent only."
+                    "This account is a parent. Sign in at /parent/login only."
                 )
             if role == UserRole.STAFF:
                 raise ForbiddenError(
-                    "This account is a staff member. Sign in at /login/staff only."
+                    "This account is a staff member. Sign in at /staff/login only."
                 )
             raise ForbiddenError(
                 f"This account cannot sign in on the {key} portal."
