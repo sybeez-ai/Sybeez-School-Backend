@@ -117,4 +117,4 @@ The migrate task already does both. A second run sees `0053` and does not restam
 
 `sybeez_app` has the `rds_iam` role, so Postgres rejects a password for that user. The API and the worker set `DB_IAM_AUTH=true`. Each new connection uses `boto3` `generate_db_auth_token` (region, host, port, user). The token lasts 15 minutes. The process mints a new one after 10 minutes, the SQLAlchemy `do_connect` event puts it on the connection, and the pool recycles connections after 10 minutes. SSL is required.
 
-The migrate task is different. Its `DATABASE_URL` is the master user, including the password, and `DB_IAM_AUTH` is unset. If IAM is on and the URL has no password, `alembic upgrade head` exits before it changes the database.
+The migrate task is different. Its `DATABASE_URL` is the master user, including the password, and `DB_IAM_AUTH` is unset. If IAM is on and the URL has no password, `alembic upgrade head` exits before it changes the database. Alembic loads settings without the API's Cognito, S3, and JWT checks, and in production it connects with SSL even when `DATABASE_SSL_MODE` is unset on that task.

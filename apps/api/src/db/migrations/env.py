@@ -6,7 +6,7 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-from src.core.config import get_settings
+from src.core.config import Settings
 from src.db.base import Base
 from src.db import models  # noqa: F401 — register models
 
@@ -15,8 +15,24 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 target_metadata = Base.metadata
-settings = get_settings()
+# Migrations only need DATABASE_URL. The API's validate_runtime() also requires
+# Cognito, S3, and JWT, which the migrate task does not carry.
+settings = Settings()
 config.set_main_option("sqlalchemy.url", settings.database_url)
+
+
+def _migration_ssl() -> bool:
+    if (settings.database_ssl_mode or "").lower() == "require":
+        return True
+    return (settings.app_env or "").lower() == "production"
+
+
+def _sync_ssl_url(url: str) -> str:
+    """psycopg2 reads sslmode from the URL. Leave local development URLs alone."""
+    if not _migration_ssl() or "sslmode=" in url:
+        return url
+    sep = "&" if "?" in url else "?"
+    return f"{url}{sep}sslmode=require"
 
 
 def _install_idempotent_ops() -> None:
@@ -129,15 +145,17 @@ def run_migrations_online() -> None:
     assert_master_url(settings.database_url, iam=settings.database_iam_auth)
     # Commit a legacy-finance restamp before Alembic reads alembic_version.
     # An ambiguous stamp raises here, so the task exits before any other DDL.
-    align_database(settings.database_url)
+    align_database(_sync_ssl_url(settings.database_url))
     asyncio.run(run_async_migrations())
 
 
 async def run_async_migrations() -> None:
+    connect_args = {"ssl": "require"} if _migration_ssl() else {}
     connectable = async_engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
+        connect_args=connect_args,
     )
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)
