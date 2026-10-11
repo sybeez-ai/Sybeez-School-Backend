@@ -233,6 +233,13 @@ def complete_new_password(
     return _auth_result_from_tokens(resp.get("AuthenticationResult") or {}, username)
 
 
+class CognitoAccessDeniedError(ConflictError):
+    """The API's IAM role may not call Cognito admin APIs (e.g. AccessDeniedException)."""
+
+
+_ACCESS_DENIED_CODES = {"AccessDeniedException", "AccessDenied", "UnrecognizedClientException"}
+
+
 def admin_create_user(
     *,
     email: str,
@@ -302,6 +309,8 @@ def admin_create_user(
                 return str(sub)
             except ClientError as inner:
                 raise ConflictError(f"Cognito user exists but password update failed: {inner}") from inner
+        if code in _ACCESS_DENIED_CODES:
+            raise CognitoAccessDeniedError(f"Cognito create user failed: {code}") from exc
         raise ConflictError(f"Cognito create user failed: {code}") from exc
 
 

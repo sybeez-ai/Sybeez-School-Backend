@@ -1,10 +1,13 @@
 """Provision school-scoped users (admin/teacher/student/parent) with Cognito + memberships."""
 
+import logging
+
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.config import get_settings
 from src.core.exceptions import ConflictError
 from src.core.rls import clear_lookup_email, set_lookup_email
 from src.core.security import hash_password
@@ -12,6 +15,8 @@ from src.db.models import SchoolMembership, User
 from src.modules.access.audit import write_audit
 from src.modules.auth import cognito as cognito_svc
 from src.shared.enums import MembershipStatus, UserRole
+
+logger = logging.getLogger(__name__)
 
 
 async def get_or_create_user(
@@ -43,14 +48,23 @@ async def get_or_create_user(
 
     if cognito_svc.cognito_configured():
         temp_used = password or cognito_svc.generate_temporary_password()
-        cognito_sub = cognito_svc.admin_create_user(
-            email=email,
-            temporary_password=temp_used,
-            full_name=resolved_full,
-            make_permanent=cognito_permanent,
-        )
-        used_cognito = True
-    elif password:
+        try:
+            cognito_sub = cognito_svc.admin_create_user(
+                email=email,
+                temporary_password=temp_used,
+                full_name=resolved_full,
+                make_permanent=cognito_permanent,
+            )
+            used_cognito = True
+        except cognito_svc.CognitoAccessDeniedError:
+            # auth_mode=both: when the API role may not call Cognito admin APIs, fall back
+            # to a local password hash (same behaviour as provision_superadmin). Login uses
+            # the local hash while cognito_sub is empty. auth_mode=cognito still fails.
+            if (get_settings().auth_mode or "both").lower().strip() == "cognito":
+                raise
+            logger.warning("Cognito admin API denied; provisioning %s with a local password", email)
+            password = temp_used
+    if not used_cognito and password:
         temp_used = password
 
     if user:
