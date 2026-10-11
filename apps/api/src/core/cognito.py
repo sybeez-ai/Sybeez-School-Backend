@@ -65,6 +65,14 @@ def cognito_error_code(exc: Exception) -> str:
     return type(exc).__name__
 
 
+def cognito_admin_denied(exc: Exception) -> bool:
+    """The task role cannot administer the user pool.
+
+    Login still uses the local password hash after ``cognito_sub`` is cleared.
+    """
+    return cognito_error_code(exc) == "AccessDeniedException"
+
+
 def _is_user_not_found(exc: Exception) -> bool:
     code = cognito_error_code(exc)
     return code in {"UserNotFoundException", "UserNotFound"}

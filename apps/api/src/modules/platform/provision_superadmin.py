@@ -24,7 +24,7 @@ import os
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.cognito import cognito_error_code, retire_cognito_user, set_cognito_password
+from src.core.cognito import cognito_admin_denied, cognito_error_code, retire_cognito_user, set_cognito_password
 from src.core.config import get_settings
 from src.core.database import AsyncSessionLocal, engine
 from src.core.secrets import resolve_superadmin_password, store_superadmin_password
@@ -130,15 +130,18 @@ async def provision() -> int:
     try:
         cognito_state = set_cognito_password(email, password)
     except Exception as exc:
-        cognito_ok = False
-        cognito_state = "failed"
-        logger.error("Cognito password set failed for %s (%s)", email, cognito_error_code(exc))
+        code = cognito_error_code(exc)
+        cognito_state = "denied" if cognito_admin_denied(exc) else "failed"
+        cognito_ok = cognito_state != "failed"
+        logger.error("Cognito password set failed for %s (%s)", email, code)
     try:
         retired_cognito = retire_cognito_user(retired)
     except Exception as exc:
-        cognito_ok = False
-        retired_cognito = "failed"
-        logger.error("Cognito retire failed for %s (%s)", retired, cognito_error_code(exc))
+        code = cognito_error_code(exc)
+        retired_cognito = "denied" if cognito_admin_denied(exc) else "failed"
+        if retired_cognito == "failed":
+            cognito_ok = False
+        logger.error("Cognito retire failed for %s (%s)", retired, code)
 
     logger.info(
         "Super admin provision finished email=%s db=%s cognito=%s retired_email=%s retired_db=%s retired_cognito=%s",

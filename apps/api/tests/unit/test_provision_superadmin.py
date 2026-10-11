@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from src.core.cognito import retire_cognito_user, set_cognito_password
+from src.core.cognito import cognito_admin_denied, retire_cognito_user, set_cognito_password
 from src.core.config import get_settings
 from src.db.models import User
 from src.modules.platform.provision_superadmin import (
@@ -62,6 +62,18 @@ def test_set_cognito_password_creates_and_resets(monkeypatch):
     assert all(call["Permanent"] is True for call in client.passwords)
     assert client.passwords[-1]["Password"] == "second-secret"
     assert client.enabled == 2
+
+
+def test_cognito_admin_denied_is_access_denied_only():
+    class Denied(Exception):
+        response = {"Error": {"Code": "AccessDeniedException", "Message": "hidden"}}
+
+    class Invalid(Exception):
+        response = {"Error": {"Code": "InvalidPasswordException", "Message": "hidden"}}
+
+    assert cognito_admin_denied(Denied()) is True
+    assert cognito_admin_denied(Invalid()) is False
+    assert cognito_admin_denied(RuntimeError("no")) is False
 
 
 def test_set_cognito_password_skips_without_a_pool(monkeypatch):
