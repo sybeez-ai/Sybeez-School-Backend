@@ -113,3 +113,48 @@ def test_esi_ignores_reimbursement_and_bonus():
     extra = compute_pay(_ctx(_marks(), reimbursements=D("5000"), bonus=D("4000")))
     assert base.esi.covered and extra.esi.covered
     assert extra.esi.employee == base.esi.employee
+
+
+def test_mid_year_tds_projects_remaining_months_only():
+    from src.modules.payroll.calc import fy_months_remaining
+
+    assert fy_months_remaining(date(2026, 10, 31)) == 6
+    # 6 months already paid at 100k with 30k TDS; 6 months left at 100k.
+    result = tds(
+        TdsInput(
+            regime="NEW",
+            monthly_taxable_earnings=D("100000"),
+            prior_gross=D("600000"),
+            prior_tds=D("30000"),
+            months_remaining=6,
+            rounding="PAISE",
+        )
+    )
+    assert result.annual_gross == D("1200000.00")
+    # Taxable 11.25L is under the rebate limit: nothing more to deduct.
+    assert result.monthly_tds == D("0.00")
+    joiner = tds(TdsInput(regime="NEW", monthly_taxable_earnings=D("150000"), months_remaining=6, rounding="PAISE"))
+    assert joiner.annual_gross == D("900000.00")
+
+
+def test_compute_pay_uses_remaining_months_for_tds():
+    ctx = _ctx(_marks())
+    pay = compute_pay(ctx)
+    assert pay.tds.annual_gross == pay.gross * 6
+
+
+def test_esi_continues_through_contribution_period():
+    from src.modules.payroll.calc import esi_contribution_period
+
+    assert esi_contribution_period(date(2026, 10, 31)) == (date(2026, 10, 1), date(2027, 3, 31))
+    assert esi_contribution_period(date(2027, 2, 28)) == (date(2026, 10, 1), date(2027, 3, 31))
+    assert esi_contribution_period(date(2026, 4, 30)) == (date(2026, 4, 1), date(2026, 9, 30))
+    raised = [
+        ComponentDef("BASIC", "Basic", "EARNING", "FIXED", amount=D("15000"), pf_wage=True, display_order=1),
+        ComponentDef("HRA", "HRA", "EARNING", "FIXED", amount=D("8000"), prorate=False, display_order=2),
+    ]
+    dropped = compute_pay(PayContext(**{**_ctx(_marks()).__dict__, "components": raised}))
+    assert dropped.esi.covered is False
+    kept = compute_pay(PayContext(**{**_ctx(_marks()).__dict__, "components": raised, "esi_continuing": True}))
+    assert kept.esi.covered is True
+    assert kept.esi.employee == D("173")

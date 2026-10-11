@@ -350,13 +350,13 @@ def tds(spec: TdsInput) -> TdsResult:
     regime = "OLD" if spec.regime.upper() == "OLD" else "NEW"
     prior_gross = D(spec.prior_gross)
     prior_paid = D(spec.prior_tds)
-    span = 12
-    if prior_gross != 0 or prior_paid != 0:
-        span = int(spec.months_remaining or 12)
-        if span < 1:
-            span = 1
-        if span > 12:
-            span = 12
+    # Project only the months still to be paid this financial year; earlier
+    # months arrive as actual year-to-date gross and tax already deducted.
+    span = int(spec.months_remaining or 12)
+    if span < 1:
+        span = 1
+    if span > 12:
+        span = 12
     annual_gross = D(spec.monthly_taxable_earnings) * span + D(spec.one_time_taxable) + prior_gross
     std = D(spec.standard_deduction_old if regime == "OLD" else spec.standard_deduction_new)
     annual_basic = D(spec.monthly_basic) * span
@@ -695,6 +695,16 @@ class PayContext:
     pan: str | None = None
     prior_gross: Decimal = ZERO
     prior_tds: Decimal = ZERO
+    # True when an earlier month of the same ESI contribution period was covered.
+    esi_continuing: bool = False
+
+
+def esi_contribution_period(day: date) -> tuple[date, date]:
+    """ESI contribution periods run April-September and October-March."""
+    if 4 <= day.month <= 9:
+        return date(day.year, 4, 1), date(day.year, 9, 30)
+    start_year = day.year if day.month >= 10 else day.year - 1
+    return date(start_year, 10, 1), date(start_year + 1, 3, 31)
 
 
 def compute_pay(ctx: PayContext) -> PayResult:
@@ -782,7 +792,8 @@ def compute_pay(ctx: PayContext) -> PayResult:
         ZERO,
     )
     esi_gross = esi_regular + D(ctx.arrears)
-    esi_covered = ctx.esi_enrolled and esi_regular <= D(ctx.esi_threshold)
+    # Once covered in a contribution period, ESI continues to its end even if pay rises.
+    esi_covered = ctx.esi_enrolled and (esi_regular <= D(ctx.esi_threshold) or ctx.esi_continuing)
     esi_result = esi(
         EsiInput(
             enrolled=esi_covered,
@@ -828,7 +839,7 @@ def compute_pay(ctx: PayContext) -> PayResult:
             rounding=ctx.rounding,
             prior_gross=ctx.prior_gross,
             prior_tds=ctx.prior_tds,
-            months_remaining=fy_months_remaining(ctx.period_end) if D(ctx.prior_gross) or D(ctx.prior_tds) else 12,
+            months_remaining=fy_months_remaining(ctx.period_end),
         )
     )
     if D(ctx.arrears) > 0:

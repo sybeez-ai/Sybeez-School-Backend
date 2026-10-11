@@ -87,3 +87,16 @@ async def test_generate_submit_approve_publishes_payslips(api, db_session, hr_wo
     assert mine["payslip"]["status"] == "PUBLISHED"
     assert mine["lines"]
     assert all(item["payslip"]["status"] == "PUBLISHED" for item in payslips)
+    from sqlalchemy import select
+
+    from src.db.models import ExpenseLedgerEntry, SchoolExpense
+
+    voucher = (
+        await db_session.execute(select(SchoolExpense).where(SchoolExpense.invoice_number == f"PAYRUN-{run_id}"))
+    ).scalar_one()
+    assert voucher.status == "APPROVED"
+    entries = (
+        await db_session.execute(select(ExpenseLedgerEntry).where(ExpenseLedgerEntry.expense_id == voucher.id))
+    ).scalars().all()
+    assert sum(e.debit for e in entries) == sum(e.credit for e in entries) == voucher.total_amount
+    assert any(e.account == "SALARY_PAYABLE" and e.credit > 0 for e in entries)

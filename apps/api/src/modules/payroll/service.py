@@ -55,6 +55,7 @@ from src.db.models import (
 from src.modules.employees.service import sync_teacher_employees
 from src.modules.payroll.bank import render_bank_file
 from src.modules.payroll.flow import PayrollFlow
+from src.modules.payroll.ledger import post_salary_voucher, salary_journal
 from src.modules.payroll.ops import assignment_calc, validate_component_fields
 from src.modules.payroll.calc import (
     SEEDED_PT_SLABS,
@@ -69,6 +70,7 @@ from src.modules.payroll.calc import (
     approval_transition,
     completed_years,
     compute_pay,
+    esi_contribution_period,
     eval_formula,
     canonical_financial_year,
     financial_year_label,
@@ -1188,6 +1190,7 @@ class PayrollService(PayrollFlow):
             ).scalars()
         )
         opening = await self._opening_ytd(employee.id, financial_year_label(end))
+        ytd_gross, ytd_tds, esi_continuing = await self._released_before(employee.id, start)
         basic_guess = next((c.amount for c in components if c.code == "BASIC"), _ZERO)
         da_guess = next((c.amount for c in components if c.code == "DA"), _ZERO)
         bonus = statutory_bonus(
@@ -1244,8 +1247,9 @@ class PayrollService(PayrollFlow):
             bonus=bonus,
             employee_name=name,
             pan=profile.pan if profile else None,
-            prior_gross=opening.ytd_gross if opening else _ZERO,
-            prior_tds=opening.ytd_tds if opening else _ZERO,
+            prior_gross=(opening.ytd_gross if opening else _ZERO) + ytd_gross,
+            prior_tds=(opening.ytd_tds if opening else _ZERO) + ytd_tds,
+            esi_continuing=esi_continuing,
         )
         draft = compute_pay(PayContext(**common, loan_emi=_ZERO))
         room = draft.gross - draft.deductions
@@ -1568,6 +1572,27 @@ class PayrollService(PayrollFlow):
                 )
         run.published_at = _now()
         run.approval_status = "PUBLISHED"
+        journal_input = []
+        for slip in slips:
+            if slip.status == "CANCELLED":
+                continue
+            slip_lines = (
+                await self.db.execute(
+                    select(PayrollPayslipLine.code, PayrollPayslipLine.kind, PayrollPayslipLine.amount).where(
+                        PayrollPayslipLine.payslip_id == slip.id
+                    )
+                )
+            ).all()
+            journal_input.append((slip.net_amount, [(r.code, r.kind, r.amount) for r in slip_lines]))
+        voucher = await post_salary_voucher(
+            self.db,
+            school_id=self.school_id,
+            run_id=run.id,
+            label=run.label or str(run.period_start),
+            entry_date=run.period_end,
+            actor_id=self.user.id,
+            journal=salary_journal(journal_input),
+        )
         await notify_pay_run_approved(
             self.db,
             school_id=self.school_id,
@@ -1575,7 +1600,14 @@ class PayrollService(PayrollFlow):
             period_label=run.label,
             employee_count=sum(1 for slip in slips if slip.status != "CANCELLED"),
         )
-        await self._audit("run.publish", "payroll_run", run.id, None, {"payslips": len(slips)}, reason)
+        await self._audit(
+            "run.publish",
+            "payroll_run",
+            run.id,
+            None,
+            {"payslips": len(slips), "ledger_voucher": voucher.voucher_no if voucher else None},
+            reason,
+        )
 
     def _owns_payslip(self, slip: PayrollPayslip, employee: Employee) -> bool:
         if slip.employee_id == employee.id:
@@ -1702,6 +1734,59 @@ class PayrollService(PayrollFlow):
             "opening_pt": str(opening.ytd_pt if opening else _ZERO),
             "snapshot": latest,
         }
+
+    async def _released_before(self, employee_id: UUID, start: date) -> tuple[Decimal, Decimal, bool]:
+        """Released pay earlier in this financial year: gross, TDS deducted, and ESI continuity."""
+        fy_start = date(start.year if start.month >= 4 else start.year - 1, 4, 1)
+        esi_start, _ = esi_contribution_period(start)
+        rows = (
+            await self.db.execute(
+                select(
+                    PayrollPayslip.id,
+                    PayrollPayslip.gross_amount,
+                    PayrollRun.period_start,
+                )
+                .join(PayrollRun, PayrollRun.id == PayrollPayslip.payroll_run_id)
+                .where(
+                    PayrollPayslip.employee_id == employee_id,
+                    PayrollPayslip.status.in_(VISIBLE),
+                    PayrollRun.period_start >= fy_start,
+                    PayrollRun.period_end < start,
+                )
+            )
+        ).all()
+        if not rows:
+            return _ZERO, _ZERO, False
+        ids = [row.id for row in rows]
+        totals = {
+            code: amount or _ZERO
+            for code, amount in (
+                await self.db.execute(
+                    select(PayrollPayslipLine.code, func.sum(PayrollPayslipLine.amount))
+                    .where(PayrollPayslipLine.payslip_id.in_(ids), PayrollPayslipLine.code.in_(("TDS", "REIMBURSEMENT")))
+                    .group_by(PayrollPayslipLine.code)
+                )
+            ).all()
+        }
+        in_esi_period = [row.id for row in rows if row.period_start >= esi_start]
+        esi_continuing = False
+        if in_esi_period:
+            esi_continuing = bool(
+                (
+                    await self.db.execute(
+                        select(func.count())
+                        .select_from(PayrollPayslipLine)
+                        .where(
+                            PayrollPayslipLine.payslip_id.in_(in_esi_period),
+                            PayrollPayslipLine.code == "ESI",
+                            PayrollPayslipLine.amount > 0,
+                        )
+                    )
+                ).scalar_one()
+            )
+        # Reimbursements are not taxable salary.
+        gross = sum((row.gross_amount for row in rows), _ZERO) - totals.get("REIMBURSEMENT", _ZERO)
+        return gross, totals.get("TDS", _ZERO), esi_continuing
 
     async def _opening_ytd(self, employee_id: UUID, financial_year: str) -> PayrollOpeningYtd | None:
         return (
