@@ -239,7 +239,42 @@ jobs:
             if [ "$current" -lt "$minimum" ]; then
               aws ecs update-service --cluster "$ECS_CLUSTER" --service "$service" \
                 --desired-count "$minimum" >/dev/null
+              set +e
               aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$service"
+              stable=$?
+              set -e
+              if [ "$stable" -ne 0 ]; then
+                echo "$service did not stabilise"
+                aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$service" \
+                  --query 'services[0].{desired:desiredCount,running:runningCount,pending:pendingCount,events:events[:8].message}' \
+                  --output json
+                stopped=$(aws ecs list-tasks --cluster "$ECS_CLUSTER" --service-name "$service" \
+                  --desired-status STOPPED --query 'taskArns[:3]' --output text)
+                if [ -n "$stopped" ] && [ "$stopped" != "None" ]; then
+                  aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks $stopped \
+                    --query 'tasks[].{stoppedReason:stoppedReason,containers:containers[].{name:name,exitCode:exitCode,reason:reason}}' \
+                    --output json
+                  log_group=$(aws ecs describe-task-definition --task-definition "$task_def" \
+                    --query "taskDefinition.containerDefinitions[?name=='${container}'].logConfiguration.options.\"awslogs-group\" | [0]" \
+                    --output text)
+                  log_prefix=$(aws ecs describe-task-definition --task-definition "$task_def" \
+                    --query "taskDefinition.containerDefinitions[?name=='${container}'].logConfiguration.options.\"awslogs-stream-prefix\" | [0]" \
+                    --output text)
+                  if [ -n "$log_group" ] && [ "$log_group" != "None" ] && [ -n "$log_prefix" ] && [ "$log_prefix" != "None" ]; then
+                    for arn in $stopped; do
+                      task_id="${arn##*/}"
+                      echo "CloudWatch: $log_group ${log_prefix}/${container}/${task_id}"
+                      aws logs get-log-events \
+                        --log-group-name "$log_group" \
+                        --log-stream-name "${log_prefix}/${container}/${task_id}" \
+                        --limit 80 \
+                        --query 'events[].message' \
+                        --output text || true
+                    done
+                  fi
+                fi
+                exit "$stable"
+              fi
             fi
             after=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$service" \
               --query 'services[0].desiredCount' --output text)
