@@ -10,8 +10,7 @@ from src.modules.fees.calculations import money
 
 TWOPLACES = Decimal("0.01")
 BLOCKED_ONLINE = (
-    "Online payments are blocked until this school's Razorpay Route account is activated. "
-    "The payment was not settled to the Sybeez platform account."
+    "Online payment isn't available for this school yet. Please pay at the school office."
 )
 
 

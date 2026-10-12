@@ -99,7 +99,7 @@ def test_platform_fee_rounding_edges():
 
 
 def test_inactive_route_blocks_without_platform_fallback():
-    with pytest.raises(PlatformFeeError, match="not settled to the Sybeez platform account"):
+    with pytest.raises(PlatformFeeError, match="pay at the school office"):
         plan_razorpay_transfers(_settings(), Decimal("100.00"), "INR", {"invoice_id": "inv"})
 
     suspended = _settings(route_status="suspended", linked_account_id="acc_1")
@@ -465,3 +465,10 @@ def test_route_terms_and_ifsc_rejected():
         )
     with pytest.raises(AppError):
         encrypt_account_number("12")
+
+
+def test_blocked_online_message_is_parent_friendly():
+    from src.modules.fees.route_money import BLOCKED_ONLINE
+
+    assert "Sybeez" not in BLOCKED_ONLINE and "Route" not in BLOCKED_ONLINE
+    assert "school office" in BLOCKED_ONLINE

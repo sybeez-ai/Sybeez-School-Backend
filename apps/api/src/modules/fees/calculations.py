@@ -76,3 +76,19 @@ def invoice_status_after_payment(
     if today > due_date:
         return "OVERDUE"
     return "PARTIALLY_PAID"
+
+
+def resolve_invoice_due_date(installment, installments: list, invoice_date: date) -> date:
+    """Due date for a generated invoice when the caller did not pass one.
+
+    Uses the chosen instalment's date; otherwise the structure's next instalment on or
+    after the invoice date (e.g. Term 1 = 15 Nov), then its last instalment. Falls back
+    to the invoice date only when the structure has no instalments.
+    """
+    if installment is not None and getattr(installment, "due_date", None):
+        return installment.due_date
+    dates = sorted(d for d in (getattr(i, "due_date", None) for i in installments or []) if d)
+    if not dates:
+        return invoice_date
+    upcoming = [d for d in dates if d >= invoice_date]
+    return upcoming[0] if upcoming else dates[-1]

@@ -242,3 +242,17 @@ def test_late_fee_not_charged_on_due_date_or_last_grace_day():
 def test_zero_total_invoice_is_paid():
     past = date.today() - timedelta(days=2)
     assert invoice_status_after_payment(total=Decimal(0), paid=Decimal(0), due_date=past) == "PAID"
+
+
+def test_generated_invoice_due_date_uses_structure_installment():
+    from types import SimpleNamespace
+
+    from src.modules.fees.calculations import resolve_invoice_due_date
+
+    issue = date(2026, 10, 11)
+    t1 = SimpleNamespace(due_date=date(2026, 11, 15))
+    t2 = SimpleNamespace(due_date=date(2027, 2, 15))
+    assert resolve_invoice_due_date(None, [t2, t1], issue) == date(2026, 11, 15)
+    assert resolve_invoice_due_date(t2, [t1, t2], issue) == date(2027, 2, 15)
+    assert resolve_invoice_due_date(None, [t1, t2], date(2027, 3, 1)) == date(2027, 2, 15)
+    assert resolve_invoice_due_date(None, [], issue) == issue

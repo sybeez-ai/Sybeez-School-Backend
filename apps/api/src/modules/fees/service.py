@@ -38,7 +38,12 @@ from src.db.models import (
     User,
 )
 from src.db.models.class_ import ClassRoom
-from src.modules.fees.calculations import calculate_late_fee, invoice_status_after_payment, money
+from src.modules.fees.calculations import (
+    calculate_late_fee,
+    invoice_status_after_payment,
+    money,
+    resolve_invoice_due_date,
+)
 from src.modules.fees.schemas import (
     AdjustmentCreate,
     AdjustmentOut,
@@ -563,7 +568,7 @@ class FeeService:
 
         settings = await self.get_or_create_settings(school_id)
         invoice_date = data.invoice_date or date.today()
-        due_date = data.due_date or (installment.due_date if installment else invoice_date)
+        due_date = data.due_date or resolve_invoice_due_date(installment, list(structure.installments or []), invoice_date)
 
         # Resolve students via enrollment
         q = select(Enrollment).where(
