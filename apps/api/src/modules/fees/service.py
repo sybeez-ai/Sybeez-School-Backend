@@ -1116,8 +1116,12 @@ class FeeService:
             ).scalars().all()
             return [l.student_id for l in links]
         if role == UserRole.STUDENT.value:
-            settings = await self.get_or_create_settings(school_id)
-            if not settings.allow_student_view_fees:
+            # Read-only: a student session may not INSERT fee_settings under RLS, so a
+            # school without a settings row means the default (student viewing off).
+            settings = (
+                await self.db.execute(select(FeeSettings).where(FeeSettings.school_id == school_id))
+            ).scalar_one_or_none()
+            if settings is None or not settings.allow_student_view_fees:
                 raise ForbiddenError("Student fee viewing is disabled")
             st = (
                 await self.db.execute(
