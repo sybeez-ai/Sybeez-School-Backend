@@ -639,9 +639,13 @@ class AttendanceService:
     async def _dispatch_student_alert(self, **kwargs):
         from src.core.telemetry import track_alert
         from src.modules.alerts.service import dispatch_alert
+        from src.modules.notifications.service import notification_fanout_scope
 
         try:
-            return await dispatch_alert(self.db, link_path="/parent/attendance", **kwargs)
+            # Savepoint: a failed alert must never abort the attendance save itself.
+            async with self.db.begin_nested():
+                async with notification_fanout_scope(self.db, kwargs.get("school_id")):
+                    return await dispatch_alert(self.db, link_path="/parent/attendance", **kwargs)
         except Exception:
             track_alert("attendance_alert_failed", event_key=kwargs.get("event_key"))
             return None
