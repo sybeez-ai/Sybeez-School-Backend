@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
 from fastapi import UploadFile
+from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import attributes
@@ -215,6 +216,11 @@ class HomeworkService:
         with_stats: bool = False,
         my_submission: HomeworkSubmission | None = None,
     ) -> HomeworkOut:
+        # A flushed UPDATE expires server-side columns (updated_at onupdate=now()); reading
+        # them lazily under asyncio raises MissingGreenlet -> 500 on publish/update/close.
+        await self.db.flush()
+        if sa_inspect(row).expired_attributes:
+            await self.db.refresh(row)
         out = HomeworkOut(
             id=row.id,
             school_id=row.school_id,

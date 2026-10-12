@@ -89,3 +89,62 @@ async def test_scope_does_not_cross_schools():
             await db.rollback()
     finally:
         await _wipe([school_id, other_id], [teacher_id, student_id, t2, s2])
+
+
+async def test_teacher_publishes_draft_and_student_is_notified():
+    """Draft -> publish by the assigned teacher under RLS (was a 500 / 403 live)."""
+    from datetime import date
+
+    from sqlalchemy import select
+
+    from src.db.models import AcademicYear, ClassRoom, Enrollment, Grade, Student, Subject, Teacher, TeacherAssignment
+    from src.modules.homework.schemas import HomeworkCreate
+    from src.modules.homework.service import HomeworkService
+    from src.shared.enums import HomeworkStatus
+
+    school_id, teacher_uid, student_uid = await _seed()
+    try:
+        async with AsyncSessionLocal() as db:
+            year = AcademicYear(id=uuid4(), school_id=school_id, name="2026-27", starts_on=date(2026, 4, 1),
+                                ends_on=date(2027, 3, 31), is_current=True)
+            grade = Grade(id=uuid4(), school_id=school_id, name="Class 5", level=5)
+            db.add_all([year, grade])
+            await db.flush()
+            room = ClassRoom(id=uuid4(), school_id=school_id, grade_id=grade.id, academic_year_id=year.id,
+                             name="5-A", section="A")
+            subject = Subject(id=uuid4(), school_id=school_id, name="Maths", code=f"M{uuid4().hex[:6]}")
+            teacher = Teacher(id=uuid4(), school_id=school_id, user_id=teacher_uid, status="ACTIVE")
+            student = Student(id=uuid4(), school_id=school_id, user_id=student_uid, status="ACTIVE")
+            db.add_all([room, subject, teacher, student])
+            await db.flush()
+            db.add_all([
+                TeacherAssignment(id=uuid4(), school_id=school_id, teacher_id=teacher.id, class_id=room.id,
+                                  subject_id=subject.id, academic_year_id=year.id),
+                Enrollment(id=uuid4(), school_id=school_id, student_id=student.id, class_id=room.id,
+                           academic_year_id=year.id, status="ACTIVE"),
+            ])
+            await db.commit()
+            room_id, subject_id = room.id, subject.id
+
+        async with AsyncSessionLocal() as db:
+            await _teacher_session(db, school_id, teacher_uid)
+            svc = HomeworkService(db)
+            draft = await svc.create(
+                school_id=school_id, user_id=teacher_uid, role="TEACHER",
+                data=HomeworkCreate(class_id=room_id, subject_id=subject_id, title="Test draft",
+                                    status=HomeworkStatus.DRAFT),
+            )
+            await db.commit()
+            out = await svc.publish(school_id=school_id, user_id=teacher_uid, role="TEACHER", homework_id=draft.id)
+            assert out.status == HomeworkStatus.PUBLISHED.value
+            assert out.updated_at is not None
+            await db.commit()
+
+        async with AsyncSessionLocal() as db:
+            await db.execute(text("RESET ROLE"))
+            await db.execute(text("SELECT set_config('app.rls_bypass', 'on', false)"))
+            got = (await db.execute(select(Notification).where(Notification.user_id == student_uid))).scalars().all()
+            await db.execute(text("SELECT set_config('app.rls_bypass', 'off', false)"))
+            assert any(n.category == "HOMEWORK_PUBLISHED" for n in got)
+    finally:
+        await _wipe([school_id], [teacher_uid, student_uid])
