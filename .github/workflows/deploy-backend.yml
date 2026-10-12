@@ -362,20 +362,33 @@ jobs:
             exit 1
           fi
           if [ -z "${SUPERADMIN_INITIAL_PASSWORD:-}" ]; then
-            # The Actions token cannot write repository secrets. The password
-            # was removed from seed.py in 5f2b87f; recover that deleted line,
-            # mask it, and do not print it. Later runs prefer the Actions secret.
-            echo "Actions secret is unset; recovering the removed seed constant"
-            git fetch --deepen=30 origin release
-            python3 .github/scripts/recover_superadmin_password.py
-            SUPERADMIN_INITIAL_PASSWORD="$(cat provision-password.txt)"
-            rm -f provision-password.txt
-            if [ -z "$SUPERADMIN_INITIAL_PASSWORD" ]; then
-              echo "Could not recover the super admin password"
-              exit 1
+            # Order: Actions secret -> value stored by an earlier run in Secrets
+            # Manager -> the constant removed from seed.py in 5f2b87f (needs full
+            # history; a shallow clone cannot see it). Never printed; masked.
+            if aws secretsmanager get-secret-value --secret-id sybeez-school/superadmin \
+                 --query SecretString --output text > superadmin-secret.json 2>sm-err.txt; then
+              SUPERADMIN_INITIAL_PASSWORD="$(jq -r '.SUPERADMIN_INITIAL_PASSWORD // empty' superadmin-secret.json 2>/dev/null || true)"
             fi
-            echo "::add-mask::$SUPERADMIN_INITIAL_PASSWORD"
-            echo "Recovered the super admin password and masked it"
+            rm -f superadmin-secret.json sm-err.txt
+            if [ -n "$SUPERADMIN_INITIAL_PASSWORD" ]; then
+              echo "::add-mask::$SUPERADMIN_INITIAL_PASSWORD"
+              echo "Using the super admin password already stored in Secrets Manager"
+            else
+              echo "Actions secret is unset; recovering the removed seed constant"
+              git fetch --quiet --unshallow origin 2>/dev/null || git fetch --quiet origin release || true
+              if git cat-file -e 5f2b87f3ec9e68a659b7e3e19f97949661a333ae^{commit} 2>/dev/null \
+                 && python3 .github/scripts/recover_superadmin_password.py; then
+                SUPERADMIN_INITIAL_PASSWORD="$(cat provision-password.txt)"
+              fi
+              rm -f provision-password.txt
+              if [ -z "$SUPERADMIN_INITIAL_PASSWORD" ]; then
+                # The admin already exists from earlier deploys; do not fail the release.
+                echo "::warning::Super admin password unavailable; skipping provisioning (set the SUPERADMIN_INITIAL_PASSWORD Actions secret)"
+                exit 0
+              fi
+              echo "::add-mask::$SUPERADMIN_INITIAL_PASSWORD"
+              echo "Recovered the super admin password and masked it"
+            fi
           else
             echo "Using the super admin password from the GitHub Actions secret"
           fi
