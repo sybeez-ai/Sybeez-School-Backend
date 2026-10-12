@@ -55,7 +55,7 @@ from src.db.models import (
 from src.modules.employees.service import sync_teacher_employees
 from src.modules.payroll.bank import render_bank_file
 from src.modules.payroll.flow import PayrollFlow
-from src.modules.payroll.ledger import post_salary_voucher, salary_journal
+from src.modules.payroll.ledger import post_salary_payment, post_salary_voucher, salary_journal
 from src.modules.payroll.ops import assignment_calc, validate_component_fields
 from src.modules.payroll.calc import (
     SEEDED_PT_SLABS,
@@ -71,6 +71,8 @@ from src.modules.payroll.calc import (
     completed_years,
     compute_pay,
     esi_contribution_period,
+    partial_period_factor,
+    period_label,
     eval_formula,
     canonical_financial_year,
     financial_year_label,
@@ -1049,6 +1051,11 @@ class PayrollService(PayrollFlow):
         await self._allow(PREPARE)
         if period_end < period_start:
             raise AppError("period_end must be on or after period_start", status_code=422)
+        # The attendance lock generates in the request and also queues the worker.
+        # Serialise per school and period so the second caller sees the first run.
+        await self.db.execute(
+            select(func.pg_advisory_xact_lock(func.hashtext(f"payroll-run:{self.school_id}:{period_start}:{period_end}")))
+        )
         await sync_teacher_employees(self.db, self.school_id)
         existing = (
             await self.db.execute(
@@ -1069,7 +1076,7 @@ class PayrollService(PayrollFlow):
         run = PayrollRun(
             id=uuid4(),
             school_id=self.school_id,
-            label=f"Payroll {period_start:%b %Y}",
+            label=period_label(period_start, period_end),
             period_start=period_start,
             period_end=period_end,
             status="DRAFT",
@@ -1250,6 +1257,7 @@ class PayrollService(PayrollFlow):
             prior_gross=(opening.ytd_gross if opening else _ZERO) + ytd_gross,
             prior_tds=(opening.ytd_tds if opening else _ZERO) + ytd_tds,
             esi_continuing=esi_continuing,
+            period_factor=partial_period_factor(start, end, weekly, holidays),
         )
         draft = compute_pay(PayContext(**common, loan_emi=_ZERO))
         room = draft.gross - draft.deductions
@@ -1686,20 +1694,29 @@ class PayrollService(PayrollFlow):
         else:
             await self._allow(READ)
             employee = await self._employee(employee_id)
+        owned = [PayrollPayslip.employee_id == employee.id]
+        if employee.teacher_id is not None:
+            owned.append(PayrollPayslip.teacher_id == employee.teacher_id)
         start_year = int(financial_year[:4])
         start, end = date(start_year, 4, 1), date(start_year + 1, 3, 31)
         slips = list(
             (
                 await self.db.execute(
+                    # Staff can read their own payslips but not pay runs under RLS, so the
+                    # financial year comes from the payslip's Form 16 snapshot, with the run
+                    # dates as a fallback for older payslips.
                     select(PayrollPayslip)
-                    .join(PayrollRun, PayrollRun.id == PayrollPayslip.payroll_run_id)
                     .where(
-                        PayrollPayslip.employee_id == employee.id,
+                        or_(*owned),
                         PayrollPayslip.status.in_(VISIBLE),
-                        PayrollRun.period_end >= start,
-                        PayrollRun.period_start <= end,
+                        or_(
+                            PayrollPayslip.form16["financial_year"].astext == financial_year,
+                            PayrollPayslip.payroll_run_id.in_(
+                                select(PayrollRun.id).where(PayrollRun.period_end >= start, PayrollRun.period_start <= end)
+                            ),
+                        ),
                     )
-                    .order_by(PayrollRun.period_start)
+                    .order_by(PayrollPayslip.created_at)
                 )
             ).scalars()
         )
@@ -2059,9 +2076,19 @@ class PayrollService(PayrollFlow):
             payment.paid_at = _now()
             slip.status = "PAID"
             slip.paid_on = date.today()
+            await post_salary_payment(
+                self.db,
+                school_id=self.school_id,
+                run_id=slip.payroll_run_id,
+                amount=payment.amount,
+                paid_on=slip.paid_on,
+                actor_id=self.actor_id,
+                reference=payment.utr,
+            )
         await self._sync_paid(slip.payroll_run_id)
         await self._audit("payment.update", "payroll_payment", payment.id, before, {"status": status}, data.get("reason"))
         await self.db.flush()
+        await self.db.refresh(payment)
         return payment
 
     async def settle(self, data: dict) -> PayrollSettlement:

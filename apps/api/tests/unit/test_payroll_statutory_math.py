@@ -158,3 +158,20 @@ def test_esi_continues_through_contribution_period():
     kept = compute_pay(PayContext(**{**_ctx(_marks()).__dict__, "components": raised, "esi_continuing": True}))
     assert kept.esi.covered is True
     assert kept.esi.employee == D("173")
+
+
+def test_partial_period_factor_and_label():
+    from src.modules.payroll.calc import partial_period_factor, period_label
+
+    sunday = [WeeklyOff(6, "ALL")]
+    assert partial_period_factor(date(2026, 10, 1), date(2026, 10, 31), sunday, []) == 1
+    # Oct 2026 has 27 working days with Sundays off; Oct 1-11 has 9.
+    assert partial_period_factor(date(2026, 10, 1), date(2026, 10, 11), sunday, []) == D(9) / D(27)
+    assert period_label(date(2026, 10, 1), date(2026, 10, 31)) == "Payroll Oct 2026"
+    assert period_label(date(2026, 10, 1), date(2026, 10, 11)) == "Payroll 1-11 Oct 2026 (part month)"
+    base = _ctx(_marks())
+    part = compute_pay(PayContext(**{**base.__dict__, "period_factor": D(9) / D(27)}))
+    basic = next(line.amount for line in part.lines if line.code == "BASIC")
+    assert basic == D("4000")
+    hra = next(line.amount for line in part.lines if line.code == "HRA")
+    assert hra == D("6000")  # not prorated in this structure

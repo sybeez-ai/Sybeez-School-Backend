@@ -697,6 +697,35 @@ class PayContext:
     prior_tds: Decimal = ZERO
     # True when an earlier month of the same ESI contribution period was covered.
     esi_continuing: bool = False
+    # Share of the month this period covers (period working days / month working days).
+    # Fixed monthly amounts are scaled by it when a run covers part of a month.
+    period_factor: Decimal = Decimal("1")
+
+
+def partial_period_factor(
+    start: date, end: date, weekly: list[WeeklyOff], holidays: list[Holiday], branch_name: str | None = None
+) -> Decimal:
+    """1 for a whole calendar month; otherwise period working days over the month's working days."""
+    month_start = start.replace(day=1)
+    next_month = date(start.year + (start.month == 12), start.month % 12 + 1, 1)
+    month_end = next_month - timedelta(days=1)
+    if start == month_start and end == month_end:
+        return Decimal("1")
+    month_days = len(working_days(month_start, month_end, weekly, holidays, branch_name))
+    if month_days == 0:
+        return Decimal("1")
+    period_days = len(working_days(max(start, month_start), min(end, month_end), weekly, holidays, branch_name))
+    return Decimal(period_days) / Decimal(month_days)
+
+
+def period_label(start: date, end: date) -> str:
+    month_start = start.replace(day=1)
+    next_month = date(start.year + (start.month == 12), start.month % 12 + 1, 1)
+    if start == month_start and end == next_month - timedelta(days=1):
+        return f"Payroll {start:%b %Y}"
+    if start.month == end.month and start.year == end.year:
+        return f"Payroll {start.day}-{end.day} {start:%b %Y} (part month)"
+    return f"Payroll {start:%d %b %Y} - {end:%d %b %Y} (part period)"
 
 
 def esi_contribution_period(day: date) -> tuple[date, date]:
@@ -726,6 +755,14 @@ def compute_pay(ctx: PayContext) -> PayResult:
         if code in RESERVED_CODES:
             raise FormulaError(f"{code} is reserved for statutory lines")
         raw = component_amount(component, variables)
+        factor = D(ctx.period_factor)
+        if (
+            factor < 1
+            and component.prorate
+            and component.kind.upper() == "EARNING"
+            and component.calc_type.upper() == "FIXED"
+        ):
+            raw = raw * factor
         if raw < 0 and component.kind == "EARNING":
             raw = ZERO
         amount = round_money(raw, ctx.rounding)

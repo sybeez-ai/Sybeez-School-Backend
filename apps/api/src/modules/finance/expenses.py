@@ -21,6 +21,7 @@ from src.modules.access.deps import effective_permissions
 from src.modules.finance.permissions import assert_finance, bind_finance_permissions
 from src.modules.finance.router import _svc
 from src.modules.finance.service import FinanceService
+from src.modules.payroll.ledger import is_salary_voucher
 from src.shared.utils import utcnow
 
 _GSTIN = re.compile(r"^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$")
@@ -324,6 +325,13 @@ class ExpenseService:
         row = await self._expense(expense_id)
         if row.status != "APPROVED":
             raise AppError("Only an approved expense can be paid", status_code=422)
+        if is_salary_voucher(row):
+            # Salary vouchers are split across net pay and statutory payables; payroll bank pay settles net pay.
+            raise AppError(
+                "Salary vouchers are paid from Payroll > Bank pay, not from expenses",
+                code="salary_voucher_paid_in_payroll",
+                status_code=422,
+            )
         row.status = "PAID"
         row.paid_on = data.paid_on
         await self._post(row, data.paid_on, "PAYABLE", row.payment_mode, f"Pay {row.voucher_no}")

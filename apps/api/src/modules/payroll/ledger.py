@@ -135,3 +135,56 @@ async def post_salary_voucher(
         )
     await db.flush()
     return row
+
+
+def is_salary_voucher(expense: SchoolExpense) -> bool:
+    return bool(expense.invoice_number and expense.invoice_number.startswith("PAYRUN-"))
+
+
+async def post_salary_payment(
+    db: AsyncSession,
+    *,
+    school_id: UUID,
+    run_id: UUID,
+    amount: Decimal,
+    paid_on,
+    actor_id: UUID | None,
+    reference: str | None = None,
+) -> None:
+    """Net pay leaving the bank clears SALARY_PAYABLE. Statutory payables are cleared when remitted."""
+    voucher = (
+        await db.execute(
+            select(SchoolExpense).where(
+                SchoolExpense.school_id == school_id, SchoolExpense.invoice_number == f"PAYRUN-{run_id}"
+            )
+        )
+    ).scalar_one_or_none()
+    if voucher is None or Decimal(amount) <= 0:
+        return
+    now = datetime.now(timezone.utc)
+    narration = f"Salary paid {reference}".strip() if reference else "Salary paid"
+    for account, debit, credit in (("SALARY_PAYABLE", amount, ZERO), ("BANK", ZERO, amount)):
+        db.add(
+            ExpenseLedgerEntry(
+                school_id=school_id,
+                expense_id=voucher.id,
+                entry_date=paid_on,
+                account=account,
+                debit=Decimal(debit),
+                credit=Decimal(credit),
+                narration=narration[:500],
+                actor_user_id=actor_id,
+                created_at=now,
+            )
+        )
+    await db.flush()
+    payable = (
+        await db.execute(
+            select(
+                func.coalesce(func.sum(ExpenseLedgerEntry.credit), 0) - func.coalesce(func.sum(ExpenseLedgerEntry.debit), 0)
+            ).where(ExpenseLedgerEntry.expense_id == voucher.id, ExpenseLedgerEntry.account == "SALARY_PAYABLE")
+        )
+    ).scalar_one()
+    if Decimal(payable) <= 0 and voucher.status != "PAID":
+        voucher.status = "PAID"
+        voucher.paid_on = paid_on
