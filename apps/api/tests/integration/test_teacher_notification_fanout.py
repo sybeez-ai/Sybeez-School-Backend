@@ -148,3 +148,87 @@ async def test_teacher_publishes_draft_and_student_is_notified():
             assert any(n.category == "HOMEWORK_PUBLISHED" for n in got)
     finally:
         await _wipe([school_id], [teacher_uid, student_uid])
+
+
+async def _seed_class(school_id, teacher_uid, student_uid):
+    from datetime import date
+
+    from src.db.models import AcademicYear, ClassRoom, Enrollment, Grade, Student, Subject, Teacher, TeacherAssignment
+
+    async with AsyncSessionLocal() as db:
+        year = AcademicYear(id=uuid4(), school_id=school_id, name="2026-27", starts_on=date(2026, 4, 1),
+                            ends_on=date(2027, 3, 31), is_current=True)
+        grade = Grade(id=uuid4(), school_id=school_id, name="Class 5", level=5)
+        db.add_all([year, grade])
+        await db.flush()
+        room = ClassRoom(id=uuid4(), school_id=school_id, grade_id=grade.id, academic_year_id=year.id,
+                         name="5-A", section="A")
+        subject = Subject(id=uuid4(), school_id=school_id, name="Maths", code=f"M{uuid4().hex[:6]}")
+        teacher = Teacher(id=uuid4(), school_id=school_id, user_id=teacher_uid, status="ACTIVE")
+        student = Student(id=uuid4(), school_id=school_id, user_id=student_uid, status="ACTIVE")
+        db.add_all([room, subject, teacher, student])
+        await db.flush()
+        db.add_all([
+            TeacherAssignment(id=uuid4(), school_id=school_id, teacher_id=teacher.id, class_id=room.id,
+                              subject_id=subject.id, academic_year_id=year.id),
+            Enrollment(id=uuid4(), school_id=school_id, student_id=student.id, class_id=room.id,
+                       academic_year_id=year.id, status="ACTIVE"),
+        ])
+        await db.commit()
+        return room.id, subject.id, student.id
+
+
+@pytest.mark.parametrize("status", ["PRESENT", "ABSENT"])
+async def test_teacher_marks_attendance_under_rls(status):
+    from datetime import date
+
+    from src.modules.attendance.schemas import AttendanceMarkItem, AttendanceMarkRequest
+    from src.modules.attendance.service import AttendanceService
+
+    school_id, teacher_uid, student_uid = await _seed()
+    try:
+        room_id, _subject_id, student_id = await _seed_class(school_id, teacher_uid, student_uid)
+        async with AsyncSessionLocal() as db:
+            await _teacher_session(db, school_id, teacher_uid)
+            out = await AttendanceService(db).mark(
+                school_id=school_id, user_id=teacher_uid, role="TEACHER",
+                data=AttendanceMarkRequest(class_id=room_id, attended_on=date.today(),
+                                           marks=[AttendanceMarkItem(student_id=student_id, status=status)]),
+            )
+            await db.commit()
+            assert out and out[0].status == status
+    finally:
+        await _wipe([school_id], [teacher_uid, student_uid])
+
+
+async def test_publish_draft_with_linked_parent():
+    from src.db.models import Parent, StudentParent
+    from src.modules.homework.schemas import HomeworkCreate
+    from src.modules.homework.service import HomeworkService
+    from src.shared.enums import HomeworkStatus
+
+    school_id, teacher_uid, student_uid = await _seed()
+    parent_user = _user("Test Parent")
+    try:
+        room_id, subject_id, student_id = await _seed_class(school_id, teacher_uid, student_uid)
+        async with AsyncSessionLocal() as db:
+            db.add(parent_user)
+            await db.flush()
+            parent = Parent(id=uuid4(), school_id=school_id, user_id=parent_user.id, status="ACTIVE")
+            db.add(parent)
+            await db.flush()
+            db.add(StudentParent(id=uuid4(), school_id=school_id, student_id=student_id, parent_id=parent.id,
+                                 relation_type="mother", is_primary=True))
+            await db.commit()
+        async with AsyncSessionLocal() as db:
+            await _teacher_session(db, school_id, teacher_uid)
+            svc = HomeworkService(db)
+            d = await svc.create(school_id=school_id, user_id=teacher_uid, role="TEACHER",
+                                 data=HomeworkCreate(class_id=room_id, subject_id=subject_id, title="Test d",
+                                                     status=HomeworkStatus.DRAFT))
+            await db.commit()
+            out = await svc.publish(school_id=school_id, user_id=teacher_uid, role="TEACHER", homework_id=d.id)
+            await db.commit()
+            assert out.status == "PUBLISHED"
+    finally:
+        await _wipe([school_id], [teacher_uid, student_uid, parent_user.id])

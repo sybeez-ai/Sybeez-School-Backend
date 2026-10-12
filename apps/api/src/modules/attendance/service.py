@@ -45,7 +45,7 @@ from src.modules.attendance.schemas import (
     RosterStudentOut,
     StudentRateOut,
 )
-from src.modules.notifications.service import create_in_app_notification
+from src.modules.notifications.service import create_in_app_notification, notification_fanout_scope
 from src.shared.enums import (
     AttendanceStatus,
     EnrollmentStatus,
@@ -451,18 +451,21 @@ class AttendanceService:
             if leave and item.status == AttendanceStatus.ABSENT:
                 status = AttendanceStatus.EXCUSED.value
 
-            row = await self.repo.upsert(
-                school_id=school_id,
-                student_id=item.student_id,
-                class_id=data.class_id,
-                attended_on=data.attended_on,
-                status=status,
-                marked_by=user_id,
-                arrival_time=item.arrival_time,
-                reason=item.reason,
-                leave_request_id=leave_id,
-                audit_reason=item.reason,
-            )
+            # attendance_audit_logs is an audit table (read: auditors/admins only). The marker
+            # (already authorised above) appends its audit row inside a school-pinned scope.
+            async with notification_fanout_scope(self.db, school_id):
+                row = await self.repo.upsert(
+                    school_id=school_id,
+                    student_id=item.student_id,
+                    class_id=data.class_id,
+                    attended_on=data.attended_on,
+                    status=status,
+                    marked_by=user_id,
+                    arrival_time=item.arrival_time,
+                    reason=item.reason,
+                    leave_request_id=leave_id,
+                    audit_reason=item.reason,
+                )
             if status == AttendanceStatus.ABSENT.value:
                 absent_student_ids.append(item.student_id)
             elif status == AttendanceStatus.LATE.value:
@@ -639,7 +642,6 @@ class AttendanceService:
     async def _dispatch_student_alert(self, **kwargs):
         from src.core.telemetry import track_alert
         from src.modules.alerts.service import dispatch_alert
-        from src.modules.notifications.service import notification_fanout_scope
 
         try:
             # Savepoint: a failed alert must never abort the attendance save itself.

@@ -47,6 +47,9 @@ async def notification_fanout_scope(db: AsyncSession, school_id: UUID | None):
     await db.execute(text("SELECT set_config('app.rls_bypass', 'on', true)"))
     try:
         yield
+        # Flush pending rows while the scope is open, so they are not autoflushed later
+        # under the caller's narrower role policy.
+        await db.flush()
     finally:
         await db.execute(text("SELECT set_config('app.rls_bypass', 'off', true)"))
 
