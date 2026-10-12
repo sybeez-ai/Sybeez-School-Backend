@@ -129,3 +129,56 @@ async def require_payroll(db: AsyncSession, user: CurrentUser, allowed: set[str]
 def is_auditor_only(held: set[str]) -> bool:
     write_roles = held - {UserRole.AUDITOR.value}
     return UserRole.AUDITOR.value in held and not (write_roles & (READ - {UserRole.AUDITOR.value}))
+
+
+# What the portal may offer. The server still checks every action.
+PORTAL_PERMISSIONS: dict[str, set[str]] = {
+    "employees.write": SETTINGS_WRITE,
+    "structures.write": STRUCTURE_WRITE,
+    "settings.write": SETTINGS_WRITE,
+    "statutory.write": SETTINGS_WRITE,
+    "runs.prepare": PREPARE,
+    "runs.lock": PREPARE,
+    "adjustments.write": PREPARE,
+    "payments.write": PREPARE,
+    "runs.approve": APPROVE,
+    "runs.publish": APPROVE,
+    "attendance.write": ATTENDANCE_ADMIN,
+    "attendance.lock": ATTENDANCE_ADMIN,
+    "permissions.write": GRANT_WRITE,
+    "reports.view": READ,
+    "audit.view": AUDIT_READ,
+}
+
+_ROLE_ORDER = (
+    ("payroll_admin", {UserRole.SCHOOL_ADMIN.value, UserRole.PLATFORM_ADMIN.value, UserRole.PAYROLL_ADMIN.value}),
+    ("hr_manager", {UserRole.HR_MANAGER.value}),
+    ("accountant", {UserRole.ACCOUNTANT.value}),
+    ("payroll_approver", {UserRole.PAYROLL_APPROVER.value}),
+    ("auditor", {UserRole.AUDITOR.value}),
+)
+_ROLE_LABELS = {
+    "payroll_admin": "Payroll admin",
+    "hr_manager": "HR manager",
+    "accountant": "Accountant",
+    "payroll_approver": "Payroll approver",
+    "auditor": "Auditor",
+    "employee": "Employee",
+}
+
+
+def portal_access(held: set[str]) -> dict:
+    role = next((name for name, roles in _ROLE_ORDER if held & roles), "employee")
+    permissions = sorted(code for code, roles in PORTAL_PERMISSIONS.items() if held & roles)
+    if is_auditor_only(held):
+        permissions = [code for code in permissions if code in {"reports.view", "audit.view"}]
+    return {"role": role, "role_label": _ROLE_LABELS[role], "permissions": permissions}
+
+
+async def payroll_access(db: AsyncSession, user: CurrentUser) -> dict:
+    """Effective payroll role for the portal, including school grants and permission overrides."""
+    try:
+        held = await require_payroll(db, user, {role.value for role in UserRole})
+    except ForbiddenError:
+        held = set()
+    return portal_access(held)
