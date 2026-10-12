@@ -143,6 +143,11 @@ class PaymentService:
         await bind_tenant(self.db, school_id)
         if role == UserRole.PARENT.value:
             await self._assert_parent_invoice(school_id, user_id, inv)
+            # Ownership is proven above. The order writes touch school-level rows
+            # (fee_settings, fee_sequences) and a new fee_payments row whose RLS
+            # check cannot resolve its own student, so PARENT RLS rejects them.
+            # Run the rest as SERVICE, still pinned to this school.
+            await bind_tenant(self.db, school_id, role="SERVICE")
         elif role not in FINANCE_COLLECT_VALUES:
             raise ForbiddenError("Not allowed to create payment orders")
 
@@ -347,6 +352,10 @@ class PaymentService:
             )
         ).scalar_one_or_none()
         payment = assert_same_school(payment, school_id, "Payment")
+        # The row was loaded under the caller's RLS, so a parent only gets here for
+        # their own child's payment. Crediting writes school-level rows (sequences,
+        # receipts, ledger) that PARENT RLS rejects, so finish as SERVICE in this school.
+        await bind_tenant(self.db, school_id, role="SERVICE")
         if payment.status == PaymentStatus.SUCCESS.value:
             return await self._payment_out(payment)
         if payment.gateway_order_id != data.gateway_order_id:
