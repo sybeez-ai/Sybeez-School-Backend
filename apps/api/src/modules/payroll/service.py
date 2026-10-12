@@ -1533,7 +1533,7 @@ class PayrollService(PayrollFlow):
                         )
                     )
                 ).scalar_one_or_none()
-            payload = _pdf_payload(school, settings, run, slip, lines, employee, profile, bank)
+            payload = _pdf_payload(school, settings, run, slip, lines, employee, profile, bank, code=await self._employee_code(employee))
             try:
                 pdf = build_payslip_pdf(payload)
                 key = f"schools/{self.school_id}/payslips/{slip.id}.pdf"
@@ -1670,7 +1670,9 @@ class PayrollService(PayrollFlow):
             (await self.db.execute(select(PayrollPayslipLine).where(PayrollPayslipLine.payslip_id == slip.id))).scalars()
         )
         employee = await self.db.get(Employee, slip.employee_id) if slip.employee_id else None
-        pdf = build_payslip_pdf(_pdf_payload(school, settings_row, run, slip, lines, employee, None, None))
+        pdf = build_payslip_pdf(
+            _pdf_payload(school, settings_row, run, slip, lines, employee, None, None, code=await self._employee_code(employee))
+        )
         return pdf, f"payslip-{slip.id}.pdf"
 
     async def form16(self, employee_id: UUID | None, financial_year: str) -> dict:
@@ -1697,25 +1699,32 @@ class PayrollService(PayrollFlow):
                         PayrollRun.period_end >= start,
                         PayrollRun.period_start <= end,
                     )
+                    .order_by(PayrollRun.period_start)
                 )
             ).scalars()
         )
-        gross = sum((s.gross_amount for s in slips), _ZERO)
-        tds_total = _ZERO
-        for slip in slips:
-            tds_total += sum(
-                (
-                    line.amount
-                    for line in (
-                        await self.db.execute(
-                            select(PayrollPayslipLine).where(
-                                PayrollPayslipLine.payslip_id == slip.id, PayrollPayslipLine.code == "TDS"
-                            )
+        totals: dict[str, Decimal] = {}
+        if slips:
+            totals = {
+                code: amount or _ZERO
+                for code, amount in (
+                    await self.db.execute(
+                        select(PayrollPayslipLine.code, func.sum(PayrollPayslipLine.amount))
+                        .where(
+                            PayrollPayslipLine.payslip_id.in_([slip.id for slip in slips]),
+                            PayrollPayslipLine.code.in_(("TDS", "LOP", "REIMBURSEMENT", "PF", "VPF", "PT", "ESI")),
                         )
-                    ).scalars()
-                ),
-                _ZERO,
-            )
+                        .group_by(PayrollPayslipLine.code)
+                    )
+                ).all()
+            }
+        # Payslip gross is before loss of pay and includes reimbursements; Form 16 wants salary paid.
+        gross = (
+            sum((s.gross_amount for s in slips), _ZERO)
+            - totals.get("LOP", _ZERO)
+            - totals.get("REIMBURSEMENT", _ZERO)
+        )
+        tds_total = totals.get("TDS", _ZERO)
         latest = slips[-1].form16 if slips and slips[-1].form16 else {}
         opening = await self._opening_ytd(employee.id, financial_year)
         if opening:
@@ -1732,8 +1741,21 @@ class PayrollService(PayrollFlow):
             "opening_pf": str(opening.ytd_pf if opening else _ZERO),
             "opening_esi": str(opening.ytd_esi if opening else _ZERO),
             "opening_pt": str(opening.ytd_pt if opening else _ZERO),
+            "pf_deducted": str(totals.get("PF", _ZERO) + totals.get("VPF", _ZERO)),
+            "pt_deducted": str(totals.get("PT", _ZERO)),
+            "esi_deducted": str(totals.get("ESI", _ZERO)),
             "snapshot": latest,
         }
+
+    async def _employee_code(self, employee: Employee | None) -> str | None:
+        """Teaching staff keep their code on the teacher record; HRM shows the same fallback."""
+        if employee is None:
+            return None
+        if employee.teacher_id:
+            teacher = await self.db.get(Teacher, employee.teacher_id)
+            if teacher and (teacher.employee_code or teacher.teacher_code):
+                return teacher.employee_code or teacher.teacher_code
+        return employee.employee_code
 
     async def _released_before(self, employee_id: UUID, start: date) -> tuple[Decimal, Decimal, bool]:
         """Released pay earlier in this financial year: gross, TDS deducted, and ESI continuity."""
@@ -1763,7 +1785,7 @@ class PayrollService(PayrollFlow):
             for code, amount in (
                 await self.db.execute(
                     select(PayrollPayslipLine.code, func.sum(PayrollPayslipLine.amount))
-                    .where(PayrollPayslipLine.payslip_id.in_(ids), PayrollPayslipLine.code.in_(("TDS", "REIMBURSEMENT")))
+                    .where(PayrollPayslipLine.payslip_id.in_(ids), PayrollPayslipLine.code.in_(("TDS", "REIMBURSEMENT", "LOP")))
                     .group_by(PayrollPayslipLine.code)
                 )
             ).all()
@@ -1785,7 +1807,12 @@ class PayrollService(PayrollFlow):
                 ).scalar_one()
             )
         # Reimbursements are not taxable salary.
-        gross = sum((row.gross_amount for row in rows), _ZERO) - totals.get("REIMBURSEMENT", _ZERO)
+        # Payslip gross is before loss of pay; reimbursements are not taxable salary.
+        gross = (
+            sum((row.gross_amount for row in rows), _ZERO)
+            - totals.get("REIMBURSEMENT", _ZERO)
+            - totals.get("LOP", _ZERO)
+        )
         return gross, totals.get("TDS", _ZERO), esi_continuing
 
     async def _opening_ytd(self, employee_id: UUID, financial_year: str) -> PayrollOpeningYtd | None:
@@ -1990,7 +2017,7 @@ class PayrollService(PayrollFlow):
                         "ifsc": bank.ifsc,
                         "amount": slip.net_amount,
                         "narration": f"Salary {run.label}",
-                        "employee_code": employee.employee_code if employee else "",
+                        "employee_code": await self._employee_code(employee) or "",
                     }
                 )
                 payment.status = "EXPORTED"
@@ -2310,7 +2337,7 @@ def _pay_dict(pay) -> dict:
     }
 
 
-def _pdf_payload(school, settings, run, slip, lines, employee, profile, bank) -> dict:
+def _pdf_payload(school, settings, run, slip, lines, employee, profile, bank, code: str | None = None) -> dict:
     def _bucket(kind):
         return [{"name": line.name, "amount": str(line.amount)} for line in lines if line.kind == kind]
 
@@ -2324,7 +2351,7 @@ def _pdf_payload(school, settings, run, slip, lines, employee, profile, bank) ->
         "school_name": school.name if school else "Sybeez School",
         "period": f"{run.period_start.isoformat()} to {run.period_end.isoformat()}" if run else "",
         "employee_name": (employee.full_name if employee and employee.full_name else "Employee"),
-        "employee_code": employee.employee_code if employee else None,
+        "employee_code": code or (employee.employee_code if employee else None),
         "pan_masked": pan,
         "uan": profile.uan if profile else None,
         "tax_regime": slip.tax_regime,

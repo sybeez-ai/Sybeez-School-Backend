@@ -1,5 +1,6 @@
 """Generate, submit, approve, and publish a statutory run on real Postgres."""
 
+from decimal import Decimal as D
 from uuid import uuid4
 
 from src.core.security import create_access_token
@@ -100,3 +101,23 @@ async def test_generate_submit_approve_publishes_payslips(api, db_session, hr_wo
     ).scalars().all()
     assert sum(e.debit for e in entries) == sum(e.credit for e in entries) == voucher.total_amount
     assert any(e.account == "SALARY_PAYABLE" and e.credit > 0 for e in entries)
+
+    # Form 16 reports salary actually paid: payslip gross less loss of pay.
+    lop = sum(D(line["amount"]) for line in mine["lines"] if line["code"] == "LOP")
+    form16 = await api.get(f"{PAYROLL}/form16/{employee_id}?financial_year=2026-27", headers=approver)
+    assert form16.status_code == 200, form16.text
+    assert D(form16.json()["gross"]) == D(mine["payslip"]["gross_amount"]) - lop
+    assert "pf_deducted" in form16.json()
+
+    # Teaching staff carry their code on the teacher record; the bank file must show it.
+    expected_code = next(row["employee_code"] for row in employees if row["id"] == employee_id)
+    saved = await api.put(
+        f"{PAYROLL}/employees/{employee_id}/bank",
+        headers=admin.headers,
+        json={"account_holder": "Teacher A", "account_number": "000012345678", "ifsc": "HDFC0000001", "bank_name": "HDFC", "reason": "Salary account"},
+    )
+    assert saved.status_code == 200, saved.text
+    bank = await api.get(f"{PAYROLL}/runs/{run_id}/bank-file", headers=approver)
+    assert bank.status_code == 200, bank.text
+    assert expected_code
+    assert expected_code in bank.text
