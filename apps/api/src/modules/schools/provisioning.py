@@ -18,6 +18,10 @@ from src.shared.enums import MembershipStatus, UserRole
 
 logger = logging.getLogger(__name__)
 
+# Roles whose admin-issued temporary password must be changed at first sign-in.
+# HR/payroll/staff logins keep their existing flow (HRM portal + mobile) for now.
+FORCED_CHANGE_ROLES = frozenset({UserRole.STUDENT, UserRole.TEACHER, UserRole.PARENT})
+
 
 async def get_or_create_user(
     db: AsyncSession,
@@ -64,6 +68,11 @@ async def get_or_create_user(
                 raise
             logger.warning("Cognito admin API denied; provisioning %s with a local password", email)
             password = temp_used
+    if not used_cognito and not password and user is None and not cognito_svc.cognito_configured():
+        # Without Cognito, a blank password used to leave a new account with no credential
+        # at all (no hash, nothing shown to the admin, no reset path), so it could never
+        # sign in. New accounts always get a temporary password the admin sees once.
+        password = cognito_svc.generate_temporary_password()
     if not used_cognito and password:
         temp_used = password
 
@@ -180,7 +189,44 @@ async def create_school_user(
     membership = await ensure_membership(
         db, user_id=user.id, school_id=school_id, role=role, actor_id=actor_id
     )
+    if temp and role in FORCED_CHANGE_ROLES:
+        # An admin-issued password is temporary: the person must choose their own at first login.
+        user.must_change_password = True
     return user, membership, temp
+
+
+async def issue_temporary_password(
+    db: AsyncSession, *, user: User, temporary_password: str | None = None
+) -> str:
+    """Reset a school user's login to a new temporary password (shown once to the admin).
+
+    Uses Cognito when the account lives there and the API may call it; otherwise the
+    account switches to a local password hash (production API role is denied Cognito
+    admin calls). Existing sessions are revoked and a password change is forced.
+    """
+    from sqlalchemy import update
+
+    from src.db.models import RefreshToken
+
+    temp = temporary_password or cognito_svc.generate_temporary_password()
+    done = False
+    if cognito_svc.cognito_configured() and user.cognito_sub:
+        try:
+            cognito_svc.admin_set_temporary_password(email=user.email, temporary_password=temp)
+            done = True
+        except ConflictError as exc:
+            if "AccessDenied" not in str(exc) or (get_settings().auth_mode or "both").lower() == "cognito":
+                raise
+    if not done:
+        user.password_hash = hash_password(temp)
+        user.cognito_sub = None
+    user.is_active = True
+    user.must_change_password = True
+    await db.execute(
+        update(RefreshToken).where(RefreshToken.user_id == user.id).values(revoked=True)
+    )
+    await db.flush()
+    return temp
 
 
 async def set_user_active(db: AsyncSession, *, user: User, active: bool) -> User:

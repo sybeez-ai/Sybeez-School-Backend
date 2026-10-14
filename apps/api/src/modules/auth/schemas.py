@@ -44,6 +44,9 @@ class TokenResponse(BaseModel):
     challenge: str | None = None
     session: str | None = None
     email: str | None = None
+    # True when the account signed in with an admin-issued temporary password; the
+    # client must send the user to change it (POST /auth/change-password) first.
+    must_change_password: bool = False
 
 
 class RefreshRequest(BaseModel):
@@ -86,6 +89,12 @@ class MeResponse(BaseModel):
     portals: list[str] = []
     # Effective permission codes (role defaults + membership/staff grants); same for web and mobile.
     permissions: list[str] = []
+    must_change_password: bool = False
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(min_length=1)
+    new_password: str = Field(min_length=8, max_length=128)
 
 
 class MembershipOut(BaseModel):

@@ -18,6 +18,7 @@ from src.core.redis import get_redis
 from src.modules.auth import cognito as cognito_svc
 from src.modules.auth.schemas import (
     AcceptInviteRequest,
+    ChangePasswordRequest,
     CompleteNewPasswordRequest,
     ConfirmForgotPasswordRequest,
     ForgotPasswordRequest,
@@ -161,6 +162,19 @@ async def _permissions(db: AsyncSession, user: CurrentUser) -> list[str]:
     return sorted(await effective_permissions(db, user))
 
 
+@router.post("/change-password", response_model=MessageOut)
+async def change_password(
+    body: ChangePasswordRequest,
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Replace the current (e.g. admin-issued temporary) password and clear the forced change."""
+    await AuthService(db).change_password(
+        user.id, current_password=body.current_password, new_password=body.new_password
+    )
+    return MessageOut(message="Password changed")
+
+
 @router.get("/me", response_model=MeResponse)
 async def me(
     user: Annotated[CurrentUser, Depends(get_current_user)],
@@ -182,6 +196,7 @@ async def me(
         is_active=bool(row.is_active),
         portals=sorted(user.portals),
         permissions=await _permissions(db, user),
+        must_change_password=bool(row.must_change_password),
     )
 
 

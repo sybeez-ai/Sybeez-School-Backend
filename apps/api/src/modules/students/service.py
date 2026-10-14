@@ -26,6 +26,7 @@ from src.db.models import (
 )
 from src.modules.schools.provisioning import create_school_user, set_user_active
 from src.modules.students.schemas import (
+    ParentCredential,
     BulkImportConfirmOut,
     BulkImportIssue,
     BulkImportRow,
@@ -100,11 +101,15 @@ class StudentService:
                 roll_number=data.roll_number,
             )
 
+        parent_creds: list[ParentCredential] = []
         for link in data.parents:
-            await self._link_or_create_parent(school_id, student.id, link)
+            cred = await self._link_or_create_parent(school_id, student.id, link)
+            if cred is not None:
+                parent_creds.append(cred)
 
         out = await self.get(school_id, student.id)
         out.temporary_password = temp
+        out.parent_credentials = parent_creds
         return out
 
     async def list(
@@ -722,8 +727,9 @@ class StudentService:
 
     async def _link_or_create_parent(
         self, school_id: UUID, student_id: UUID, link: ParentLinkInput
-    ) -> None:
+    ) -> ParentCredential | None:
         parent: Parent | None = None
+        parent_temp: str | None = None
         if link.parent_id:
             parent = (
                 await self.db.execute(
@@ -733,7 +739,7 @@ class StudentService:
             if not parent:
                 raise NotFoundError("Parent not found")
         elif link.email and link.full_name:
-            user, _, _ = await create_school_user(
+            user, _, parent_temp = await create_school_user(
                 self.db,
                 school_id=school_id,
                 email=link.email,
@@ -753,7 +759,7 @@ class StudentService:
             elif link.phone:
                 parent.phone = link.phone
         else:
-            return
+            return None
 
         existing = (
             await self.db.execute(
@@ -775,7 +781,7 @@ class StudentService:
             existing.relation_type = link.relationship
             existing.is_primary = link.is_primary
             await self.db.flush()
-            return
+            return self._parent_cred(link, parent_temp)
         self.db.add(
             StudentParent(
                 school_id=school_id,
@@ -786,6 +792,13 @@ class StudentService:
             )
         )
         await self.db.flush()
+        return self._parent_cred(link, parent_temp)
+
+    @staticmethod
+    def _parent_cred(link: ParentLinkInput, temp: str | None) -> ParentCredential | None:
+        if not temp or not link.email:
+            return None
+        return ParentCredential(email=str(link.email).lower().strip(), temporary_password=temp)
 
     def _find_section(
         self,

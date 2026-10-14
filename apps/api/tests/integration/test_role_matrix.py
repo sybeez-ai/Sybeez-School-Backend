@@ -21,7 +21,20 @@ def _auth(client: TestClient, email: str, password: str = PASSWORD) -> dict[str,
     response = client.post("/api/v1/auth/login", json={"email": email, "password": password})
     assert response.status_code == 200, response.text
     body = response.json()
-    return {"Authorization": f"Bearer {body['access_token']}"}
+    headers = {"Authorization": f"Bearer {body['access_token']}"}
+    if body.get("must_change_password"):
+        # Admin-created logins must replace their temporary password first; keep the
+        # fixture password usable by changing away and back.
+        interim = f"{password}-Changed1!"
+        for current, new in ((password, interim), (interim, password)):
+            changed = client.post(
+                "/api/v1/auth/change-password",
+                json={"current_password": current, "new_password": new},
+                headers=headers,
+            )
+            assert changed.status_code == 200, changed.text
+        return _auth(client, email, password)
+    return headers
 
 
 def _ids(response) -> list[str]:

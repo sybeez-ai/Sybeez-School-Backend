@@ -9,6 +9,8 @@ from src.api.dependencies import CurrentUser, require_roles
 from src.modules.access.deps import require_permission
 from src.shared.enums import UserRole
 from src.core.database import get_db
+from src.db.models import Parent as _ParentModel
+from src.modules.schools.login_reset import LoginCredentialsOut, reset_login
 from src.core.exceptions import ForbiddenError
 from src.modules.parents.schemas import LinkParentRequest, ParentChildBrief, ParentCreate, ParentOut
 from src.modules.parents.service import ParentService
@@ -98,3 +100,15 @@ async def unlink_parent(
 ):
     await ParentService(db).unlink_from_student(_sid(user), student_id, body.parent_id)
     return {"ok": True, "student_id": str(student_id), "parent_id": str(body.parent_id)}
+
+
+@router.post("/{parent_id}/reset-login", response_model=LoginCredentialsOut)
+async def reset_parent_login(
+    parent_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+):
+    """Issue a new temporary password (shown once); the parent must change it at sign-in."""
+    return await reset_login(
+        db, school_id=_sid(user), model=_ParentModel, entity_id=parent_id, actor_id=user.id
+    )

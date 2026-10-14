@@ -55,6 +55,7 @@ class AuthService:
             platform_role=user.platform_role if user.is_platform_admin else None,
             access_expires_in=settings.access_token_expire_minutes * 60,
             refresh_expires_in=self._refresh_max_age,
+            must_change_password=bool(getattr(user, "must_change_password", False)),
         )
 
     async def _membership_outs(self, rows: list[SchoolMembership]) -> list[MembershipOut]:
@@ -468,6 +469,7 @@ class AuthService:
         user = await self._user_from_cognito(cog, email)
         # Cognito now owns the permanent password — drop any local hash
         user.password_hash = None
+        user.must_change_password = False
         await self._assert_portal_role(user, getattr(data, "portal", None))
         return await self._issue_session_for_user(
             user, portal=getattr(data, "portal", None)
@@ -682,6 +684,30 @@ class AuthService:
             # Local hash is unused when Cognito owns credentials
             user.password_hash = None
             await self.repo.revoke_all_for_user(user.id)
+
+    async def change_password(
+        self, user_id: UUID, *, current_password: str, new_password: str
+    ) -> None:
+        """Signed-in user replaces their (temporary) password; clears must_change_password."""
+        from src.core.security import hash_password
+
+        user = await self.repo.get_user(user_id)
+        if user is None:
+            raise NotFoundError("User not found")
+        if current_password == new_password:
+            raise ConflictError("Choose a new password that differs from the temporary one")
+        if user.password_hash and not user.cognito_sub:
+            if not verify_password(current_password, user.password_hash):
+                raise UnauthorizedError("Current password is incorrect")
+            user.password_hash = hash_password(new_password)
+        elif user.cognito_sub:
+            # Cognito accounts change a temporary password through the NEW_PASSWORD_REQUIRED
+            # challenge at login (POST /auth/complete-new-password).
+            raise ConflictError("Change this password from the sign-in screen")
+        else:
+            raise ConflictError("This account has no password to change")
+        user.must_change_password = False
+        await self.db.flush()
 
     async def update_profile(self, user_id, *, full_name: str) -> User:
         user = await self.repo.get_user(user_id)
