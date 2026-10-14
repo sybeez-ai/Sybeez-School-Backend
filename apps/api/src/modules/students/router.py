@@ -9,6 +9,8 @@ from src.api.dependencies import CurrentUser, require_roles
 from src.modules.access.deps import require_permission
 from src.shared.enums import UserRole
 from src.core.database import get_db
+from src.db.models import Student as _StudentModel
+from src.modules.schools.login_reset import LoginCredentialsOut, reset_login
 from src.core.exceptions import ForbiddenError
 from src.modules.students.schemas import (
     BulkImportConfirmOut,
@@ -185,3 +187,15 @@ async def withdraw_student(
     user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
 ):
     return await StudentService(db).withdraw(_sid(user), student_id, notes=body.notes)
+
+
+@router.post("/{student_id}/reset-login", response_model=LoginCredentialsOut)
+async def reset_student_login(
+    student_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+):
+    """Issue a new temporary password (shown once); the student must change it at sign-in."""
+    return await reset_login(
+        db, school_id=_sid(user), model=_StudentModel, entity_id=student_id, actor_id=user.id
+    )

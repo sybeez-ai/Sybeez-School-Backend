@@ -29,6 +29,9 @@ class CurrentUser:
     portals: tuple[str, ...] = ()
 
 
+_PASSWORD_CHANGE_ALLOWED = ("/auth/me", "/auth/change-password", "/auth/logout", "/auth/refresh")
+
+
 async def get_current_user(
     request: Request,
     creds: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
@@ -55,6 +58,12 @@ async def get_current_user(
     user = result.scalar_one_or_none()
     if user is None:
         raise UnauthorizedError("User not found")
+    # An admin-issued temporary password must be replaced before the account can do anything
+    # else; only the auth endpoints needed to change it (and sign out) stay open.
+    if getattr(user, "must_change_password", False) and not request.url.path.rstrip("/").endswith(
+        _PASSWORD_CHANGE_ALLOWED
+    ):
+        raise ForbiddenError("PASSWORD_CHANGE_REQUIRED: change your temporary password to continue")
 
     # Access tokens carry the refresh session they were issued with; once that session is
     # revoked (logout, rotation, password reset) the access token stops working too.
