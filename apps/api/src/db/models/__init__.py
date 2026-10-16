@@ -24,6 +24,17 @@ from src.db.models.diary import (
     PersonalHabit,
     PersonalHabitCheckin,
 )
+from src.db.models.online_test import (
+    OnlineTest,
+    OnlineTestAiUsage,
+    OnlineTestAnswer,
+    OnlineTestAttempt,
+    OnlineTestAuditLog,
+    OnlineTestEvent,
+    OnlineTestQuestion,
+    OnlineTestQuestionKey,
+    OnlineTestSchoolSettings,
+)
 from src.db.models.personal_note import PersonalNote
 from src.db.models.push_device import PushDevice
 from src.db.models.permission import MembershipPermissionOverride, Permission, RolePermission
@@ -198,6 +209,15 @@ from src.db.models.timetable import Room, TimetableEntry, TimetablePeriod, Timet
 from src.db.models.user import User
 
 __all__ = [
+    "OnlineTest",
+    "OnlineTestAiUsage",
+    "OnlineTestAnswer",
+    "OnlineTestAttempt",
+    "OnlineTestAuditLog",
+    "OnlineTestEvent",
+    "OnlineTestQuestion",
+    "OnlineTestQuestionKey",
+    "OnlineTestSchoolSettings",
     "PushDevice",
     "User",
     "SchoolMembership",

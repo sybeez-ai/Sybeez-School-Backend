@@ -46,6 +46,8 @@ from src.modules.invitations.router import router as invitations_router
 from src.modules.learning_sessions.router import router as learning_sessions_router
 from src.modules.messaging.router import router as messaging_router
 from src.modules.notes.router import router as notes_router
+from src.modules.online_tests.router import attempts_router as online_test_attempts_router
+from src.modules.online_tests.router import router as online_tests_router
 from src.modules.notifications.router import router as notifications_router
 from src.modules.parents.router import router as parents_router
 from src.modules.personal_life.router import router as personal_life_router
@@ -79,6 +81,8 @@ api_router.include_router(internal_router)
 api_router.include_router(ai_gateway_router, prefix=API_V1_PREFIX)
 api_router.include_router(auth_router, prefix=API_V1_PREFIX)
 api_router.include_router(devices_router, prefix=API_V1_PREFIX)
+api_router.include_router(online_tests_router, prefix=API_V1_PREFIX)
+api_router.include_router(online_test_attempts_router, prefix=API_V1_PREFIX)
 api_router.include_router(access_router, prefix=API_V1_PREFIX)
 api_router.include_router(platform_router, prefix=API_V1_PREFIX)
 api_router.include_router(schools_router, prefix=API_V1_PREFIX)
