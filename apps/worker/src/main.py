@@ -40,6 +40,37 @@ def _release_due() -> None:
         logger.warning("Could not release scheduled alerts")
 
 
+_last_online_tests = 0.0
+ONLINE_TESTS_INTERVAL_SECONDS = 30
+
+
+def _online_tests_tick() -> None:
+    """Ask the API to finalise expired online-test attempts, close ended tests and send reminders."""
+    global _last_online_tests
+    now = time.time()
+    if now - _last_online_tests < ONLINE_TESTS_INTERVAL_SECONDS:
+        return
+    _last_online_tests = now
+    settings = get_settings()
+    base = (settings.core_api_url or "").rstrip("/")
+    if not base:
+        return
+    request = urllib.request.Request(
+        f"{base}/internal/v1/online-tests/maintenance",
+        data=b"{}",
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "X-Internal-Token": settings.core_internal_token,
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            response.read()
+    except Exception:
+        logger.warning("Could not run online-test maintenance")
+
+
 def redis_reachable() -> bool:
     try:
         return bool(get_redis().ping())
@@ -64,6 +95,7 @@ def consume_forever(stop: threading.Event | None = None) -> None:
                 logger.exception("SQS poll failed")
                 time.sleep(2)
             _release_due()
+            _online_tests_tick()
         return
 
     client = get_redis()
@@ -74,6 +106,7 @@ def consume_forever(stop: threading.Event | None = None) -> None:
             logger.exception("Redis poll failed")
             time.sleep(2)
         _release_due()
+        _online_tests_tick()
 
 
 def main() -> None:

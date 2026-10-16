@@ -171,3 +171,13 @@ async def internal_generate_payroll(body: InternalGenerate, db: Annotated[AsyncS
         source=body.source or "ATTENDANCE_LOCK",
     )
     return {"run_id": str(result["run"].id), "created": result["created"], "skipped": result["skipped"]}
+
+
+@router.post("/online-tests/maintenance", dependencies=[Depends(require_internal_token)])
+async def online_tests_maintenance(db: Annotated[AsyncSession, Depends(get_db)]):
+    """Worker tick: finalise expired attempts, close ended tests, auto-release results, send reminders."""
+    from src.modules.fees.tenant import set_rls_bypass
+    from src.modules.online_tests.service import OnlineTestMaintenance
+
+    await set_rls_bypass(db, True)
+    return await OnlineTestMaintenance(db).run()
