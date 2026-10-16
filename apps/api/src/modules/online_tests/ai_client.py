@@ -22,7 +22,7 @@ async def generate_mcq_drafts(user: CurrentUser, payload: dict) -> dict:
         membership_id=user.membership_id,
     )
     url = settings.ai_service_url.rstrip("/") + GENERATE_PATH
-    headers = {"Authorization": f"Bearer {token}", "X-Internal-Token": settings.ai_service_token}
+    headers = {"Authorization": f"Bearer {token}", "X-Internal-Token": settings.core_internal_token}
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(90.0, connect=5.0)) as client:
             resp = await client.post(url, json=payload, headers=headers)
