@@ -1,3 +1,4 @@
+import logging
 from datetime import date, datetime
 from typing import Annotated
 from uuid import UUID
@@ -183,3 +184,26 @@ async def online_tests_maintenance(db: Annotated[AsyncSession, Depends(get_db)])
 
     await set_rls_bypass(db, True)
     return await OnlineTestMaintenance(db).run()
+
+
+@router.post(
+    "/parents/daily-summary/run-all",
+    dependencies=[Depends(require_internal_token)],
+)
+async def internal_run_daily_summaries(db: Annotated[AsyncSession, Depends(get_db)]):
+    """Evening 'how was my child's day' summaries. Each school is handled in its own local window."""
+    from src.db.models import School
+    from src.modules.fees.tenant import bind_tenant
+    from src.modules.parent_messages.daily_summary import run_for_school
+
+    await bind_tenant(db, None, role="SERVICE")
+    school_ids = (await db.execute(select(School.id))).scalars().all()
+    sent = 0
+    for school_id in school_ids:
+        try:
+            await bind_tenant(db, school_id, role="SERVICE")
+            sent += (await run_for_school(db, school_id)).get("sent", 0)
+        except Exception:
+            await db.rollback()
+            logging.getLogger("sybeez.daily_summary").exception("daily summary failed for a school")
+    return {"schools": len(school_ids), "sent": sent}

@@ -91,6 +91,34 @@ def _fee_reminders_tick() -> None:
         logger.warning("Could not run scheduled fee reminders")
 
 
+_last_daily_summary = 0.0
+
+
+def _daily_summary_tick() -> None:
+    """Every 10 minutes; the API only acts inside each school's 18:30-20:30 local window and the
+    per-parent in-app/WhatsApp dedupe makes repeat calls harmless."""
+    global _last_daily_summary
+    now = time.time()
+    if now - _last_daily_summary < 600:
+        return
+    _last_daily_summary = now
+    settings = get_settings()
+    base = (settings.core_api_url or "").rstrip("/")
+    if not base:
+        return
+    request = urllib.request.Request(
+        f"{base}/internal/v1/parents/daily-summary/run-all",
+        data=b"{}",
+        method="POST",
+        headers={"Content-Type": "application/json", "X-Internal-Token": settings.core_internal_token},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=120) as response:
+            response.read()
+    except Exception:
+        logger.warning("Could not run daily parent summaries")
+
+
 def redis_reachable() -> bool:
     try:
         return bool(get_redis().ping())
@@ -117,6 +145,7 @@ def consume_forever(stop: threading.Event | None = None) -> None:
             _release_due()
             _online_tests_tick()
             _fee_reminders_tick()
+            _daily_summary_tick()
         return
 
     client = get_redis()
@@ -129,6 +158,7 @@ def consume_forever(stop: threading.Event | None = None) -> None:
         _release_due()
         _online_tests_tick()
         _fee_reminders_tick()
+        _daily_summary_tick()
 
 
 def main() -> None:
