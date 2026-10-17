@@ -26,7 +26,7 @@ async def queue_outbound_delivery(
     meta: dict | None = None,
 ) -> NotificationDelivery | None:
     """
-    Queue an outbound delivery (SMS / WHATSAPP) if allowed by preferences and
+    Queue an outbound delivery (WHATSAPP only; SMS was dropped) if allowed by preferences and
     the user has a phone number.
     """
     # Preferences gate
@@ -39,11 +39,9 @@ async def queue_outbound_delivery(
         )
     ).scalar_one_or_none()
 
-    if channel == NotificationChannel.SMS.value:
-        # Default is OFF unless explicitly enabled in DB
-        if pref is None or not pref.sms_enabled:
-            return None
-    elif channel == NotificationChannel.WHATSAPP.value:
+    if channel != NotificationChannel.WHATSAPP.value:
+        return None
+    if channel == NotificationChannel.WHATSAPP.value:
         # Default is OFF unless explicitly enabled in DB
         if pref is None or not getattr(pref, "whatsapp_enabled", False):
             return None
@@ -53,11 +51,7 @@ async def queue_outbound_delivery(
         return None
 
     settings = get_settings()
-    provider = (
-        settings.sms_provider.lower().strip()
-        if channel == NotificationChannel.SMS.value
-        else settings.whatsapp_provider.lower().strip()
-    )
+    provider = settings.whatsapp_provider.lower().strip()
 
     row = NotificationDelivery(
         school_id=school_id,

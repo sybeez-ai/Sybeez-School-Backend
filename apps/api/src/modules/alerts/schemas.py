@@ -40,17 +40,13 @@ class DeliveryListOut(BaseModel):
 
 class ProviderStatusOut(BaseModel):
     whatsapp_status: str
-    sms_status: str
     whatsapp_provider: str
-    sms_provider: str
     whatsapp_missing: list[str] = Field(default_factory=list)
-    sms_missing: list[str] = Field(default_factory=list)
 
 
 class AlertSettingsOut(ProviderStatusOut):
     school_id: UUID
     whatsapp_enabled: bool
-    sms_enabled: bool
     quiet_hours_start: str
     quiet_hours_end: str
     timezone: str
@@ -59,7 +55,6 @@ class AlertSettingsOut(ProviderStatusOut):
 
 class AlertSettingsUpdate(BaseModel):
     whatsapp_enabled: bool | None = None
-    sms_enabled: bool | None = None
     quiet_hours_start: str | None = Field(default=None, pattern=r"^\d{2}:\d{2}$")
     quiet_hours_end: str | None = Field(default=None, pattern=r"^\d{2}:\d{2}$")
     timezone: str | None = None
@@ -74,8 +69,6 @@ class TemplateOut(BaseModel):
     whatsapp_template_name: str
     language_code: str
     variables: list[str]
-    sms_dlt_template_id: str
-    sms_text: str
     body_text: str
     category: str
     active: bool
@@ -86,8 +79,6 @@ class TemplateUpdate(BaseModel):
     whatsapp_template_name: str | None = None
     language_code: str | None = None
     variables: list[str] | None = None
-    sms_dlt_template_id: str | None = None
-    sms_text: str | None = None
     body_text: str | None = None
     active: bool | None = None
     locale: str | None = None
@@ -114,7 +105,5 @@ class TemplateCreate(BaseModel):
     whatsapp_template_name: str = Field(min_length=1, max_length=128)
     language_code: str = Field(min_length=2, max_length=16)
     variables: list[str] = Field(default_factory=list)
-    sms_dlt_template_id: str = ""
-    sms_text: str
     body_text: str
     active: bool = True

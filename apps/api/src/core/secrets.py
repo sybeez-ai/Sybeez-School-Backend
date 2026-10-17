@@ -6,7 +6,7 @@ otherwise from AWS Secrets Manager secret `sybeez-school/superadmin`
 (override the id with SUPERADMIN_SECRET_ID). The secret may be a raw string
 or a JSON object with SUPERADMIN_INITIAL_PASSWORD.
 
-WhatsApp and MSG91: `load_secret_map` reads ALERTS_SECRETS_ARN or
+WhatsApp (Meta): `load_secret_map` reads ALERTS_SECRETS_ARN or
 WHATSAPP_SECRETS_ARN. Settings copies a value only when the matching field is
 still blank, so environment variables win.
 """
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 
 def load_secret_map() -> dict[str, str]:
-    """WhatsApp and MSG91 credentials from Secrets Manager.
+    """WhatsApp (Meta) credentials from Secrets Manager.
 
     Environment variables win: Settings only copies a key when its field is blank.
     No ARN means mock mode. A missing secret or a non-JSON payload returns an empty map.

@@ -103,12 +103,6 @@ class Settings(BaseSettings):
     # Outbound communication providers (Phase 12).
     # Production WhatsApp uses meta_cloud. mock stays the unset default so dev
     # does not call Meta. Secrets may also arrive from Secrets Manager.
-    sms_provider: str = "mock"  # mock | msg91
-    msg91_auth_key: str = Field(default="", validation_alias=AliasChoices("MSG91_AUTH_KEY"))
-    msg91_sender_id: str = Field(default="", validation_alias=AliasChoices("MSG91_SENDER_ID"))
-    msg91_template_id: str = Field(default="", validation_alias=AliasChoices("MSG91_TEMPLATE_ID"))
-    msg91_webhook_token: str = Field(default="", validation_alias=AliasChoices("MSG91_WEBHOOK_TOKEN"))
-    sms_rate_limit_per_minute: int = 100
 
     whatsapp_provider: str = "mock"  # mock | meta_cloud | gupshup | twilio
     whatsapp_cloud_access_token: str = Field(
@@ -161,10 +155,6 @@ class Settings(BaseSettings):
             "whatsapp_business_account_id": ("WHATSAPP_BUSINESS_ACCOUNT_ID",),
             "whatsapp_app_secret": ("WHATSAPP_APP_SECRET",),
             "whatsapp_verify_token": ("WHATSAPP_VERIFY_TOKEN",),
-            "msg91_auth_key": ("MSG91_AUTH_KEY",),
-            "msg91_sender_id": ("MSG91_SENDER_ID",),
-            "msg91_template_id": ("MSG91_TEMPLATE_ID",),
-            "msg91_webhook_token": ("MSG91_WEBHOOK_TOKEN",),
         }
         for field, keys in mapping.items():
             if getattr(self, field):

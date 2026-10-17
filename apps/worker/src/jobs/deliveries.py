@@ -88,58 +88,6 @@ def _post_result(
     )
 
 
-def _send_sms_msg91(
-    to: str,
-    body: str,
-    *,
-    template_id: str | None = None,
-    variables: list | None = None,
-) -> str:
-    """
-    MSG91 minimal integration.
-    - If a DLT template id is set: uses Flow API (template-based).
-    - Otherwise: uses legacy sendsms endpoint (may not work on all MSG91 accounts).
-    Returns a provider request/message id string when available.
-    """
-    s = get_settings()
-    if not s.msg91_auth_key or not s.msg91_sender_id:
-        raise DeliveryRejected("SMS not configured", error_code="missing_credentials")
-
-    mobiles = to.replace("+", "")
-    dlt_id = template_id or s.msg91_template_id
-    if dlt_id:
-        payload: dict = {
-            "template_id": dlt_id,
-            "sender": s.msg91_sender_id or None,
-            "short_url": "0",
-            "mobiles": mobiles,
-        }
-        values = list(variables or [])
-        if values:
-            for index, value in enumerate(values, start=1):
-                payload[f"VAR{index}"] = value
-        else:
-            payload["VAR1"] = body
-        resp = _http_json(
-            "POST",
-            "https://api.msg91.com/api/v5/flow/",
-            headers={"Content-Type": "application/json", "authkey": s.msg91_auth_key},
-            body=payload,
-        )
-        return str(resp.get("request_id") or resp.get("message") or "msg91_flow")
-
-    query = {
-        "authkey": s.msg91_auth_key,
-        "mobiles": mobiles,
-        "message": body,
-    }
-    if s.msg91_sender_id:
-        query["sender"] = s.msg91_sender_id
-    url = "https://api.msg91.com/api/v2/sendsms?" + urllib.parse.urlencode(query)
-    resp = _http_json("GET", url, headers={})
-    return str(resp.get("type") or resp.get("message") or "msg91")
-
-
 def _send_whatsapp_meta(to: str, body: str) -> str:
     """Free-text sender. Callers must already be inside the 24-hour service window."""
     s = get_settings()
@@ -166,8 +114,6 @@ def _send_whatsapp_meta(to: str, body: str) -> str:
 
 
 def _provider_key(channel: str, provider: str) -> str:
-    if channel == "SMS":
-        return "msg91" if provider == "msg91" else provider
     if provider in {"meta", "whatsapp_cloud"}:
         return "meta_cloud"
     return provider
@@ -177,7 +123,7 @@ def _allow(channel: str, provider: str) -> bool:
     if provider == "mock":
         return True
     settings = get_settings()
-    limit = settings.whatsapp_rate_limit_per_minute if channel == "WHATSAPP" else settings.sms_rate_limit_per_minute
+    limit = settings.whatsapp_rate_limit_per_minute
     try:
         return allow_provider_send(get_redis(), _provider_key(channel, provider), limit)
     except Exception:
@@ -267,21 +213,17 @@ def handle(payload: dict) -> None:
 
 
 def _effective_provider(channel: str, provider: str) -> str:
-    """Stay on mock when Meta or MSG91 credentials are absent. Never raises."""
+    """Stay on mock when Meta credentials are absent. Never raises."""
     settings = get_settings()
     resolved = resolve_outbound_provider(
         channel,
         provider,
         access_token=settings.whatsapp_cloud_access_token,
         phone_number_id=settings.whatsapp_cloud_phone_number_id,
-        msg91_auth_key=settings.msg91_auth_key,
-        msg91_sender_id=settings.msg91_sender_id,
     )
     if resolved == "mock" and provider not in {"", "mock"}:
         if channel == "WHATSAPP":
             logger.warning("WhatsApp not configured")
-        elif channel == "SMS":
-            logger.warning("SMS not configured")
     return resolved
 
 
@@ -314,16 +256,6 @@ def _send(channel: str, provider: str, to: str, body: str, payload: dict) -> str
             return _send_whatsapp_meta(to, body)
         return sender.send(message)
 
-    if channel == "SMS" and provider == "mock":
-        logger.info("MOCK %s to=%s", channel, _mask_phone(to))
-        return f"mock_{payload.get('delivery_id')}"
-    if channel == "SMS" and provider == "msg91":
-        return _send_sms_msg91(
-            to,
-            body,
-            template_id=payload.get("sms_dlt_template_id") or None,
-            variables=payload.get("sms_variables") or None,
-        )
     if provider == "mock":
         logger.info("MOCK %s to=%s", channel, _mask_phone(to))
         return f"mock_{payload.get('delivery_id')}"

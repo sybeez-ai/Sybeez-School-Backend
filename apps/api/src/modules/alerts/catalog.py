@@ -1,8 +1,8 @@
-"""Approved-template catalog for WhatsApp (Meta UTILITY) and SMS DLT.
+"""Approved-template catalog for WhatsApp (Meta UTILITY). WhatsApp is the only outbound channel.
 
 Business-initiated sends use these templates. Placeholder order is the order of
 `variables`. WhatsApp bodies use {{1}}..{{n}}. SMS bodies use {#var#} in the
-same order, which is the TRAI DLT variable token.
+same order. SMS was dropped; sms_text stays an empty legacy column.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ class TemplateSeed:
     whatsapp_template_name: str
     variables: tuple[str, ...]
     body_text: str
-    sms_text: str
+    sms_text: str = ""
     category: str = "UTILITY"
     sms_dlt_template_id: str = ""
 
@@ -56,6 +56,7 @@ PARENT_EVENTS = frozenset(
         "fee_due",
         "fee_overdue",
         "payment_receipt",
+        "progress_update",
     }
 )
 STAFF_EVENTS = frozenset(
@@ -80,6 +81,7 @@ EVENT_NOTIFICATION_TYPE = {
     "lop_update": "LOP_UPDATE",
     "leave_approved": "LEAVE_APPROVED",
     "announcement": "ANNOUNCEMENT",
+    "progress_update": "PROGRESS_UPDATE",
 }
 
 
@@ -91,7 +93,7 @@ def _seed(event: str, locale: str, variables: tuple[str, ...], body: str, sms: s
         whatsapp_template_name=f"sybeez_{event}_{locale}",
         variables=variables,
         body_text=body,
-        sms_text=sms,
+        sms_text="",
     )
 
 
@@ -302,6 +304,16 @@ DEFAULT_TEMPLATES: tuple[TemplateSeed, ...] = (
         "{{1}}: {{2}} - {{3}}",
         "{#var#}: {#var#} - {#var#}",
     ),
+)
+
+# Parents choose their own language. The approved WhatsApp template is a language-tagged shell
+# ("{{1}}: {{2}} - {{3}}"); the translated title and preview travel in the variables.
+NOTICE_LANGUAGES = ("en", "hi", "ta", "te", "kn", "ml", "mr", "bn", "gu", "pa")
+DEFAULT_TEMPLATES = DEFAULT_TEMPLATES + tuple(
+    _seed(event, code, _ANN, "{{1}}: {{2}} - {{3}}", "")
+    for event in ("announcement", "progress_update")
+    for code in NOTICE_LANGUAGES
+    if not (event == "announcement" and code in {"en", "hi", "ta"})
 )
 
 

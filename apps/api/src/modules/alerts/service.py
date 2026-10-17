@@ -1,4 +1,4 @@
-"""Queue template alerts, apply webhook status, and fall back to SMS."""
+"""Queue WhatsApp template alerts (per-parent language) and apply Meta delivery status."""
 
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ from src.db.models import (
     NotificationDelivery,
     NotificationPreference,
     Parent,
+    ParentMessagePreference,
     School,
     SchoolAlertSettings,
     StudentParent,
@@ -34,7 +35,6 @@ from src.modules.alerts.policy import (
     next_status,
     recipient_ids,
     service_window_open,
-    should_sms_fallback,
 )
 from src.modules.alerts.webhooks import InboundUpdate, StatusUpdate
 from src.shared.enums import NotificationChannel
@@ -76,12 +76,13 @@ async def dispatch_alert(
     title: str | None = None,
     link_path: str | None = None,
     locale: str | None = None,
+    localized_variables: dict[str, dict] | None = None,
     now: datetime | None = None,
 ) -> DispatchResult:
     await _scope_school(db, school_id)
     settings = await _settings(db, school_id)
     result = DispatchResult()
-    if settings is None or (not settings.whatsapp_enabled and not settings.sms_enabled):
+    if settings is None or not settings.whatsapp_enabled:
         result.skipped += 1
         return result
 
@@ -101,18 +102,18 @@ async def dispatch_alert(
     by_id = {user.id: user for user in users}
     moment = now or _utcnow()
     urgent_send = is_urgent(event_key, urgent)
-    chosen_locale = locale or settings.default_locale or "en"
-    template = await _template(db, school_id, event_key, chosen_locale)
-    if template is None:
-        await _audit(db, school_id, None, "alert.template_missing", "alert_template", None, {"event_key": event_key})
-        result.skipped += len(ids)
-        return result
-
-    values = {key: "" if value is None else str(value) for key, value in variables.items()}
-    body = render_message(template.body_text, list(template.variables or []), values)
-    sms_body = render_message(template.sms_text, list(template.variables or []), values)
-    components = template_components(list(template.variables or []), values)
-    params = ordered_params(list(template.variables or []), values)
+    default_locale = locale or settings.default_locale or "en"
+    base_values = {key: "" if value is None else str(value) for key, value in variables.items()}
+    parent_prefs = {
+        pref.user_id: pref
+        for pref in (
+            await db.execute(
+                select(ParentMessagePreference).where(
+                    ParentMessagePreference.school_id == school_id, ParentMessagePreference.user_id.in_(ids)
+                )
+            )
+        ).scalars()
+    }
 
     for user_id in ids:
         user = by_id.get(user_id)
@@ -120,16 +121,18 @@ async def dispatch_alert(
             result.skipped += 1
             continue
         phone = await _phone_for(db, school_id, user)
-        pref = await _preference(db, user.id, notification_type or "")
+        mpref = parent_prefs.get(user.id)
+        if mpref is not None:
+            # The parent's own consent record wins: explicit, timestamped, withdrawable.
+            opt_in = bool(mpref.whatsapp_opt_in)
+        else:
+            legacy = await _preference(db, user.id, notification_type or "")
+            opt_in = bool(legacy and legacy.whatsapp_enabled)
         whatsapp_out = await _opted_out(db, school_id, phone, NotificationChannel.WHATSAPP.value)
-        sms_out = await _opted_out(db, school_id, phone, NotificationChannel.SMS.value)
-        channel, sms_fallback = choose_channel(
+        channel = choose_channel(
             whatsapp_school=settings.whatsapp_enabled,
-            sms_school=settings.sms_enabled,
-            whatsapp_opt_in=bool(pref and pref.whatsapp_enabled),
-            sms_opt_in=bool(pref and pref.sms_enabled),
+            whatsapp_opt_in=opt_in,
             whatsapp_opt_out=whatsapp_out,
-            sms_opt_out=sms_out,
             has_phone=bool(phone),
         )
         if channel is None or not phone:
@@ -146,12 +149,24 @@ async def dispatch_alert(
             tz_name=settings.timezone or "Asia/Kolkata",
             urgent=urgent_send,
         )
-        use_template = channel == NotificationChannel.WHATSAPP.value
-        window = await _window_open(db, phone, moment) if use_template else False
+        # The alert goes out in the parent's chosen language (their own translated variables when the
+        # caller supplied per-language content), falling back to the school default, then English.
+        user_locale = (mpref.preferred_language if mpref is not None else None) or default_locale
+        template = await _template(db, school_id, event_key, user_locale)
+        if template is None:
+            await _audit(db, school_id, None, "alert.template_missing", "alert_template", None, {"event_key": event_key, "locale": user_locale})
+            result.skipped += 1
+            continue
+        values = dict(base_values)
+        values.update((localized_variables or {}).get(template.locale, {}))
+        body = render_message(template.body_text, list(template.variables or []), values)
+        components = template_components(list(template.variables or []), values)
+        params = ordered_params(list(template.variables or []), values)
+        window = await _window_open(db, phone, moment)
         # Alerts are business-initiated, so WhatsApp always uses the approved template.
         # Free text is sent only for a session reply inside the 24-hour window.
-        message_mode = "template" if use_template else "text"
-        rendered = body if use_template else sms_body
+        message_mode = "template"
+        rendered = body
         row = NotificationDelivery(
             school_id=school_id,
             user_id=user.id,
@@ -164,9 +179,6 @@ async def dispatch_alert(
                 {
                     "event_key": event_key,
                     "link_path": link_path,
-                    "sms_fallback_allowed": sms_fallback,
-                    "sms_dlt_template_id": template.sms_dlt_template_id,
-                    "sms_variables": params,
                     "components": components,
                     "service_window_open": window,
                 }
@@ -176,8 +188,8 @@ async def dispatch_alert(
             attempts=0,
             event_key=event_key,
             locale=template.locale,
-            template_name=template.whatsapp_template_name if use_template else None,
-            language_code=template.language_code if use_template else None,
+            template_name=template.whatsapp_template_name,
+            language_code=template.language_code,
             variables_json=json.dumps(values),
             scheduled_for=scheduled_for,
             dedupe_key=key,
@@ -186,7 +198,7 @@ async def dispatch_alert(
         db.add(row)
         await db.flush()
         if status == "PENDING":
-            await _enqueue_delivery(row, components, params, template.sms_dlt_template_id, window)
+            await _enqueue_delivery(row, components, window)
             result.queued += 1
             action = "alert.queued"
         else:
@@ -238,8 +250,6 @@ async def release_due_deliveries(db: AsyncSession, *, now: datetime | None = Non
         await _enqueue_delivery(
             row,
             meta.get("components") or [],
-            meta.get("sms_variables") or [],
-            meta.get("sms_dlt_template_id") or "",
             bool(meta.get("service_window_open")),
         )
         released += 1
@@ -291,71 +301,6 @@ async def store_inbound(db: AsyncSession, item: InboundUpdate, *, channel: str, 
     return row
 
 
-async def maybe_queue_sms_fallback(db: AsyncSession, row: NotificationDelivery) -> NotificationDelivery | None:
-    meta = _meta(row)
-    if not should_sms_fallback(
-        channel=row.channel,
-        status=row.status,
-        sms_fallback_allowed=bool(meta.get("sms_fallback_allowed")),
-        already_fallback=row.fallback_of_id is not None,
-        error_code=row.error_code,
-    ):
-        return None
-    if row.user_id is None or row.school_id is None:
-        return None
-    if await _opted_out(db, row.school_id, row.to, NotificationChannel.SMS.value):
-        return None
-    key = f"{row.dedupe_key}:sms" if row.dedupe_key else None
-    if key and await _duplicate(db, row.school_id, NotificationChannel.SMS.value, key):
-        return None
-    values = {}
-    if row.variables_json:
-        try:
-            values = json.loads(row.variables_json)
-        except json.JSONDecodeError:
-            values = {}
-    template = await _template(db, row.school_id, row.event_key or "", row.locale or "en") if row.event_key else None
-    sms_body = row.body
-    dlt = str(meta.get("sms_dlt_template_id") or "")
-    params = list(meta.get("sms_variables") or [])
-    if template is not None:
-        sms_body = render_message(template.sms_text, list(template.variables or []), values)
-        dlt = template.sms_dlt_template_id or dlt
-        params = ordered_params(list(template.variables or []), values)
-    fallback = NotificationDelivery(
-        school_id=row.school_id,
-        user_id=row.user_id,
-        channel=NotificationChannel.SMS.value,
-        notification_type=row.notification_type,
-        to=row.to,
-        title=row.title,
-        body=sms_body,
-        meta_json=json.dumps({"event_key": row.event_key, "fallback_of": str(row.id), "sms_dlt_template_id": dlt, "sms_variables": params}),
-        provider=_provider_for(NotificationChannel.SMS.value),
-        status="PENDING",
-        attempts=0,
-        event_key=row.event_key,
-        locale=row.locale,
-        variables_json=row.variables_json,
-        dedupe_key=key,
-        message_mode="text",
-        fallback_of_id=row.id,
-    )
-    db.add(fallback)
-    await db.flush()
-    await _enqueue_delivery(fallback, [], params, dlt, False)
-    await _audit(
-        db,
-        row.school_id,
-        None,
-        "alert.fallback",
-        "notification_delivery",
-        fallback.id,
-        {"from": str(row.id), "to": mask_phone(row.to), "error_code": row.error_code},
-    )
-    return fallback
-
-
 async def resend_delivery(db: AsyncSession, row: NotificationDelivery) -> NotificationDelivery:
     if row.status != "FAILED":
         from src.core.exceptions import ConflictError
@@ -370,8 +315,6 @@ async def resend_delivery(db: AsyncSession, row: NotificationDelivery) -> Notifi
     await _enqueue_delivery(
         row,
         meta.get("components") or [],
-        meta.get("sms_variables") or [],
-        meta.get("sms_dlt_template_id") or "",
         bool(meta.get("service_window_open")),
     )
     await _audit(
@@ -438,7 +381,6 @@ async def _transition(
         row.delivered_at = row.delivered_at or moment
     elif nxt == "FAILED":
         row.failed_at = moment
-        await maybe_queue_sms_fallback(db, row)
     return row
 
 
@@ -509,8 +451,6 @@ async def _record_opt_out(
         for pref in prefs:
             if channel == NotificationChannel.WHATSAPP.value:
                 pref.whatsapp_enabled = False
-            elif channel == NotificationChannel.SMS.value:
-                pref.sms_enabled = False
     await db.flush()
 
 
@@ -650,7 +590,7 @@ async def _window_open(db: AsyncSession, phone: str, now: datetime) -> bool:
     return service_window_open(last, now)
 
 
-async def _enqueue_delivery(row: NotificationDelivery, components: list, sms_variables: list, dlt_id: str, window: bool) -> None:
+async def _enqueue_delivery(row: NotificationDelivery, components: list, window: bool) -> None:
     await enqueue_job(
         "deliveries",
         {
@@ -666,8 +606,6 @@ async def _enqueue_delivery(row: NotificationDelivery, components: list, sms_var
             "language_code": row.language_code,
             "components": components,
             "service_window_open": window,
-            "sms_dlt_template_id": dlt_id,
-            "sms_variables": sms_variables,
             "event_key": row.event_key,
         },
     )
@@ -675,12 +613,9 @@ async def _enqueue_delivery(row: NotificationDelivery, components: list, sms_var
 
 def _provider_for(channel: str) -> str:
     from src.core.config import get_settings
-    from src.modules.alerts.credentials import effective_sms_provider, effective_whatsapp_provider
+    from src.modules.alerts.credentials import effective_whatsapp_provider
 
-    settings = get_settings()
-    if channel == NotificationChannel.SMS.value:
-        return effective_sms_provider(settings)
-    return effective_whatsapp_provider(settings)
+    return effective_whatsapp_provider(get_settings())
 
 
 async def _scope_school(db: AsyncSession, school_id: UUID) -> None:

@@ -1,1 +1,1 @@
-"""Production WhatsApp alerts with SMS fallback."""
+"""Production WhatsApp alerts (Meta Cloud API). WhatsApp is the only outbound channel."""

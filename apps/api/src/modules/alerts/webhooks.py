@@ -1,4 +1,4 @@
-"""Meta and MSG91 webhook parsing. Signature checks use the raw body."""
+"""Meta WhatsApp Cloud API webhook parsing. Signature checks use the raw body."""
 
 from __future__ import annotations
 
@@ -84,47 +84,6 @@ def parse_meta_webhook(payload: dict) -> tuple[list[StatusUpdate], list[InboundU
     return statuses, inbound
 
 
-def parse_msg91_webhook(payload: dict) -> list[StatusUpdate]:
-    updates: list[StatusUpdate] = []
-    reports = []
-    if isinstance(payload.get("report"), list):
-        request_id = str(payload.get("requestId") or payload.get("request_id") or "")
-        for item in payload["report"]:
-            reports.append((request_id, item))
-    data = payload.get("data")
-    if isinstance(data, list):
-        for block in data:
-            request_id = str(block.get("requestId") or block.get("request_id") or "")
-            for item in block.get("report") or []:
-                reports.append((request_id, item))
-    if not reports and (payload.get("requestId") or payload.get("request_id") or payload.get("status")):
-        reports.append((str(payload.get("requestId") or payload.get("request_id") or ""), payload))
-    for request_id, item in reports:
-        raw = str(item.get("status") or item.get("desc") or "")
-        mapped = _MSG91_STATUS.get(raw.strip().upper()) or _MSG91_STATUS.get(raw.strip().lower())
-        if mapped is None:
-            continue
-        message_id = str(item.get("requestId") or item.get("request_id") or request_id or "")
-        if not message_id:
-            continue
-        updates.append(
-            StatusUpdate(
-                provider_message_id=message_id,
-                status=mapped,
-                error_code=str(item.get("errorCode") or item.get("error_code") or "") or None,
-                error_message=str(item.get("desc") or item.get("failedReason") or "") or None,
-                recipient=normalize_phone(str(item.get("number") or item.get("mobile") or "")) or None,
-            )
-        )
-    return updates
-
-
-def verify_msg91_token(presented: str | None, expected: str) -> bool:
-    if not expected:
-        return False
-    return hmac.compare_digest(presented or "", expected)
-
-
 def loads_json(raw: bytes) -> dict:
     data = json.loads(raw.decode("utf-8") or "{}")
     if not isinstance(data, dict):
@@ -137,17 +96,6 @@ _META_STATUS = {
     "delivered": "DELIVERED",
     "read": "READ",
     "failed": "FAILED",
-}
-
-_MSG91_STATUS = {
-    "1": "DELIVERED",
-    "DELIVERED": "DELIVERED",
-    "2": "FAILED",
-    "FAILED": "FAILED",
-    "REJECTED": "FAILED",
-    "0": "SENT",
-    "SENT": "SENT",
-    "READ": "READ",
 }
 
 
