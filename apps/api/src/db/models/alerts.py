@@ -1,8 +1,8 @@
 import uuid
 from datetime import datetime, time
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, Time
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, Time, text
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -40,6 +40,13 @@ class SchoolAlertSettings(Base, TimestampMixin):
     quiet_hours_end: Mapped[time] = mapped_column(Time, nullable=False)
     timezone: Mapped[str] = mapped_column(String(64), nullable=False, default="Asia/Kolkata")
     default_locale: Mapped[str] = mapped_column(String(8), nullable=False, default="en")
+    # Days before the due date to nudge parents (default 7 and 2) and days after (default none).
+    fee_reminder_days: Mapped[list[int]] = mapped_column(
+        ARRAY(Integer), nullable=False, server_default=text("'{7,2}'::integer[]")
+    )
+    fee_overdue_days: Mapped[list[int]] = mapped_column(
+        ARRAY(Integer), nullable=False, server_default=text("'{}'::integer[]")
+    )
 
 
 class AlertInboundMessage(Base, UUIDPrimaryKeyMixin, TimestampMixin):

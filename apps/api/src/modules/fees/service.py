@@ -774,11 +774,25 @@ class FeeService:
         Daily job: scan invoices and send due/overdue reminders (in-app + SMS/WhatsApp),
         deduped via `fee_reminder_logs`.
         """
-        today = date.today()
-        due_offsets = {3, 0}  # days before due date
-        overdue_offsets = {1, 3, 7, 14, 30}  # days after due date
+        from src.db.models import SchoolAlertSettings
+        from src.modules.fees.reminder_plan import (
+            DEFAULT_DUE_DAYS,
+            DEFAULT_OVERDUE_DAYS,
+            clean_offsets,
+            in_send_window,
+            school_now,
+        )
+
+        cfg = await self.db.get(SchoolAlertSettings, school_id)
+        local_now = school_now(cfg.timezone if cfg else None)
+        if not in_send_window(local_now):
+            return {"invoices_considered": 0, "invoice_events_sent": 0, "deliveries_queued": 0, "outside_window": True}
+        today = local_now.date()  # the school's own calendar day, not the server's
+        due_offsets = set(clean_offsets(getattr(cfg, "fee_reminder_days", None), DEFAULT_DUE_DAYS))
+        overdue_offsets = set(clean_offsets(getattr(cfg, "fee_overdue_days", None), DEFAULT_OVERDUE_DAYS))
 
         max_window = max(due_offsets) if due_offsets else 0
+        min_due = today - timedelta(days=max(overdue_offsets)) if overdue_offsets else today
         rows = (
             await self.db.execute(
                 select(FeeInvoice)
@@ -793,6 +807,7 @@ class FeeService:
                         ]
                     ),
                     FeeInvoice.due_date <= (today + timedelta(days=max_window)),
+                    FeeInvoice.due_date >= min_due,
                 )
                 .order_by(FeeInvoice.due_date.asc())
             )
@@ -809,30 +824,19 @@ class FeeService:
             kind: str | None = None
             title: str | None = None
 
-            if days_until in due_offsets:
-                notif_type = NotificationType.FEE_DUE_REMINDER.value
-                kind = f"DUE_{days_until}"
-                title = "Fee due reminder"
-            elif days_until < 0:
-                days_overdue = abs(days_until)
-                if days_overdue in overdue_offsets:
+            from src.modules.fees.reminder_plan import reminder_kind
+
+            plan = reminder_kind(inv.due_date, today, sorted(due_offsets), sorted(overdue_offsets))
+            if plan is not None:
+                kind = plan[0]
+                if plan[1] == "fee_due":
+                    notif_type = NotificationType.FEE_DUE_REMINDER.value
+                    title = "Fee due reminder"
+                else:
                     notif_type = NotificationType.FEE_OVERDUE.value
-                    kind = f"OVERDUE_{days_overdue}"
                     title = "Fee overdue reminder"
 
             if not notif_type or not kind:
-                continue
-
-            existing = (
-                await self.db.execute(
-                    select(FeeReminderLog).where(
-                        FeeReminderLog.invoice_id == inv.id,
-                        FeeReminderLog.kind == kind,
-                        FeeReminderLog.sent_on == today,
-                    )
-                )
-            ).scalar_one_or_none()
-            if existing:
                 continue
 
             acc = await self.db.get(StudentFeeAccount, inv.student_fee_account_id)
@@ -840,9 +844,28 @@ class FeeService:
             if not student_id:
                 continue
 
-            # record dedupe marker first
-            self.db.add(FeeReminderLog(school_id=school_id, invoice_id=inv.id, kind=kind, sent_on=today))
-            await self.db.flush()
+            # Race-safe dedupe: only the worker whose INSERT wins sends; others skip. The unique key
+            # (invoice, kind, day) is enforced by the database, so overlapping runs cannot double-send.
+            from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+            claimed = (
+                await self.db.execute(
+                    pg_insert(FeeReminderLog)
+                    .values(school_id=school_id, invoice_id=inv.id, kind=kind, sent_on=today)
+                    .on_conflict_do_nothing(constraint="uq_fee_reminder_invoice_kind_day")
+                    .returning(FeeReminderLog.id)
+                )
+            ).scalar_one_or_none()
+            if claimed is None:
+                continue
+            # Re-read the invoice under the claim: if it was paid a moment ago, stop and release the claim.
+            await self.db.refresh(inv)
+            if inv.balance_amount <= Decimal("0") or inv.status not in (
+                FeeInvoiceStatus.ISSUED.value,
+                FeeInvoiceStatus.PARTIALLY_PAID.value,
+                FeeInvoiceStatus.OVERDUE.value,
+            ):
+                continue
 
             student_name = await self._student_name(student_id)
             if notif_type == NotificationType.FEE_DUE_REMINDER.value:
@@ -905,7 +928,7 @@ class FeeService:
                             "invoice_number": inv.invoice_number,
                             "school_name": await school_display_name(self.db, school_id),
                         },
-                        dedupe_key=f"{event_key}:{inv.id}:{kind}:{today.isoformat()}",
+                        dedupe_key=f"{event_key}:{inv.id}:{kind}",
                         title=title,
                         link_path=link_path,
                         urgent=False,
