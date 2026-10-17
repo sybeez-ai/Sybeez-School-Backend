@@ -245,6 +245,11 @@ async def release_due_deliveries(db: AsyncSession, *, now: datetime | None = Non
     )
     released = 0
     for row in rows:
+        if await _fee_invoice_settled(db, row):
+            # The parent paid while this was held for quiet hours: do not nudge them.
+            row.status = "CANCELLED"
+            row.last_error = "invoice paid before send"
+            continue
         row.status = "PENDING"
         meta = _meta(row)
         await _enqueue_delivery(
@@ -256,6 +261,25 @@ async def release_due_deliveries(db: AsyncSession, *, now: datetime | None = Non
     if released:
         await _audit(db, None, None, "alert.released", "notification_delivery", None, {"count": released})
     return {"released": released}
+
+
+async def _fee_invoice_settled(db: AsyncSession, row: NotificationDelivery) -> bool:
+    """True when a held fee reminder points at an invoice that no longer has a balance."""
+    if row.event_key not in ("fee_due", "fee_overdue") or not row.dedupe_key:
+        return False
+    parts = row.dedupe_key.split(":")
+    if len(parts) < 3:
+        return False
+    try:
+        invoice_id = UUID(parts[1])
+    except ValueError:
+        return False
+    from decimal import Decimal
+
+    from src.db.models import FeeInvoice
+
+    invoice = await db.get(FeeInvoice, invoice_id)
+    return invoice is not None and (invoice.balance_amount or Decimal("0")) <= Decimal("0")
 
 
 async def apply_provider_status(

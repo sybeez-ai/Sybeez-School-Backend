@@ -120,12 +120,14 @@ async def internal_run_all_fee_reminders(
     school_ids = (await db.execute(select(School.id))).scalars().all()
     results = []
     for school_id in school_ids:
-        await bind_tenant(db, school_id, role="SERVICE")
-        reminders = await FeeService(db).send_invoice_reminders(school_id)
-        late = await FeeService(db).apply_late_fees(school_id, None)
-        results.append(
-            {"school_id": str(school_id), "reminders": reminders, "late_fees_applied": late}
-        )
+        try:
+            await bind_tenant(db, school_id, role="SERVICE")
+            reminders = await FeeService(db).send_invoice_reminders(school_id)
+            late = await FeeService(db).apply_late_fees(school_id, None) if not reminders.get("outside_window") else 0
+            results.append({"school_id": str(school_id), "reminders": reminders, "late_fees_applied": late})
+        except Exception:  # one school must never stop the others
+            await db.rollback()
+            results.append({"school_id": str(school_id), "error": True})
     return {"schools": len(results), "results": results}
 
 

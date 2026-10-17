@@ -71,6 +71,26 @@ def _online_tests_tick() -> None:
         logger.warning("Could not run online-test maintenance")
 
 
+_last_fee_reminders = 0.0
+FEE_REMINDERS_INTERVAL_SECONDS = 900
+
+
+def _fee_reminders_tick() -> None:
+    """Every 15 minutes ask the API to nudge parents. The API applies each school's local 9am-8pm
+    window and offsets, and the database makes the send once-only, so overlapping workers are safe."""
+    global _last_fee_reminders
+    now = time.time()
+    if now - _last_fee_reminders < FEE_REMINDERS_INTERVAL_SECONDS:
+        return
+    _last_fee_reminders = now
+    try:
+        from src.jobs.fee_reminders import run_scheduled
+
+        run_scheduled()
+    except Exception:
+        logger.warning("Could not run scheduled fee reminders")
+
+
 def redis_reachable() -> bool:
     try:
         return bool(get_redis().ping())
@@ -96,6 +116,7 @@ def consume_forever(stop: threading.Event | None = None) -> None:
                 time.sleep(2)
             _release_due()
             _online_tests_tick()
+            _fee_reminders_tick()
         return
 
     client = get_redis()
@@ -107,6 +128,7 @@ def consume_forever(stop: threading.Event | None = None) -> None:
             time.sleep(2)
         _release_due()
         _online_tests_tick()
+        _fee_reminders_tick()
 
 
 def main() -> None:
