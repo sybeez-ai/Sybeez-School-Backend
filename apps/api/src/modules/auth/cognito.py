@@ -560,3 +560,42 @@ def admin_confirm_forgot_password(*, email: str, confirmation_code: str, new_pas
         code = exc.response.get("Error", {}).get("Code", "")
         msg = exc.response.get("Error", {}).get("Message") or "Could not reset password"
         raise UnauthorizedError(f"{msg} ({code})") from exc
+
+
+def disable_user_for_deletion(*, email: str) -> str:
+    """Disable the pool user before an account deletion. Returns ``disabled``, ``missing`` or ``skipped``.
+
+    Raises when the user exists but cannot be disabled, so deletion stops before any data changes.
+    """
+    if not cognito_configured():
+        return "skipped"
+    s = get_settings()
+    client = _client()
+    username = _resolve_username(email)
+    try:
+        client.admin_disable_user(UserPoolId=s.cognito_user_pool_id, Username=username)
+        return "disabled"
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") == "UserNotFoundException":
+            return "missing"
+        logger.warning("Cognito disable for deletion failed: %s", exc.response.get("Error", {}).get("Code"))
+        raise
+
+
+def delete_user_after_deletion(*, email: str) -> bool:
+    """Delete the (already disabled) pool user. Best effort; returns whether it is gone."""
+    if not cognito_configured():
+        return True
+    s = get_settings()
+    try:
+        _client().admin_delete_user(UserPoolId=s.cognito_user_pool_id, Username=_resolve_username(email))
+        return True
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") == "UserNotFoundException":
+            return True
+        logger.error("Cognito delete after account deletion failed: %s", exc.response.get("Error", {}).get("Code"))
+        return False
+
+
+def reenable_user(*, email: str) -> None:
+    admin_set_enabled(email=email, enabled=True)

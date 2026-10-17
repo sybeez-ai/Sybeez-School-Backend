@@ -1,3 +1,4 @@
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field
@@ -112,3 +113,13 @@ class SwitchSchoolRequest(BaseModel):
 
 class MessageOut(BaseModel):
     message: str = "ok"
+
+
+class DeleteAccountRequest(BaseModel):
+    """Re-authentication plus explicit confirmation for permanent account deletion."""
+
+    confirm: Literal["DELETE"]
+    # Required for accounts that have a password. Accounts without one (social sign-in)
+    # confirm with their email and must hold a session created in the last 10 minutes.
+    password: str | None = Field(default=None, max_length=256)
+    confirm_email: EmailStr | None = None
