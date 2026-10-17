@@ -633,6 +633,49 @@ class EmployeeService:
         out.temporary_password = temp
         return out
 
+    async def reset_login(self, school_id: UUID, actor: UUID | None, employee_id: UUID):
+        """Issue a new temporary password for a staff/HR/teaching employee (shown once, change forced)."""
+        from src.modules.access.audit import write_audit
+        from src.modules.schools.login_reset import LoginCredentialsOut
+        from src.modules.schools.provisioning import issue_temporary_password
+
+        emp = await self._get(school_id, employee_id)
+        if not emp.user_id:
+            raise NotFoundError("This employee has no login yet; grant one first")
+        user = await self.db.get(User, emp.user_id)
+        if user is None or user.is_platform_admin:
+            raise NotFoundError("Login account not found")
+        roles = set(
+            (
+                await self.db.execute(
+                    select(SchoolMembership.role).where(
+                        SchoolMembership.user_id == user.id, SchoolMembership.school_id == school_id
+                    )
+                )
+            ).scalars()
+        )
+        if not roles:
+            raise NotFoundError("Login account not found")
+        if UserRole.SCHOOL_ADMIN.value in roles:
+            raise ConflictError("School admin passwords are reset by Sybeez support")
+        temp = await issue_temporary_password(self.db, user=user)
+        await write_audit(
+            self.db,
+            school_id=school_id,
+            actor_id=actor,
+            action="login.reset",
+            resource_type="user",
+            resource_id=str(user.id),
+            message="Temporary password issued for employee login",
+            details={"entity": "employee", "entity_id": str(employee_id)},
+        )
+        return LoginCredentialsOut(
+            user_id=user.id,
+            email=user.email,
+            temporary_password=temp,
+            login_path="/hrm/login" if roles & {"HR", "HR_MANAGER", "PAYROLL_ADMIN", "PAYROLL_APPROVER"} else "/staff/login",
+        )
+
     async def _issue_invite(
         self, school_id: UUID, actor: UUID | None, email: str, role: UserRole, employee_id: UUID
     ) -> str:

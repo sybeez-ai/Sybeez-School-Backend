@@ -19,6 +19,7 @@ from src.modules.employees.schemas import (
     StaffLoginIn,
 )
 from src.modules.employees.service import EmployeeService
+from src.modules.schools.login_reset import LoginCredentialsOut
 router = APIRouter(prefix="/hr/employees", tags=["hr-employees"])
 
 Admin = Annotated[CurrentUser, Depends(require_hr_admin)]
@@ -116,6 +117,12 @@ async def upload_employee_photo(
 @router.post("/{employee_id}/login", response_model=EmployeeOut)
 async def grant_staff_login(employee_id: UUID, body: StaffLoginIn, user: Admin, db: Db):
     return await EmployeeService(db).grant_login(_sid(user), user.id, employee_id, body)
+
+
+@router.post("/{employee_id}/reset-login", response_model=LoginCredentialsOut)
+async def reset_employee_login(employee_id: UUID, user: Admin, db: Db):
+    """New temporary password (shown once); the employee must change it at sign-in."""
+    return await EmployeeService(db).reset_login(_sid(user), user.id, employee_id)
 
 
 @router.delete("/{employee_id}/login", response_model=EmployeeOut)

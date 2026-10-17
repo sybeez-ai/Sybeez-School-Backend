@@ -20,6 +20,7 @@ from src.modules.access.schemas import (
     RoleGrantIn,
 )
 from src.modules.access.service import AccessService
+from src.modules.schools.login_reset import LoginCredentialsOut
 from src.shared.pagination import Page, PageQuery
 
 router = APIRouter(prefix="/access", tags=["access"])
@@ -191,6 +192,16 @@ async def revoke_membership(
         role=membership.role,
         status=membership.status,
     )
+
+
+@router.post("/memberships/{membership_id}/reset-login", response_model=LoginCredentialsOut)
+async def reset_member_login(
+    membership_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_permission("access.grant"))],
+):
+    """Temporary password (shown once, change forced, sessions revoked) for an HR/staff/finance member."""
+    return await AccessService(db).reset_member_login(user, _school(user), membership_id)
 
 
 @router.put("/memberships/{membership_id}/permissions", status_code=200)

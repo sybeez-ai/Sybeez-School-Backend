@@ -473,6 +473,14 @@ async def test_staff_login_and_self_service(api, hr_world, db_session):
     assert login.json()["role"] == "STAFF"
     teacher_portal = await api.post("/api/v1/auth/login", json={"email": email, "password": "StaffPass123!", "portal": "teacher"})
     assert teacher_portal.status_code in (401, 403)
+    assert login.json()["must_change_password"] is True
+    changed = await api.post(
+        "/api/v1/auth/change-password",
+        json={"current_password": "StaffPass123!", "new_password": "Own-Staff-Pass-9!"},
+        headers={"Authorization": f"Bearer {login.json()['access_token']}"},
+    )
+    assert changed.status_code == 200, changed.text
+    login = await api.post("/api/v1/auth/login", json={"email": email, "password": "Own-Staff-Pass-9!", "portal": "staff"})
     staff = {"Authorization": f"Bearer {login.json()['access_token']}"}
 
     assert (await api.get(f"{API}/me/profile", headers=staff)).status_code == 200

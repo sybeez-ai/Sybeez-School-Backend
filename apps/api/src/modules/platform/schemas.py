@@ -155,7 +155,8 @@ class InvitationOut(BaseModel):
 
 
 class SchoolAdminResetPasswordRequest(BaseModel):
-    temporary_password: str = Field(min_length=8)
+    # Optional: the server generates a strong temporary password when omitted (preferred).
+    temporary_password: str | None = Field(default=None, min_length=8)
 
 
 class SchoolAdminLoginCreate(BaseModel):
