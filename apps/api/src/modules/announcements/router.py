@@ -10,6 +10,7 @@ from src.core.exceptions import ForbiddenError
 from src.modules.access.deps import require_permission
 from src.modules.announcements.schemas import AnnouncementCreate, AnnouncementOut, AnnouncementUpdate
 from src.modules.announcements.service import AnnouncementService
+from src.modules.parent_messages.service import ParentMessageService
 from src.shared.pagination import Page, PageQuery
 
 router = APIRouter(prefix="/announcements", tags=["announcements"])
@@ -37,7 +38,10 @@ async def create_announcement(
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[CurrentUser, Depends(require_permission("announcements.write"))],
 ):
-    return await AnnouncementService(db).create(user, _school(user), body)
+    row = await AnnouncementService(db).create(user, _school(user), body)
+    if row.is_published:
+        await ParentMessageService(db).notify_parents(user, _school(user), "announcement", row.id)
+    return row
 
 
 @router.get("/{announcement_id}", response_model=AnnouncementOut)
@@ -56,4 +60,7 @@ async def update_announcement(
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[CurrentUser, Depends(require_permission("announcements.write"))],
 ):
-    return await AnnouncementService(db).update(user, _school(user), announcement_id, body)
+    row = await AnnouncementService(db).update(user, _school(user), announcement_id, body)
+    if getattr(row, "just_published", False):
+        await ParentMessageService(db).notify_parents(user, _school(user), "announcement", row.id)
+    return row

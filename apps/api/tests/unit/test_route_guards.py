@@ -111,7 +111,6 @@ def test_public_routes_are_only_health_and_auth_entry():
         "/api/v1/payroll/assistant/downloads/{token}",
         "/api/v1/personal-life/health",
         "/api/v1/results/health",
-        "/api/v1/webhooks/sms/msg91",
         "/api/v1/webhooks/whatsapp/meta",
         "/api/v1/webhooks/whatsapp/meta",
         "/health",

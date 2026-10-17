@@ -35,6 +35,8 @@ from src.db.models.online_test import (
     OnlineTestQuestionKey,
     OnlineTestSchoolSettings,
 )
+from src.db.models.parent_messages import MessageTranslation, ParentMessagePreference, StudentProgressUpdate
+from src.db.models.reading import ReadingPassage, ReadingProgress, ReadingSession
 from src.db.models.personal_note import PersonalNote
 from src.db.models.push_device import PushDevice
 from src.db.models.permission import MembershipPermissionOverride, Permission, RolePermission
@@ -298,6 +300,12 @@ __all__ = [
     "Document",
     "DiaryEntry",
     "PersonalNote",
+    "MessageTranslation",
+    "ParentMessagePreference",
+    "StudentProgressUpdate",
+    "ReadingPassage",
+    "ReadingProgress",
+    "ReadingSession",
     "PersonalGoal",
     "PersonalGoalMilestone",
     "PersonalHabit",

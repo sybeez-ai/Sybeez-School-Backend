@@ -1,4 +1,4 @@
-"""Template rendering, audience, opt-out, quiet hours, webhooks, and SMS fallback."""
+"""Template rendering, audience, opt-out, quiet hours and webhooks. WhatsApp is the only channel."""
 
 from __future__ import annotations
 
@@ -15,7 +15,6 @@ from src.core.jobs import jobs_backend
 from src.modules.alerts.catalog import DEFAULT_TEMPLATES, SAMPLE_VALUES, meta_submission_payload, render_message, template_components
 from src.modules.alerts.credentials import (
     WHATSAPP_NOT_CONFIGURED,
-    effective_sms_provider,
     effective_whatsapp_provider,
     provider_status,
     whatsapp_admin_status,
@@ -28,9 +27,8 @@ from src.modules.alerts.policy import (
     next_status,
     recipient_ids,
     service_window_open,
-    should_sms_fallback,
 )
-from src.modules.alerts.webhooks import parse_meta_webhook, parse_msg91_webhook, verify_challenge, verify_meta_signature
+from src.modules.alerts.webhooks import parse_meta_webhook, verify_challenge, verify_meta_signature
 
 ROOT = Path(__file__).resolve().parents[4]
 IST = ZoneInfo("Asia/Kolkata")
@@ -45,7 +43,7 @@ def _load(path: Path, name: str):
 
 
 def test_every_template_placeholder_matches_variables():
-    assert len(DEFAULT_TEMPLATES) == 33
+    assert len(DEFAULT_TEMPLATES) == 50
     keys = {seed.event_key for seed in DEFAULT_TEMPLATES}
     assert keys == {
         "student_absent",
@@ -59,13 +57,13 @@ def test_every_template_placeholder_matches_variables():
         "lop_update",
         "leave_approved",
         "announcement",
+        "progress_update",
     }
     for seed in DEFAULT_TEMPLATES:
         numbers = {int(item) for item in re.findall(r"\{\{(\d+)\}\}", seed.body_text)}
         assert numbers == set(range(1, len(seed.variables) + 1))
-        assert seed.sms_text.count("{#var#}") == len(seed.variables)
         assert seed.category == "UTILITY"
-        assert seed.locale in {"en", "ta", "hi"}
+        assert seed.locale in {"en", "ta", "hi", "te", "kn", "ml", "mr", "bn", "gu", "pa"}
         rendered = render_message(seed.body_text, seed.variables, SAMPLE_VALUES)
         assert "{{" not in rendered
         payload = meta_submission_payload(seed)
@@ -75,7 +73,7 @@ def test_every_template_placeholder_matches_variables():
 
 def test_template_rendering_uses_variable_order():
     seed = next(item for item in DEFAULT_TEMPLATES if item.event_key == "student_absent" and item.locale == "en")
-    text = render_message(seed.sms_text, seed.variables, {"student_name": "Aarav", "date": "11 Oct", "school_name": "Sybeez"})
+    text = render_message(seed.body_text, seed.variables, {"student_name": "Aarav", "date": "11 Oct", "school_name": "Sybeez"})
     assert text == "Aarav was absent on 11 Oct. - Sybeez"
     components = template_components(seed.variables, {"student_name": "Aarav", "date": "11 Oct", "school_name": "Sybeez"})
     assert components == [
@@ -103,29 +101,13 @@ def test_parents_receive_student_events_and_staff_receive_payroll():
     assert recipient_ids("announcement", parent_ids=parents, staff_ids=staff, explicit_ids=["both"]) == ["both"]
 
 
-def test_opt_out_blocks_a_channel_even_when_the_user_opted_in():
-    channel, fallback = choose_channel(
-        whatsapp_school=True,
-        sms_school=True,
-        whatsapp_opt_in=True,
-        sms_opt_in=True,
-        whatsapp_opt_out=True,
-        sms_opt_out=False,
-        has_phone=True,
-    )
-    assert channel == "SMS"
-    assert fallback is False
-    channel, fallback = choose_channel(
-        whatsapp_school=True,
-        sms_school=True,
-        whatsapp_opt_in=True,
-        sms_opt_in=True,
-        whatsapp_opt_out=False,
-        sms_opt_out=True,
-        has_phone=True,
-    )
-    assert channel == "WHATSAPP"
-    assert fallback is False
+def test_whatsapp_needs_school_switch_parent_opt_in_no_stop_and_a_phone():
+    base = dict(whatsapp_school=True, whatsapp_opt_in=True, whatsapp_opt_out=False, has_phone=True)
+    assert choose_channel(**base) == "WHATSAPP"
+    assert choose_channel(**{**base, "whatsapp_opt_out": True}) is None
+    assert choose_channel(**{**base, "whatsapp_opt_in": False}) is None
+    assert choose_channel(**{**base, "whatsapp_school": False}) is None
+    assert choose_channel(**{**base, "has_phone": False}) is None
     assert is_opt_out_keyword(" stop ")
     assert is_opt_out_keyword("OPT OUT")
     assert not is_opt_out_keyword("hello")
@@ -194,20 +176,6 @@ def test_webhook_signature_and_status_transitions():
     assert [item.status for item in statuses] == ["DELIVERED", "FAILED"]
     assert statuses[1].error_code == "131026"
     assert inbound[0].opt_out is True
-    updates = parse_msg91_webhook({"requestId": "req-1", "status": "DELIVERED", "number": "919876543210"})
-    assert updates[0].status == "DELIVERED"
-    assert updates[0].provider_message_id == "req-1"
-
-
-def test_sms_fallback_when_whatsapp_fails():
-    assert should_sms_fallback(channel="WHATSAPP", status="FAILED", sms_fallback_allowed=True, already_fallback=False)
-    assert not should_sms_fallback(channel="WHATSAPP", status="FAILED", sms_fallback_allowed=False, already_fallback=False)
-    assert not should_sms_fallback(channel="WHATSAPP", status="FAILED", sms_fallback_allowed=True, already_fallback=True)
-    assert not should_sms_fallback(channel="SMS", status="FAILED", sms_fallback_allowed=True, already_fallback=False)
-    assert not should_sms_fallback(
-        channel="WHATSAPP", status="FAILED", sms_fallback_allowed=True, already_fallback=False, error_code="rate_limited"
-    )
-    assert not should_sms_fallback(channel="WHATSAPP", status="SENT", sms_fallback_allowed=True, already_fallback=False)
 
 
 def test_service_window_and_phone_mask():
@@ -290,26 +258,18 @@ def test_missing_credentials_stay_mock_with_admin_status():
 
     blank = SimpleNamespace(
         whatsapp_provider="meta_cloud",
-        sms_provider="msg91",
         whatsapp_cloud_access_token="",
         whatsapp_cloud_phone_number_id="",
         whatsapp_business_account_id="",
         whatsapp_app_secret="",
         whatsapp_verify_token="",
-        msg91_auth_key="",
-        msg91_sender_id="",
-        msg91_template_id="",
-        msg91_webhook_token="",
     )
     status = provider_status(blank)
     assert status["whatsapp_status"] == WHATSAPP_NOT_CONFIGURED
     assert whatsapp_admin_status(blank) == "WhatsApp not configured"
-    assert status["sms_status"] == "SMS not configured"
     assert effective_whatsapp_provider(blank) == "mock"
-    assert effective_sms_provider(blank) == "mock"
     assert "WHATSAPP_ACCESS_TOKEN" in status["whatsapp_missing"]
     assert "WHATSAPP_BUSINESS_ACCOUNT_ID" in status["whatsapp_missing"]
-    assert "MSG91_AUTH_KEY" in status["sms_missing"]
 
     ready = SimpleNamespace(
         **{
@@ -319,13 +279,10 @@ def test_missing_credentials_stay_mock_with_admin_status():
             "whatsapp_business_account_id": "waba",
             "whatsapp_app_secret": "secret",
             "whatsapp_verify_token": "verify",
-            "msg91_auth_key": "auth",
-            "msg91_sender_id": "SYBEEZ",
         }
     )
     assert provider_status(ready)["whatsapp_status"] == "configured"
     assert effective_whatsapp_provider(ready) == "meta_cloud"
-    assert effective_sms_provider(ready) == "msg91"
 
 
 def test_template_submit_skips_meta_when_unconfigured():
@@ -375,7 +332,6 @@ def test_worker_downgrades_unconfigured_provider_to_mock():
         )
         == "mock"
     )
-    assert providers.resolve_outbound_provider("SMS", "msg91", msg91_auth_key="", msg91_sender_id="") == "mock"
     assert (
         providers.resolve_outbound_provider(
             "WHATSAPP",
@@ -385,13 +341,9 @@ def test_worker_downgrades_unconfigured_provider_to_mock():
         )
         == "meta_cloud"
     )
-    assert (
-        providers.resolve_outbound_provider("SMS", "msg91", msg91_auth_key="auth", msg91_sender_id="SYBEEZ")
-        == "msg91"
-    )
 
 
-def test_settings_read_whatsapp_and_msg91_from_env(monkeypatch):
+def test_settings_read_whatsapp_from_env(monkeypatch):
     from src.core.config import Settings, get_settings
 
     monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", "token-from-env")
@@ -399,10 +351,6 @@ def test_settings_read_whatsapp_and_msg91_from_env(monkeypatch):
     monkeypatch.setenv("WHATSAPP_BUSINESS_ACCOUNT_ID", "waba-from-env")
     monkeypatch.setenv("WHATSAPP_APP_SECRET", "secret-from-env")
     monkeypatch.setenv("WHATSAPP_VERIFY_TOKEN", "verify-from-env")
-    monkeypatch.setenv("MSG91_AUTH_KEY", "auth-from-env")
-    monkeypatch.setenv("MSG91_SENDER_ID", "SYBEEZ")
-    monkeypatch.setenv("MSG91_TEMPLATE_ID", "dlt-1")
-    monkeypatch.setenv("MSG91_WEBHOOK_TOKEN", "hook-from-env")
     monkeypatch.delenv("ALERTS_SECRETS_ARN", raising=False)
     monkeypatch.delenv("WHATSAPP_SECRETS_ARN", raising=False)
     get_settings.cache_clear()
@@ -412,10 +360,6 @@ def test_settings_read_whatsapp_and_msg91_from_env(monkeypatch):
     assert settings.whatsapp_business_account_id == "waba-from-env"
     assert settings.whatsapp_app_secret == "secret-from-env"
     assert settings.whatsapp_verify_token == "verify-from-env"
-    assert settings.msg91_auth_key == "auth-from-env"
-    assert settings.msg91_sender_id == "SYBEEZ"
-    assert settings.msg91_template_id == "dlt-1"
-    assert settings.msg91_webhook_token == "hook-from-env"
     assert provider_status(settings)["whatsapp_status"] == "configured"
     get_settings.cache_clear()
 
@@ -425,12 +369,10 @@ def test_docs_list_every_template_and_dlt_text():
     for seed in DEFAULT_TEMPLATES:
         assert seed.whatsapp_template_name in text
         assert seed.body_text in text
-        assert seed.sms_text in text
     assert "DeliveryLogView" in text
     assert "/api/v1/alerts/deliveries" in text
     assert "WHATSAPP_ACCESS_TOKEN" in text
     assert "WHATSAPP_BUSINESS_ACCOUNT_ID" in text
-    assert "MSG91_AUTH_KEY" in text
     assert "WhatsApp not configured" in text
     assert "Sybis Technology Private Limited" in text
     assert "coexistence" in text

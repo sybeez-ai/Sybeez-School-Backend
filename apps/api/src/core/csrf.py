@@ -24,7 +24,6 @@ _ENTRY = {
     "/api/v1/auth/cognito/google/start",
     "/api/v1/auth/cognito/result",
     "/api/v1/webhooks/whatsapp/meta",
-    "/api/v1/webhooks/sms/msg91",
 }
 
 

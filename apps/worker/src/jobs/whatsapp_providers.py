@@ -132,18 +132,13 @@ def resolve_outbound_provider(
     *,
     access_token: str = "",
     phone_number_id: str = "",
-    msg91_auth_key: str = "",
-    msg91_sender_id: str = "",
 ) -> str:
-    """Use mock when Meta or MSG91 credentials are blank. Does not raise."""
+    """Use mock when Meta credentials are blank. Does not raise."""
     key = (provider or "mock").strip().lower() or "mock"
     if channel == "WHATSAPP" and key in {"meta", "meta_cloud", "whatsapp_cloud"}:
         if not (access_token or "").strip() or not (phone_number_id or "").strip():
             return "mock"
         return "meta_cloud"
-    if channel == "SMS" and key == "msg91":
-        if not (msg91_auth_key or "").strip() or not (msg91_sender_id or "").strip():
-            return "mock"
     return key
 
 

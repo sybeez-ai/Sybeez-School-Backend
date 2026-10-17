@@ -40,10 +40,8 @@ from src.modules.alerts.service import enable_rls_bypass, record_audit, resend_d
 from src.modules.alerts.webhooks import (
     loads_json,
     parse_meta_webhook,
-    parse_msg91_webhook,
     verify_challenge,
     verify_meta_signature,
-    verify_msg91_token,
 )
 from src.shared.enums import UserRole
 
@@ -84,7 +82,6 @@ async def _settings_row(db: AsyncSession, school_id: UUID) -> SchoolAlertSetting
         row = SchoolAlertSettings(
             school_id=school_id,
             whatsapp_enabled=False,
-            sms_enabled=False,
             quiet_hours_start=time(21, 0),
             quiet_hours_end=time(7, 0),
             timezone="Asia/Kolkata",
@@ -99,7 +96,6 @@ def _settings_out(row: SchoolAlertSettings) -> AlertSettingsOut:
     return AlertSettingsOut(
         school_id=row.school_id,
         whatsapp_enabled=row.whatsapp_enabled,
-        sms_enabled=row.sms_enabled,
         quiet_hours_start=_hhmm(row.quiet_hours_start),
         quiet_hours_end=_hhmm(row.quiet_hours_end),
         timezone=row.timezone,
@@ -117,8 +113,6 @@ def _template_out(row: AlertMessageTemplate, *, source: str) -> TemplateOut:
         whatsapp_template_name=row.whatsapp_template_name,
         language_code=row.language_code,
         variables=list(row.variables or []),
-        sms_dlt_template_id=row.sms_dlt_template_id,
-        sms_text=row.sms_text,
         body_text=row.body_text,
         category=row.category,
         active=row.active,
@@ -157,28 +151,6 @@ async def meta_webhook(request: Request, db: Db):
     raw_text = raw.decode("utf-8", errors="replace")
     for item in inbound:
         await store_inbound(db, item, channel="WHATSAPP", raw=raw_text)
-    return {"ok": True}
-
-
-@public
-@webhook_router.post("/sms/msg91")
-async def msg91_webhook(
-    request: Request,
-    db: Db,
-    x_msg91_token: Annotated[str | None, Header(alias="X-Msg91-Token")] = None,
-):
-    settings = get_settings()
-    if settings.app_env.lower() == "production" and not settings.msg91_webhook_token:
-        raise ForbiddenError("MSG91_WEBHOOK_TOKEN is required in production")
-    if settings.msg91_webhook_token and not verify_msg91_token(x_msg91_token, settings.msg91_webhook_token):
-        raise UnauthorizedError("Invalid MSG91 webhook token")
-    raw = await request.body()
-    await enable_rls_bypass(db)
-    payload = loads_json(raw)
-    from src.modules.alerts.service import apply_provider_status
-
-    for item in parse_msg91_webhook(payload):
-        await apply_provider_status(db, item, channel="SMS")
     return {"ok": True}
 
 
@@ -421,8 +393,8 @@ async def create_template(
         whatsapp_template_name=body.whatsapp_template_name,
         language_code=body.language_code,
         variables=body.variables,
-        sms_dlt_template_id=body.sms_dlt_template_id,
-        sms_text=body.sms_text,
+        sms_dlt_template_id="",
+        sms_text="",
         body_text=body.body_text,
         category="UTILITY",
         active=body.active,
@@ -476,8 +448,8 @@ async def update_template(
                 whatsapp_template_name=row.whatsapp_template_name,
                 language_code=row.language_code,
                 variables=list(row.variables or []),
-                sms_dlt_template_id=row.sms_dlt_template_id,
-                sms_text=row.sms_text,
+                sms_dlt_template_id="",
+                sms_text="",
                 body_text=row.body_text,
                 category=row.category,
                 active=row.active,

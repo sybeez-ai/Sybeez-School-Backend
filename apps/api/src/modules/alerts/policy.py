@@ -50,43 +50,15 @@ def recipient_ids(
 def choose_channel(
     *,
     whatsapp_school: bool,
-    sms_school: bool,
     whatsapp_opt_in: bool,
-    sms_opt_in: bool,
     whatsapp_opt_out: bool,
-    sms_opt_out: bool,
     has_phone: bool,
-) -> tuple[str | None, bool]:
-    """Return (channel, sms_fallback_allowed).
-
-    WhatsApp is preferred when the school and the user both allow it and the
-    number has not opted out. SMS is the direct channel only when WhatsApp is
-    not available. Fallback stays armed when SMS is still allowed.
-    """
-    if not has_phone:
-        return None, False
-    whatsapp = whatsapp_school and whatsapp_opt_in and not whatsapp_opt_out
-    sms = sms_school and sms_opt_in and not sms_opt_out
-    if whatsapp:
-        return "WHATSAPP", sms
-    if sms:
-        return "SMS", False
-    return None, False
-
-
-def should_sms_fallback(
-    *,
-    channel: str,
-    status: str,
-    sms_fallback_allowed: bool,
-    already_fallback: bool,
-    error_code: str | None = None,
-) -> bool:
-    if already_fallback or channel != "WHATSAPP" or status != "FAILED":
-        return False
-    if (error_code or "") == "rate_limited":
-        return False
-    return sms_fallback_allowed
+) -> str | None:
+    """WhatsApp (Meta Cloud API) is the only outbound channel. It needs the school switch, the
+    parent's own opt-in, no STOP opt-out, and a phone number."""
+    if has_phone and whatsapp_school and whatsapp_opt_in and not whatsapp_opt_out:
+        return "WHATSAPP"
+    return None
 
 
 def is_quiet_hours(now: datetime, start: time, end: time, tz_name: str = "Asia/Kolkata") -> bool:

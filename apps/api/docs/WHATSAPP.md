@@ -1,10 +1,10 @@
-# WhatsApp alerts and SMS fallback
+# WhatsApp alerts (Meta Cloud API)
 
-Sybeez sends business-initiated WhatsApp messages with Meta-approved UTILITY templates. SMS through MSG91 is the fallback when WhatsApp fails or the number is not on WhatsApp, and it is the direct channel when the user opted into SMS only. Free text is used only inside the 24-hour customer service window after the parent or staff member messages the school number.
+Sybeez sends business-initiated WhatsApp messages with Meta-approved UTILITY templates through the WhatsApp Business Cloud API. WhatsApp is the only outbound channel: SMS and MSG91 were removed. Parents opt in themselves in the parent portal and choose their language; the alert goes out in that language. Free text is used only inside the 24-hour customer service window after the parent or staff member messages the school number.
 
-Platform default templates are seeded for locales `en`, `ta`, and `hi`. A school can override a template. Both channels stay off until a school admin enables them.
+Platform default templates are seeded for ten locales: `en`, `hi`, `ta`, `te`, `kn`, `ml`, `mr`, `bn`, `gu`, `pa` (notices and progress updates; the other events keep `en`, `hi`, `ta`). For notices the approved template is a language-tagged shell `{{1}}: {{2}} - {{3}}`; the translated title and preview travel in the variables. A school can override a template. WhatsApp stays off until a school admin enables it, Meta credentials exist, and the parent has opted in.
 
-Silver already has a dedicated number, a WhatsApp Business account on the mobile app, a Meta developer account, and a created app. Meta Business verification is still pending, so there is no access token and no app secret yet. The API and the worker start cleanly in that state. `GET /api/v1/alerts/status` returns `whatsapp_status: "WhatsApp not configured"` and the sender stays on the mock provider. Nothing is posted to Meta or MSG91, and a missing secret does not crash the process.
+Silver already has a dedicated number, a WhatsApp Business account on the mobile app, a Meta developer account, and a created app. Meta Business verification is still pending, so there is no access token and no app secret yet. The API and the worker start cleanly in that state. `GET /api/v1/alerts/status` returns `whatsapp_status: "WhatsApp not configured"` and the sender stays on the mock provider. Nothing is posted to Meta, and a missing secret does not crash the process.
 
 ## Where credentials are read
 
@@ -17,16 +17,11 @@ Every credential is read from the process environment, or from one JSON secret i
 | WhatsApp Business Account id | `WHATSAPP_BUSINESS_ACCOUNT_ID` |
 | Meta app secret | `WHATSAPP_APP_SECRET` |
 | Webhook verify token | `WHATSAPP_VERIFY_TOKEN` |
-| MSG91 auth key | `MSG91_AUTH_KEY` |
-| MSG91 sender id | `MSG91_SENDER_ID` |
-| MSG91 default template id | `MSG91_TEMPLATE_ID` |
-| MSG91 webhook token | `MSG91_WEBHOOK_TOKEN` |
 
-`whatsapp_status` stays `WhatsApp not configured` until the access token, phone number id, business account id, app secret, and verify token are all present. `sms_status` stays `SMS not configured` until `MSG91_AUTH_KEY` and `MSG91_SENDER_ID` are present. Setting `WHATSAPP_PROVIDER=meta_cloud` or `SMS_PROVIDER=msg91` before those values exist still sends through mock. After the values exist, set:
+`whatsapp_status` stays `WhatsApp not configured` until the access token, phone number id, business account id, app secret, and verify token are all present.  Setting `WHATSAPP_PROVIDER=meta_cloud` before those values exist still sends through mock. After the values exist, set:
 
 ```
 WHATSAPP_PROVIDER=meta_cloud
-SMS_PROVIDER=msg91
 ```
 
 `gupshup` and `twilio` are stub adapters and do not send.
@@ -44,10 +39,6 @@ The dedicated number is on the WhatsApp Business mobile app today. The Cloud API
 
 After either step, copy the Cloud API phone number id into `WHATSAPP_PHONE_NUMBER_ID` and the WhatsApp Business Account id into `WHATSAPP_BUSINESS_ACCOUNT_ID`.
 
-## SMS is a separate MSG91 account
-
-WhatsApp credentials do not send SMS. SMS needs its own MSG91 account. On the DLT portal, register the principal entity (Sybis Technology Private Limited), a six-character sender id, and each SMS text in the template section below. Copy each returned DLT template id onto `sms_dlt_template_id`. `{#var#}` is one variable, in the order listed on that template.
-
 ## What to give the platform after approval
 
 | Approval | What to give the platform | Environment variable |
@@ -59,17 +50,12 @@ WhatsApp credentials do not send SMS. SMS needs its own MSG91 account. On the DL
 | App secret | The Meta app secret used to check `X-Hub-Signature-256` | `WHATSAPP_APP_SECRET` |
 | Verify token | The string you type into the Meta webhook subscription | `WHATSAPP_VERIFY_TOKEN` |
 | Template approvals | Submit every JSON object below in category UTILITY. Wait until each name is approved before enabling WhatsApp for a school. Names must match exactly. | stored per template as `whatsapp_template_name` |
-| MSG91 auth key | Auth key for the Flow API, from the separate MSG91 account | `MSG91_AUTH_KEY` |
-| MSG91 sender id | Six-character DLT-approved header | `MSG91_SENDER_ID` |
-| DLT registration | Entity, sender id, and each SMS text registered. Copy the template id onto the row. | `sms_dlt_template_id` on each template |
-| MSG91 webhook token | Shared secret the MSG91 callback sends in `X-Msg91-Token` | `MSG91_WEBHOOK_TOKEN` |
 
-After the secrets are present, a school admin enables the channels with `PUT /api/v1/alerts/settings`. Quiet hours default to 21:00–07:00 Asia/Kolkata. Student absent and student late bypass quiet hours. Other alerts wait until 07:00. Users still need `whatsapp_enabled` or `sms_enabled` on their notification preference. `STOP` opts that phone out.
+After the secrets are present, a school admin enables WhatsApp with `PUT /api/v1/alerts/settings`. Quiet hours default to 21:00–07:00 Asia/Kolkata. Student absent and student late bypass quiet hours. Other alerts wait until 07:00. Parents still need to opt in (`parent_message_preferences.whatsapp_opt_in`, set from the parent portal). `STOP` opts that phone out.
 
 Webhook callback URLs:
 
 - `GET` and `POST /api/v1/webhooks/whatsapp/meta`
-- `POST /api/v1/webhooks/sms/msg91`
 
 ## Submitting templates
 
@@ -94,7 +80,7 @@ python scripts/submit_whatsapp_templates.py
 - Add the number with Cloud API migration or coexistence onboarding, as above.
 - In the Meta app, add the WhatsApp product. In Business settings, create a system user, assign this app and the WhatsApp account, and generate a permanent token with `whatsapp_business_messaging` and `whatsapp_business_management`.
 - Open WhatsApp Manager → Message templates → Create template.
-- Category: Utility. Name and language must match the JSON (`sybeez_{event}_{locale}`, language `en`, `hi`, or `ta`). Paste the BODY text. Enter the sample row from `example.body_text`. Submit each locale.
+- Category: Utility. Name and language must match the JSON (`sybeez_{event}_{locale}`, language `en`, `hi`, `ta`, `te`, `kn`, `ml`, `mr`, `bn`, `gu`, or `pa`). Paste the BODY text. Enter the sample row from `example.body_text`. Submit each locale.
 - Wait until each template is approved before a school admin sets `whatsapp_enabled` to true.
 - App settings → Basic → App secret becomes `WHATSAPP_APP_SECRET`.
 - WhatsApp → Configuration → Webhook: callback `https://<api-host>/api/v1/webhooks/whatsapp/meta`, verify token equal to `WHATSAPP_VERIFY_TOKEN`, subscribe to `messages`.
@@ -108,9 +94,9 @@ The frontend `DeliveryLogView` should call these school-admin routes. Session ro
 | GET | `/api/v1/alerts/deliveries` | List. Query: `channel`, `status`, `event` (event key or notification type), `date_from`, `date_to`, `recipient` (user id or phone fragment), `limit`, `offset`. Response `{ items, total }`. |
 | GET | `/api/v1/alerts/deliveries/{id}` | One delivery, including `sent_at`, `delivered_at`, `read_at`, `failed_at`, `error_code`, `template_name`. |
 | POST | `/api/v1/alerts/deliveries/{id}/resend` | Re-queue a `FAILED` delivery. |
-| GET | `/api/v1/alerts/status` | `whatsapp_status` is `WhatsApp not configured` or `configured`. Also `sms_status`, effective providers, and the env names still blank. |
+| GET | `/api/v1/alerts/status` | `whatsapp_status` is `WhatsApp not configured` or `configured`. Also the effective provider and the env names still blank. |
 | GET | `/api/v1/alerts/settings` | Per-school enable flags, quiet hours, timezone, default locale, plus the same provider status fields. |
-| PUT | `/api/v1/alerts/settings` | Update any of `whatsapp_enabled`, `sms_enabled`, `quiet_hours_start`, `quiet_hours_end` (`HH:MM`), `timezone`, `default_locale`. |
+| PUT | `/api/v1/alerts/settings` | Update any of `whatsapp_enabled`, `quiet_hours_start`, `quiet_hours_end` (`HH:MM`), `timezone`, `default_locale`. |
 | GET | `/api/v1/alerts/templates` | Effective templates. School rows override platform defaults. Query: `event_key`, `locale`. |
 | POST | `/api/v1/alerts/templates` | Create a school-specific template. |
 | POST | `/api/v1/alerts/templates/submit` | Submit active templates to the WABA `message_templates` API. `dry_run=true` returns the JSON. Missing token or business account id returns status `WhatsApp not configured`. |
@@ -122,13 +108,13 @@ Status values: `PENDING`, `SCHEDULED`, `SENT`, `DELIVERED`, `READ`, `FAILED`.
 
 ## Behaviour
 
-- Parents receive student absent, student late, weekly attendance, fee due, fee overdue, and payment receipt. Payroll staff receive pay-run approved. The employee receives payslip published, LOP update, and staff leave approved. Student leave approved goes to parents. Announcements go to the announcement audience.
-- WhatsApp is sent first when the school and the user allow it. SMS is queued only when WhatsApp is not available, or after a WhatsApp send fails (including Meta errors such as 131026, not a WhatsApp user).
+- Parents receive student progress updates, student absent, student late, weekly attendance, fee due, fee overdue, and payment receipt. Payroll staff receive pay-run approved. The employee receives payslip published, LOP update, and staff leave approved. Student leave approved goes to parents. Announcements go to the parents of the announcement's class (or all parents for a school-wide notice). Progress updates go to that student's parents.
+- WhatsApp is sent when the school has it on, Meta credentials exist, the parent opted in, and the number has not sent STOP. There is no SMS fallback. A failed send (including Meta errors such as 131026, not a WhatsApp user) stays `FAILED` and can be resent from the delivery log.
 - Duplicate sends with the same school, channel, and dedupe key are skipped unless the earlier row failed.
 - Inbound WhatsApp messages are stored. `STOP`, `STOPALL`, `UNSUBSCRIBE`, `CANCEL`, `END`, `QUIT`, and `OPT OUT` record an opt-out and turn the preference off.
 - Phone numbers are masked in logs and in `alert_audit_logs`. New tables use forced row-level security on `school_id`. Platform default templates (`school_id` null) are readable by the school. Global opt-outs are readable so a STOP is honored.
-- The worker consumes the Redis list `sybeez:jobs`. `JOBS_BACKEND=sqs` with `JOBS_SQS_QUEUE_URL` sends and polls SQS instead. Provider rate limits default to 60 WhatsApp and 100 SMS messages per minute (`WHATSAPP_RATE_LIMIT_PER_MINUTE`, `SMS_RATE_LIMIT_PER_MINUTE`).
-- A job tagged `meta_cloud` or `msg91` is sent as mock when the matching credentials are blank. The worker logs `WhatsApp not configured` or `SMS not configured` and does not call Graph or MSG91.
+- The worker consumes the Redis list `sybeez:jobs`. `JOBS_BACKEND=sqs` with `JOBS_SQS_QUEUE_URL` sends and polls SQS instead. The provider rate limit defaults to 60 WhatsApp messages per minute (`WHATSAPP_RATE_LIMIT_PER_MINUTE`).
+- A job tagged `meta_cloud` is sent as mock when the credentials are blank. The worker logs `WhatsApp not configured` and does not call Graph.
 - Scheduled quiet-hour rows are released by `POST /internal/v1/alerts/release-due`. Weekly summaries are `POST /internal/v1/attendance/{school_id}/digests/weekly/run`.
 
 ## Meta template JSON
@@ -140,12 +126,6 @@ Submit each object to the WhatsApp message template API. Category is UTILITY. Do
 A parent is told a child was marked absent.
 
 Locale `en`. Variables, in order: student_name, date, school_name.
-
-DLT text:
-
-```
-{#var#} was absent on {#var#}. - {#var#}
-```
 
 ```json
 {
@@ -172,12 +152,6 @@ DLT text:
 
 Locale `hi`. Variables, in order: student_name, date, school_name.
 
-DLT text:
-
-```
-{#var#} {#var#} को अनुपस्थित रहे। - {#var#}
-```
-
 ```json
 {
   "name": "sybeez_student_absent_hi",
@@ -202,12 +176,6 @@ DLT text:
 ```
 
 Locale `ta`. Variables, in order: student_name, date, school_name.
-
-DLT text:
-
-```
-{#var#} {#var#} அன்று பள்ளிக்கு வரவில்லை. - {#var#}
-```
 
 ```json
 {
@@ -238,12 +206,6 @@ A parent is told a child arrived late.
 
 Locale `en`. Variables, in order: student_name, date, school_name.
 
-DLT text:
-
-```
-{#var#} arrived late on {#var#}. - {#var#}
-```
-
 ```json
 {
   "name": "sybeez_student_late_en",
@@ -269,12 +231,6 @@ DLT text:
 
 Locale `hi`. Variables, in order: student_name, date, school_name.
 
-DLT text:
-
-```
-{#var#} {#var#} को देर से पहुंचे। - {#var#}
-```
-
 ```json
 {
   "name": "sybeez_student_late_hi",
@@ -299,12 +255,6 @@ DLT text:
 ```
 
 Locale `ta`. Variables, in order: student_name, date, school_name.
-
-DLT text:
-
-```
-{#var#} {#var#} அன்று தாமதமாக வந்தார். - {#var#}
-```
 
 ```json
 {
@@ -335,12 +285,6 @@ A parent receives the week's present, absent, and late counts.
 
 Locale `en`. Variables, in order: student_name, week_label, present_days, absent_days, late_days, school_name.
 
-DLT text:
-
-```
-Weekly attendance for {#var#} ({#var#}): present {#var#}, absent {#var#}, late {#var#}. - {#var#}
-```
-
 ```json
 {
   "name": "sybeez_attendance_weekly_summary_en",
@@ -369,12 +313,6 @@ Weekly attendance for {#var#} ({#var#}): present {#var#}, absent {#var#}, late {
 
 Locale `hi`. Variables, in order: student_name, week_label, present_days, absent_days, late_days, school_name.
 
-DLT text:
-
-```
-{#var#} की साप्ताहिक उपस्थिति ({#var#}): उपस्थित {#var#}, अनुपस्थित {#var#}, विलंब {#var#}। - {#var#}
-```
-
 ```json
 {
   "name": "sybeez_attendance_weekly_summary_hi",
@@ -402,12 +340,6 @@ DLT text:
 ```
 
 Locale `ta`. Variables, in order: student_name, week_label, present_days, absent_days, late_days, school_name.
-
-DLT text:
-
-```
-{#var#} வார வருகை ({#var#}): வந்த நாட்கள் {#var#}, வராத நாட்கள் {#var#}, தாமத நாட்கள் {#var#}. - {#var#}
-```
 
 ```json
 {
@@ -441,12 +373,6 @@ A parent is reminded a fee is due.
 
 Locale `en`. Variables, in order: student_name, amount, due_date, invoice_number, school_name.
 
-DLT text:
-
-```
-{#var#} has a fee of {#var#} due on {#var#}. Invoice {#var#}. - {#var#}
-```
-
 ```json
 {
   "name": "sybeez_fee_due_en",
@@ -474,12 +400,6 @@ DLT text:
 
 Locale `hi`. Variables, in order: student_name, amount, due_date, invoice_number, school_name.
 
-DLT text:
-
-```
-{#var#} की फीस {#var#} {#var#} को देय है। चालान {#var#}। - {#var#}
-```
-
 ```json
 {
   "name": "sybeez_fee_due_hi",
@@ -506,12 +426,6 @@ DLT text:
 ```
 
 Locale `ta`. Variables, in order: student_name, amount, due_date, invoice_number, school_name.
-
-DLT text:
-
-```
-{#var#} அவர்களின் கட்டணம் {#var#} {#var#} அன்று செலுத்த வேண்டும். இன்வாய்ஸ் {#var#}. - {#var#}
-```
 
 ```json
 {
@@ -544,12 +458,6 @@ A parent is told a fee is overdue.
 
 Locale `en`. Variables, in order: student_name, amount, due_date, invoice_number, school_name.
 
-DLT text:
-
-```
-{#var#} has a fee of {#var#} overdue since {#var#}. Invoice {#var#}. - {#var#}
-```
-
 ```json
 {
   "name": "sybeez_fee_overdue_en",
@@ -577,12 +485,6 @@ DLT text:
 
 Locale `hi`. Variables, in order: student_name, amount, due_date, invoice_number, school_name.
 
-DLT text:
-
-```
-{#var#} की फीस {#var#} {#var#} से अतिदेय है। चालान {#var#}। - {#var#}
-```
-
 ```json
 {
   "name": "sybeez_fee_overdue_hi",
@@ -609,12 +511,6 @@ DLT text:
 ```
 
 Locale `ta`. Variables, in order: student_name, amount, due_date, invoice_number, school_name.
-
-DLT text:
-
-```
-{#var#} அவர்களின் கட்டணம் {#var#} {#var#} முதல் நிலுவையில் உள்ளது. இன்வாய்ஸ் {#var#}. - {#var#}
-```
 
 ```json
 {
@@ -647,12 +543,6 @@ A parent receives a payment receipt.
 
 Locale `en`. Variables, in order: student_name, amount, receipt_number, paid_on, school_name.
 
-DLT text:
-
-```
-{#var#}: payment of {#var#} received. Receipt {#var#} on {#var#}. - {#var#}
-```
-
 ```json
 {
   "name": "sybeez_payment_receipt_en",
@@ -680,12 +570,6 @@ DLT text:
 
 Locale `hi`. Variables, in order: student_name, amount, receipt_number, paid_on, school_name.
 
-DLT text:
-
-```
-{#var#} के लिए {#var#} का भुगतान मिला। रसीद {#var#}, दिनांक {#var#}। - {#var#}
-```
-
 ```json
 {
   "name": "sybeez_payment_receipt_hi",
@@ -712,12 +596,6 @@ DLT text:
 ```
 
 Locale `ta`. Variables, in order: student_name, amount, receipt_number, paid_on, school_name.
-
-DLT text:
-
-```
-{#var#} அவர்களுக்கான {#var#} செலுத்தப்பட்டது. ரசீது {#var#}, தேதி {#var#}. - {#var#}
-```
 
 ```json
 {
@@ -750,12 +628,6 @@ An employee is told their payslip is published.
 
 Locale `en`. Variables, in order: employee_name, period_label, net_pay, school_name.
 
-DLT text:
-
-```
-{#var#}, your payslip for {#var#} is published. Net pay INR {#var#}. - {#var#}
-```
-
 ```json
 {
   "name": "sybeez_payslip_published_en",
@@ -782,12 +654,6 @@ DLT text:
 
 Locale `hi`. Variables, in order: employee_name, period_label, net_pay, school_name.
 
-DLT text:
-
-```
-{#var#}, {#var#} की वेतन पर्ची जारी हो गई है। शुद्ध वेतन INR {#var#}। - {#var#}
-```
-
 ```json
 {
   "name": "sybeez_payslip_published_hi",
@@ -813,12 +679,6 @@ DLT text:
 ```
 
 Locale `ta`. Variables, in order: employee_name, period_label, net_pay, school_name.
-
-DLT text:
-
-```
-{#var#}, {#var#} சம்பள சீட்டு வெளியிடப்பட்டது. நிகர ஊதியம் INR {#var#}. - {#var#}
-```
 
 ```json
 {
@@ -850,12 +710,6 @@ Payroll staff are told a pay run was approved.
 
 Locale `en`. Variables, in order: period_label, employee_count, school_name.
 
-DLT text:
-
-```
-Pay run {#var#} is approved for {#var#} employees. - {#var#}
-```
-
 ```json
 {
   "name": "sybeez_pay_run_approved_en",
@@ -881,12 +735,6 @@ Pay run {#var#} is approved for {#var#} employees. - {#var#}
 
 Locale `hi`. Variables, in order: period_label, employee_count, school_name.
 
-DLT text:
-
-```
-वेतन रन {#var#} {#var#} कर्मचारियों के लिए स्वीकृत है। - {#var#}
-```
-
 ```json
 {
   "name": "sybeez_pay_run_approved_hi",
@@ -911,12 +759,6 @@ DLT text:
 ```
 
 Locale `ta`. Variables, in order: period_label, employee_count, school_name.
-
-DLT text:
-
-```
-{#var#} சம்பள ஓட்டம் {#var#} ஊழியர்களுக்கு அங்கீகரிக்கப்பட்டது. - {#var#}
-```
 
 ```json
 {
@@ -947,12 +789,6 @@ An employee is told their loss-of-pay days.
 
 Locale `en`. Variables, in order: employee_name, period_label, lop_days, school_name.
 
-DLT text:
-
-```
-{#var#}, loss of pay for {#var#} is {#var#} day(s). - {#var#}
-```
-
 ```json
 {
   "name": "sybeez_lop_update_en",
@@ -979,12 +815,6 @@ DLT text:
 
 Locale `hi`. Variables, in order: employee_name, period_label, lop_days, school_name.
 
-DLT text:
-
-```
-{#var#}, {#var#} के लिए वेतन कटौती {#var#} दिन है। - {#var#}
-```
-
 ```json
 {
   "name": "sybeez_lop_update_hi",
@@ -1010,12 +840,6 @@ DLT text:
 ```
 
 Locale `ta`. Variables, in order: employee_name, period_label, lop_days, school_name.
-
-DLT text:
-
-```
-{#var#}, {#var#} காலத்திற்கான ஊதிய இழப்பு {#var#} நாட்கள். - {#var#}
-```
 
 ```json
 {
@@ -1047,12 +871,6 @@ An employee, or a parent for student leave, is told leave was approved.
 
 Locale `en`. Variables, in order: employee_name, leave_type, from_date, to_date, school_name.
 
-DLT text:
-
-```
-{#var#}, your {#var#} leave from {#var#} to {#var#} is approved. - {#var#}
-```
-
 ```json
 {
   "name": "sybeez_leave_approved_en",
@@ -1080,12 +898,6 @@ DLT text:
 
 Locale `hi`. Variables, in order: employee_name, leave_type, from_date, to_date, school_name.
 
-DLT text:
-
-```
-{#var#}, {#var#} से {#var#} तक की {#var#} छुट्टी स्वीकृत है। - {#var#}
-```
-
 ```json
 {
   "name": "sybeez_leave_approved_hi",
@@ -1112,12 +924,6 @@ DLT text:
 ```
 
 Locale `ta`. Variables, in order: employee_name, leave_type, from_date, to_date, school_name.
-
-DLT text:
-
-```
-{#var#}, {#var#} முதல் {#var#} வரையிலான {#var#} விடுப்பு அங்கீகரிக்கப்பட்டது. - {#var#}
-```
 
 ```json
 {
@@ -1150,12 +956,6 @@ A published announcement.
 
 Locale `en`. Variables, in order: title, preview, school_name.
 
-DLT text:
-
-```
-{#var#}: {#var#} - {#var#}
-```
-
 ```json
 {
   "name": "sybeez_announcement_en",
@@ -1180,12 +980,6 @@ DLT text:
 ```
 
 Locale `hi`. Variables, in order: title, preview, school_name.
-
-DLT text:
-
-```
-{#var#}: {#var#} - {#var#}
-```
 
 ```json
 {
@@ -1212,16 +1006,439 @@ DLT text:
 
 Locale `ta`. Variables, in order: title, preview, school_name.
 
-DLT text:
-
-```
-{#var#}: {#var#} - {#var#}
-```
-
 ```json
 {
   "name": "sybeez_announcement_ta",
   "language": "ta",
+  "category": "UTILITY",
+  "components": [
+    {
+      "type": "BODY",
+      "text": "{{1}}: {{2}} - {{3}}",
+      "example": {
+        "body_text": [
+          [
+            "School closed Friday",
+            "The campus is closed on 16 Oct for a holiday.",
+            "Sybeez Public School"
+          ]
+        ]
+      }
+    }
+  ]
+}
+```
+
+Locale `te`. Variables, in order: title, preview, school_name.
+
+```json
+{
+  "name": "sybeez_announcement_te",
+  "language": "te",
+  "category": "UTILITY",
+  "components": [
+    {
+      "type": "BODY",
+      "text": "{{1}}: {{2}} - {{3}}",
+      "example": {
+        "body_text": [
+          [
+            "School closed Friday",
+            "The campus is closed on 16 Oct for a holiday.",
+            "Sybeez Public School"
+          ]
+        ]
+      }
+    }
+  ]
+}
+```
+
+Locale `kn`. Variables, in order: title, preview, school_name.
+
+```json
+{
+  "name": "sybeez_announcement_kn",
+  "language": "kn",
+  "category": "UTILITY",
+  "components": [
+    {
+      "type": "BODY",
+      "text": "{{1}}: {{2}} - {{3}}",
+      "example": {
+        "body_text": [
+          [
+            "School closed Friday",
+            "The campus is closed on 16 Oct for a holiday.",
+            "Sybeez Public School"
+          ]
+        ]
+      }
+    }
+  ]
+}
+```
+
+Locale `ml`. Variables, in order: title, preview, school_name.
+
+```json
+{
+  "name": "sybeez_announcement_ml",
+  "language": "ml",
+  "category": "UTILITY",
+  "components": [
+    {
+      "type": "BODY",
+      "text": "{{1}}: {{2}} - {{3}}",
+      "example": {
+        "body_text": [
+          [
+            "School closed Friday",
+            "The campus is closed on 16 Oct for a holiday.",
+            "Sybeez Public School"
+          ]
+        ]
+      }
+    }
+  ]
+}
+```
+
+Locale `mr`. Variables, in order: title, preview, school_name.
+
+```json
+{
+  "name": "sybeez_announcement_mr",
+  "language": "mr",
+  "category": "UTILITY",
+  "components": [
+    {
+      "type": "BODY",
+      "text": "{{1}}: {{2}} - {{3}}",
+      "example": {
+        "body_text": [
+          [
+            "School closed Friday",
+            "The campus is closed on 16 Oct for a holiday.",
+            "Sybeez Public School"
+          ]
+        ]
+      }
+    }
+  ]
+}
+```
+
+Locale `bn`. Variables, in order: title, preview, school_name.
+
+```json
+{
+  "name": "sybeez_announcement_bn",
+  "language": "bn",
+  "category": "UTILITY",
+  "components": [
+    {
+      "type": "BODY",
+      "text": "{{1}}: {{2}} - {{3}}",
+      "example": {
+        "body_text": [
+          [
+            "School closed Friday",
+            "The campus is closed on 16 Oct for a holiday.",
+            "Sybeez Public School"
+          ]
+        ]
+      }
+    }
+  ]
+}
+```
+
+Locale `gu`. Variables, in order: title, preview, school_name.
+
+```json
+{
+  "name": "sybeez_announcement_gu",
+  "language": "gu",
+  "category": "UTILITY",
+  "components": [
+    {
+      "type": "BODY",
+      "text": "{{1}}: {{2}} - {{3}}",
+      "example": {
+        "body_text": [
+          [
+            "School closed Friday",
+            "The campus is closed on 16 Oct for a holiday.",
+            "Sybeez Public School"
+          ]
+        ]
+      }
+    }
+  ]
+}
+```
+
+Locale `pa`. Variables, in order: title, preview, school_name.
+
+```json
+{
+  "name": "sybeez_announcement_pa",
+  "language": "pa",
+  "category": "UTILITY",
+  "components": [
+    {
+      "type": "BODY",
+      "text": "{{1}}: {{2}} - {{3}}",
+      "example": {
+        "body_text": [
+          [
+            "School closed Friday",
+            "The campus is closed on 16 Oct for a holiday.",
+            "Sybeez Public School"
+          ]
+        ]
+      }
+    }
+  ]
+}
+```
+
+### progress_update
+
+A parent is told about their child's progress or results update from a teacher.
+
+Locale `en`. Variables, in order: title, preview, school_name.
+
+```json
+{
+  "name": "sybeez_progress_update_en",
+  "language": "en",
+  "category": "UTILITY",
+  "components": [
+    {
+      "type": "BODY",
+      "text": "{{1}}: {{2}} - {{3}}",
+      "example": {
+        "body_text": [
+          [
+            "School closed Friday",
+            "The campus is closed on 16 Oct for a holiday.",
+            "Sybeez Public School"
+          ]
+        ]
+      }
+    }
+  ]
+}
+```
+
+Locale `hi`. Variables, in order: title, preview, school_name.
+
+```json
+{
+  "name": "sybeez_progress_update_hi",
+  "language": "hi",
+  "category": "UTILITY",
+  "components": [
+    {
+      "type": "BODY",
+      "text": "{{1}}: {{2}} - {{3}}",
+      "example": {
+        "body_text": [
+          [
+            "School closed Friday",
+            "The campus is closed on 16 Oct for a holiday.",
+            "Sybeez Public School"
+          ]
+        ]
+      }
+    }
+  ]
+}
+```
+
+Locale `ta`. Variables, in order: title, preview, school_name.
+
+```json
+{
+  "name": "sybeez_progress_update_ta",
+  "language": "ta",
+  "category": "UTILITY",
+  "components": [
+    {
+      "type": "BODY",
+      "text": "{{1}}: {{2}} - {{3}}",
+      "example": {
+        "body_text": [
+          [
+            "School closed Friday",
+            "The campus is closed on 16 Oct for a holiday.",
+            "Sybeez Public School"
+          ]
+        ]
+      }
+    }
+  ]
+}
+```
+
+Locale `te`. Variables, in order: title, preview, school_name.
+
+```json
+{
+  "name": "sybeez_progress_update_te",
+  "language": "te",
+  "category": "UTILITY",
+  "components": [
+    {
+      "type": "BODY",
+      "text": "{{1}}: {{2}} - {{3}}",
+      "example": {
+        "body_text": [
+          [
+            "School closed Friday",
+            "The campus is closed on 16 Oct for a holiday.",
+            "Sybeez Public School"
+          ]
+        ]
+      }
+    }
+  ]
+}
+```
+
+Locale `kn`. Variables, in order: title, preview, school_name.
+
+```json
+{
+  "name": "sybeez_progress_update_kn",
+  "language": "kn",
+  "category": "UTILITY",
+  "components": [
+    {
+      "type": "BODY",
+      "text": "{{1}}: {{2}} - {{3}}",
+      "example": {
+        "body_text": [
+          [
+            "School closed Friday",
+            "The campus is closed on 16 Oct for a holiday.",
+            "Sybeez Public School"
+          ]
+        ]
+      }
+    }
+  ]
+}
+```
+
+Locale `ml`. Variables, in order: title, preview, school_name.
+
+```json
+{
+  "name": "sybeez_progress_update_ml",
+  "language": "ml",
+  "category": "UTILITY",
+  "components": [
+    {
+      "type": "BODY",
+      "text": "{{1}}: {{2}} - {{3}}",
+      "example": {
+        "body_text": [
+          [
+            "School closed Friday",
+            "The campus is closed on 16 Oct for a holiday.",
+            "Sybeez Public School"
+          ]
+        ]
+      }
+    }
+  ]
+}
+```
+
+Locale `mr`. Variables, in order: title, preview, school_name.
+
+```json
+{
+  "name": "sybeez_progress_update_mr",
+  "language": "mr",
+  "category": "UTILITY",
+  "components": [
+    {
+      "type": "BODY",
+      "text": "{{1}}: {{2}} - {{3}}",
+      "example": {
+        "body_text": [
+          [
+            "School closed Friday",
+            "The campus is closed on 16 Oct for a holiday.",
+            "Sybeez Public School"
+          ]
+        ]
+      }
+    }
+  ]
+}
+```
+
+Locale `bn`. Variables, in order: title, preview, school_name.
+
+```json
+{
+  "name": "sybeez_progress_update_bn",
+  "language": "bn",
+  "category": "UTILITY",
+  "components": [
+    {
+      "type": "BODY",
+      "text": "{{1}}: {{2}} - {{3}}",
+      "example": {
+        "body_text": [
+          [
+            "School closed Friday",
+            "The campus is closed on 16 Oct for a holiday.",
+            "Sybeez Public School"
+          ]
+        ]
+      }
+    }
+  ]
+}
+```
+
+Locale `gu`. Variables, in order: title, preview, school_name.
+
+```json
+{
+  "name": "sybeez_progress_update_gu",
+  "language": "gu",
+  "category": "UTILITY",
+  "components": [
+    {
+      "type": "BODY",
+      "text": "{{1}}: {{2}} - {{3}}",
+      "example": {
+        "body_text": [
+          [
+            "School closed Friday",
+            "The campus is closed on 16 Oct for a holiday.",
+            "Sybeez Public School"
+          ]
+        ]
+      }
+    }
+  ]
+}
+```
+
+Locale `pa`. Variables, in order: title, preview, school_name.
+
+```json
+{
+  "name": "sybeez_progress_update_pa",
+  "language": "pa",
   "category": "UTILITY",
   "components": [
     {

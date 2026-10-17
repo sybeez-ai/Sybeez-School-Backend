@@ -28,3 +28,24 @@ async def write_audit(
     db.add(row)
     await db.flush()
     return row
+
+
+async def write_scoped_audit(
+    db: AsyncSession,
+    *,
+    action: str,
+    resource_type: str,
+    resource_id: str | None,
+    message: str,
+    details: dict | None = None,
+) -> None:
+    """Audit as the signed-in user in their own school, for roles that cannot write audit_logs directly
+    (parents, students). The database function takes school and user from the session, not arguments."""
+    import json
+
+    from sqlalchemy import text
+
+    await db.execute(
+        text("SELECT app.log_audit(:a, :t, :i, :m, CAST(:d AS jsonb))"),
+        {"a": action, "t": resource_type, "i": resource_id, "m": message, "d": json.dumps(details or {}, default=str)},
+    )

@@ -93,6 +93,7 @@ class AnnouncementService:
             if next_class is None:
                 raise ForbiddenError("Teachers can only announce to their classes")
             await assert_teacher_class(self.db, user.id, school_id, next_class)
+        was_published = bool(row.is_published)
         if "is_published" in payload:
             published = bool(payload["is_published"])
             row.status = AnnouncementStatus.PUBLISHED.value if published else AnnouncementStatus.DRAFT.value
@@ -100,4 +101,9 @@ class AnnouncementService:
         for key, value in payload.items():
             setattr(row, key, value)
         await self.db.flush()
+        row.just_published = bool(row.is_published) and not was_published  # transient, not a column
+        # Keep cached translations' visibility flag in step; changed text is detected by hash.
+        from src.modules.parent_messages.service import ParentMessageService
+
+        await ParentMessageService(self.db).sync_published(school_id, "announcement", row.id, bool(row.is_published))
         return row
