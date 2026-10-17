@@ -51,6 +51,7 @@ from src.modules.online_tests.router import router as online_tests_router
 from src.modules.notifications.router import router as notifications_router
 from src.modules.parent_messages.router import router as parent_messages_router
 from src.modules.reading_buddy.router import router as reading_buddy_router
+from src.modules.school_ops.router import router as school_ops_router
 from src.modules.parents.router import router as parents_router
 from src.modules.personal_life.router import router as personal_life_router
 from src.modules.platform.router import router as platform_router
@@ -153,3 +154,4 @@ api_router.include_router(audit_router, prefix=API_V1_PREFIX)
 api_router.include_router(ai_reports_router, prefix=API_V1_PREFIX)
 api_router.include_router(parent_messages_router, prefix=API_V1_PREFIX)
 api_router.include_router(reading_buddy_router, prefix=API_V1_PREFIX)
+api_router.include_router(school_ops_router, prefix=API_V1_PREFIX)
