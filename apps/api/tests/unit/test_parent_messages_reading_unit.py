@@ -1,4 +1,4 @@
-"""Pure-logic checks for parent messages and the reading buddy, plus the 0066 RLS contract."""
+"""Pure-logic checks for parent messages and the reading buddy, plus the 0067 RLS contract."""
 
 import re
 from datetime import date
@@ -10,7 +10,7 @@ from src.modules.parent_messages.schemas import PreferenceUpdate
 from src.modules.parent_messages.service import preview_text, source_hash
 from src.modules.reading_buddy import scoring
 
-MIGRATION = Path(__file__).resolve().parents[2] / "src/db/migrations/versions/0066_parent_messages_reading_buddy.py"
+MIGRATION = Path(__file__).resolve().parents[2] / "src/db/migrations/versions/0067_parent_messages_reading_buddy.py"
 
 PASSAGE = "The cat sat on the mat. It is a big red cat."
 

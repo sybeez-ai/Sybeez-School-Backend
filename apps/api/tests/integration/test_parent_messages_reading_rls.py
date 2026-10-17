@@ -1,4 +1,4 @@
-"""Row-level security of the 0066 tables, exercised as the production role (sybeez_app)."""
+"""Row-level security of the 0067 tables, exercised as the production role (sybeez_app)."""
 
 from __future__ import annotations
 

@@ -1,7 +1,7 @@
 """Parent language + WhatsApp consent, cached notice translations, progress updates, reading buddy.
 
-Revision ID: 0066
-Revises: 0065
+Revision ID: 0067
+Revises: 0066
 Create Date: 2026-10-17
 
 Seven new tables, each with explicit, forced row-level security (no generic loop policy):
@@ -25,8 +25,8 @@ from uuid import uuid4
 from alembic import op
 from sqlalchemy import text
 
-revision: str = "0066"
-down_revision: Union[str, None] = "0065"
+revision: str = "0067"
+down_revision: Union[str, None] = "0066"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
