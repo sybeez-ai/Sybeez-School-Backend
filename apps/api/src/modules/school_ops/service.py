@@ -8,7 +8,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import func, literal_column, select
 
 from src.api.dependencies import CurrentUser
 from src.core.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationError
@@ -25,7 +25,7 @@ from src.db.models import (
     TimetableEntry,
     User,
 )
-from src.modules.access.audit import write_scoped_audit
+from src.modules.access.audit import write_audit
 from src.modules.school_ops.planning import Slot, rank_candidates
 
 
@@ -172,8 +172,10 @@ class SchoolOpsService:
             await self.db.flush()
         except Exception as exc:  # unique index: already covered
             raise ConflictError("This lesson already has a substitute") from exc
-        await write_scoped_audit(
+        await write_audit(
             self.db,
+            school_id=school_id,
+            actor_id=user.id,
             action="substitute.confirmed",
             resource_type="substitute_assignment",
             resource_id=str(row.id),
@@ -203,8 +205,10 @@ class SchoolOpsService:
             raise NotFoundError("Cover not found")
         row.status = "CANCELLED"
         row.cancelled_at = datetime.now(timezone.utc)
-        await write_scoped_audit(
+        await write_audit(
             self.db,
+            school_id=school_id,
+            actor_id=user.id,
             action="substitute.cancelled",
             resource_type="substitute_assignment",
             resource_id=str(row.id),
@@ -323,11 +327,12 @@ class SchoolOpsService:
         per_class: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
         for cid, status, n in rows:
             per_class[str(cid)][status] += n
+        week = func.date_trunc(literal_column("'week'"), Attendance.attended_on)  # literal: same expr in SELECT and GROUP BY
         weekly = (
             await self.db.execute(
-                select(func.date_trunc("week", Attendance.attended_on), Attendance.status, func.count())
+                select(week.label("wk"), Attendance.status, func.count())
                 .where(Attendance.school_id == school_id, Attendance.attended_on >= first, Attendance.attended_on <= last)
-                .group_by(func.date_trunc("week", Attendance.attended_on), Attendance.status)
+                .group_by(week, Attendance.status)
             )
         ).all()
         wk: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
