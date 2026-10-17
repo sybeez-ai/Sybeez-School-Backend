@@ -22,6 +22,7 @@ from src.modules.admissions.schemas import (
 from src.modules.admissions.service import AdmissionsService
 from src.modules.students.schemas import StudentOut
 from src.shared.enums import UserRole
+from src.modules.access.deps import public
 
 router = APIRouter(tags=["admissions"])
 
@@ -33,6 +34,7 @@ def _sid(u: CurrentUser) -> UUID:
 
 
 @router.get("/admissions/health")
+@public
 async def admissions_health():
     return {"module": "admissions", "status": "ok"}
 

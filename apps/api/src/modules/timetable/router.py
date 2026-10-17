@@ -6,6 +6,8 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import CurrentUser, require_roles, require_school_scope
+from src.modules.access.deps import require_permission
+from src.shared.enums import UserRole
 from src.core.database import get_db
 from src.core.exceptions import ForbiddenError
 from src.modules.timetable.schemas import (
@@ -27,15 +29,15 @@ from src.modules.timetable.schemas import (
     TodayScheduleOut,
 )
 from src.modules.timetable.service import TimetableService
-from src.shared.enums import UserRole
+from src.shared.pagination import Page, PageQuery
 
 router = APIRouter(prefix="/timetable", tags=["timetable"])
 
 
-def _sid(u: CurrentUser) -> UUID:
-    if u.school_id is None:
+def _sid(user: CurrentUser) -> UUID:
+    if user.school_id is None:
         raise ForbiddenError("School context required")
-    return u.school_id
+    return user.school_id
 
 
 # ── settings ─────────────────────────────────────────────────
@@ -238,7 +240,7 @@ async def timetable_grid(
     user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN, UserRole.TEACHER))],
     class_id: UUID = Query(...),
 ):
-    return await TimetableService(db).grid(school_id=_sid(user), class_id=class_id)
+    return await TimetableService(db).grid(school_id=_sid(user), class_id=class_id, user=user)
 
 
 # ── entries ──────────────────────────────────────────────────
@@ -247,7 +249,7 @@ async def timetable_grid(
 @router.get("", response_model=list[TimetableEntryOut])
 async def list_timetable(
     db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN, UserRole.TEACHER))],
+    user: Annotated[CurrentUser, Depends(require_permission("timetable.read"))],
     class_id: UUID | None = Query(None),
     teacher_id: UUID | None = Query(None),
     academic_year_id: UUID | None = Query(None),
@@ -259,6 +261,7 @@ async def list_timetable(
         teacher_id=teacher_id,
         academic_year_id=academic_year_id,
         day_of_week=day_of_week,
+        user=user,
     )
 
 
@@ -266,7 +269,7 @@ async def list_timetable(
 async def create_entry(
     body: TimetableEntryCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    user: Annotated[CurrentUser, Depends(require_permission("timetable.write"))],
 ):
     return await TimetableService(db).create_entry(_sid(user), body)
 

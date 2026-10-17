@@ -48,7 +48,11 @@ class PlatformDashboard(BaseModel):
 class SchoolAdminCreate(BaseModel):
     full_name: str = Field(min_length=2, max_length=200)
     email: EmailStr
-    password: str = Field(min_length=8, description="Temporary password for school admin login")
+    password: str | None = Field(
+        default=None,
+        min_length=8,
+        description="Temporary password for school admin login; generated when omitted",
+    )
     phone: str | None = None
 
 
@@ -67,6 +71,8 @@ class SchoolCreate(BaseModel):
     currency: str = "INR"
     plan_code: str = Field(default="starter", min_length=2, max_length=64)
     admin: SchoolAdminCreate
+    # A school with the same (normalised) name already exists: the caller must confirm.
+    allow_duplicate_name: bool = False
 
 
 class SchoolUpdate(BaseModel):
@@ -149,7 +155,22 @@ class InvitationOut(BaseModel):
 
 
 class SchoolAdminResetPasswordRequest(BaseModel):
-    temporary_password: str = Field(min_length=8)
+    # Optional: the server generates a strong temporary password when omitted (preferred).
+    temporary_password: str | None = Field(default=None, min_length=8)
+
+
+class SchoolAdminLoginCreate(BaseModel):
+    full_name: str = Field(min_length=2, max_length=200)
+    email: EmailStr
+    password: str | None = Field(default=None, min_length=8)
+
+
+class SchoolAdminLoginOut(BaseModel):
+    user_id: UUID
+    admin_email: EmailStr
+    full_name: str
+    temporary_password: str
+    login_url: str = "/school-admin/login"
 
 
 class SchoolAdminResetPasswordOut(BaseModel):

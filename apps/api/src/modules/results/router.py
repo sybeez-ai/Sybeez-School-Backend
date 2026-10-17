@@ -8,10 +8,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.api.dependencies import CurrentUser, require_roles
 from src.core.database import get_db
 from src.core.exceptions import ForbiddenError
+from src.modules.access.deps import public, require_permission
 from src.modules.exams.pdf import build_report_card_pdf
 from src.modules.exams.schemas import ChildBriefOut, StudentResultOut
 from src.modules.exams.service import ExamService
+from src.modules.results.schemas import ResultCreate, ResultOut
+from src.modules.results.service import ResultService
 from src.shared.enums import UserRole
+from src.shared.pagination import Page, PageQuery
 
 router = APIRouter(prefix="/results", tags=["results"])
 
@@ -23,8 +27,30 @@ def _sid(u: CurrentUser) -> UUID:
 
 
 @router.get("/health")
+@public
 async def results_health():
     return {"module": "results", "status": "ok"}
+
+
+@router.get("", response_model=Page[ResultOut])
+async def list_results(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_permission("results.read"))],
+    page: PageQuery,
+    exam_id: UUID | None = Query(None),
+    student_id: UUID | None = Query(None),
+):
+    items, total = await ResultService(db).list(user, _sid(user), page, exam_id=exam_id, student_id=student_id)
+    return Page(items=items, total=total, page=page.page, page_size=page.page_size)
+
+
+@router.post("", response_model=ResultOut, status_code=201)
+async def create_result(
+    body: ResultCreate,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_permission("results.write"))],
+):
+    return await ResultService(db).create(user, _sid(user), body)
 
 
 @router.get("/me", response_model=list[StudentResultOut])
@@ -61,8 +87,11 @@ async def student_results_admin(
         Depends(require_roles(UserRole.SCHOOL_ADMIN, UserRole.TEACHER)),
     ],
 ):
-    # Admin/teacher: list published results for a student in school
     svc = ExamService(db)
+    if user.role == UserRole.TEACHER:
+        from src.modules.access.scope import assert_teacher_student
+
+        await assert_teacher_student(db, user.id, _sid(user), student_id)
     from sqlalchemy import select
 
     from src.db.models import Exam, Result
@@ -100,7 +129,7 @@ async def report_card_json(
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[
         CurrentUser,
-        Depends(require_roles(UserRole.STUDENT, UserRole.PARENT, UserRole.SCHOOL_ADMIN)),
+        Depends(require_roles(UserRole.STUDENT, UserRole.PARENT, UserRole.SCHOOL_ADMIN, UserRole.TEACHER)),
     ],
     student_id: UUID | None = Query(None),
 ):
@@ -114,6 +143,13 @@ async def report_card_json(
             raise ForbiddenError("student_id required")
         parent = await svc._parent_for_user(sid, user.id)
         await svc._assert_parent_child(sid, parent.id, student_id)
+        target = student_id
+    elif user.role == UserRole.TEACHER:
+        if not student_id:
+            raise ForbiddenError("student_id required")
+        from src.modules.access.scope import assert_teacher_student
+
+        await assert_teacher_student(db, user.id, sid, student_id)
         target = student_id
     else:
         if not student_id:
@@ -128,7 +164,7 @@ async def report_card_pdf(
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[
         CurrentUser,
-        Depends(require_roles(UserRole.STUDENT, UserRole.PARENT, UserRole.SCHOOL_ADMIN)),
+        Depends(require_roles(UserRole.STUDENT, UserRole.PARENT, UserRole.SCHOOL_ADMIN, UserRole.TEACHER)),
     ],
     student_id: UUID | None = Query(None),
 ):
@@ -142,6 +178,13 @@ async def report_card_pdf(
             raise ForbiddenError("student_id required")
         parent = await svc._parent_for_user(sid, user.id)
         await svc._assert_parent_child(sid, parent.id, student_id)
+        target = student_id
+    elif user.role == UserRole.TEACHER:
+        if not student_id:
+            raise ForbiddenError("student_id required")
+        from src.modules.access.scope import assert_teacher_student
+
+        await assert_teacher_student(db, user.id, sid, student_id)
         target = student_id
     else:
         if not student_id:

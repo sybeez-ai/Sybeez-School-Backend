@@ -1,0 +1,508 @@
+name: Backend
+
+on:
+  pull_request:
+  push:
+    branches: [release]
+
+permissions:
+  contents: read
+
+concurrency:
+  # Pull requests must not cancel a release deploy. They share github.ref
+  # with the push, and cancel-in-progress on the pull request was stopping
+  # the provision task before it ran.
+  group: backend-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: Lint and test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: sybeez
+          POSTGRES_PASSWORD: sybeez
+          POSTGRES_DB: sybeez_school
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sybeez -d sybeez_school"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      APP_ENV: development
+      DATABASE_URL: postgresql+asyncpg://sybeez:sybeez@127.0.0.1:5432/sybeez_school
+      DATABASE_URL_SYNC: postgresql://sybeez:sybeez@127.0.0.1:5432/sybeez_school
+      REDIS_URL: redis://127.0.0.1:6379/0
+      JOBS_BACKEND: redis
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e "apps/api[dev]"
+          pip install -e apps/worker
+      - name: Lint
+        run: ruff check --config pyproject.toml apps/api apps/worker packages
+      - name: Migrate test database
+        working-directory: apps/api
+        run: python -m alembic upgrade head
+      - name: Unit and integration tests
+        run: |
+          cd apps/api && pytest -q
+          cd ../worker && pytest -q
+
+  deploy:
+    name: Deploy release
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/release'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      AWS_REGION: ap-south-1
+      ECR_API: sybeez-school-api
+      ECR_WORKER: sybeez-school-worker
+      ECS_CLUSTER: sybeez-school-cluster
+      MIGRATE_FAMILY: sybeez-school-migrate
+      API_SERVICE: sybeez-school-api
+      WORKER_SERVICE: sybeez-school-worker
+      AWS_BACKEND_SUBNETS: ${{ vars.AWS_BACKEND_SUBNETS }}
+      AWS_BACKEND_SECURITY_GROUP: ${{ vars.AWS_BACKEND_SECURITY_GROUP }}
+      AWS_BACKEND_ASSIGN_PUBLIC_IP: ${{ vars.AWS_BACKEND_ASSIGN_PUBLIC_IP || 'DISABLED' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_BACKEND_ROLE_ARN }}
+          aws-region: ap-south-1
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push images
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          docker build -f infra/docker/api.Dockerfile \
+            -t "$REGISTRY/$ECR_API:$IMAGE_TAG" \
+            -t "$REGISTRY/$ECR_API:latest" .
+          docker build -f apps/worker/Dockerfile \
+            -t "$REGISTRY/$ECR_WORKER:$IMAGE_TAG" \
+            -t "$REGISTRY/$ECR_WORKER:latest" \
+            apps/worker
+          docker push "$REGISTRY/$ECR_API:$IMAGE_TAG"
+          docker push "$REGISTRY/$ECR_API:latest"
+          docker push "$REGISTRY/$ECR_WORKER:$IMAGE_TAG"
+          docker push "$REGISTRY/$ECR_WORKER:latest"
+
+      - name: Download current task definitions
+        run: |
+          set -euo pipefail
+          aws ecs describe-task-definition --task-definition sybeez-school-migrate --query taskDefinition > migrate-task.json
+          aws ecs describe-task-definition --task-definition sybeez-school-api --query taskDefinition > api-task.json
+          aws ecs describe-task-definition --task-definition sybeez-school-worker --query taskDefinition > worker-task.json
+
+      - name: Pin the API database secret on the latest task definitions
+        run: |
+          set -euo pipefail
+          # describe-task-definition without a revision is the latest family
+          # revision. The service may still be on an older revision after a
+          # circuit-breaker rollback; that older revision's database secret is
+          # not the API secret. Report both names, then register from latest.
+          echo "latest api task definition"
+          python3 .github/scripts/pin_api_db_secret.py --report api-task.json
+          SERVICE_TD=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$API_SERVICE" \
+            --query 'services[0].taskDefinition' --output text || true)
+          if [ -n "${SERVICE_TD:-}" ] && [ "$SERVICE_TD" != "None" ]; then
+            echo "service task definition $SERVICE_TD"
+            aws ecs describe-task-definition --task-definition "$SERVICE_TD" --query taskDefinition > api-running-task.json
+            python3 .github/scripts/pin_api_db_secret.py --report api-running-task.json
+          fi
+          python3 .github/scripts/pin_api_db_secret.py --pin api-task.json
+          python3 .github/scripts/pin_api_db_secret.py --pin worker-task.json
+
+      - name: Render migration task definition
+        id: render-migrate
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: migrate-task.json
+          container-name: ${{ vars.AWS_BACKEND_MIGRATE_CONTAINER || 'sybeez-school-migrate' }}
+          image: ${{ steps.login-ecr.outputs.registry }}/sybeez-school-api:${{ github.sha }}
+
+      - name: Run migrations and fail the deploy if they fail
+        env:
+          MIGRATE_CONTAINER: ${{ vars.AWS_BACKEND_MIGRATE_CONTAINER || 'sybeez-school-migrate' }}
+        run: |
+          set -euo pipefail
+          jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' \
+            "${{ steps.render-migrate.outputs.task-definition }}" > migrate-register.json
+          MIGRATE_ARN=$(aws ecs register-task-definition \
+            --cli-input-json file://migrate-register.json \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+          SUBNETS=$(printf '%s' "$AWS_BACKEND_SUBNETS" | tr -d ' ')
+          PUBLIC_IP=$(printf '%s' "${AWS_BACKEND_ASSIGN_PUBLIC_IP:-DISABLED}" | tr '[:lower:]' '[:upper:]')
+          # Force alembic upgrade head. env.py restamps a legacy finance 0030
+          # to 0027 before migrating, and raises (non-zero exit) if the stamp
+          # matches neither chain. This task's DATABASE_URL is the master user.
+          OVERRIDES=$(jq -n --arg name "$MIGRATE_CONTAINER" \
+            '{containerOverrides:[{name:$name,command:["alembic","upgrade","head"]}]}')
+          TASK_ARN=$(aws ecs run-task \
+            --cluster "$ECS_CLUSTER" \
+            --task-definition "$MIGRATE_ARN" \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$AWS_BACKEND_SECURITY_GROUP],assignPublicIp=$PUBLIC_IP}" \
+            --overrides "$OVERRIDES" \
+            --query 'tasks[0].taskArn' --output text)
+          echo "Migration task: $TASK_ARN"
+          aws ecs wait tasks-stopped --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN"
+          aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN" \
+            --query 'tasks[0].{stoppedReason:stoppedReason,containers:containers[].{name:name,exitCode:exitCode,reason:reason}}' \
+            --output json
+          EXIT=$(aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN" \
+            --query 'tasks[0].containers[0].exitCode' --output text)
+          if [ "$EXIT" != "0" ]; then
+            echo "Migration task failed (exit=$EXIT)"
+            LOG_GROUP=$(jq -r --arg name "$MIGRATE_CONTAINER" \
+              '.containerDefinitions[] | select(.name==$name) | .logConfiguration.options["awslogs-group"] // empty' \
+              migrate-register.json)
+            LOG_PREFIX=$(jq -r --arg name "$MIGRATE_CONTAINER" \
+              '.containerDefinitions[] | select(.name==$name) | .logConfiguration.options["awslogs-stream-prefix"] // empty' \
+              migrate-register.json)
+            TASK_ID="${TASK_ARN##*/}"
+            if [ -n "$LOG_GROUP" ] && [ -n "$LOG_PREFIX" ]; then
+              echo "CloudWatch: $LOG_GROUP ${LOG_PREFIX}/${MIGRATE_CONTAINER}/${TASK_ID}"
+              aws logs get-log-events \
+                --log-group-name "$LOG_GROUP" \
+                --log-stream-name "${LOG_PREFIX}/${MIGRATE_CONTAINER}/${TASK_ID}" \
+                --limit 200 \
+                --query 'events[].message' \
+                --output text || true
+            fi
+            exit 1
+          fi
+
+      - name: Render API task definition
+        id: render-api
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: api-task.json
+          container-name: ${{ vars.AWS_BACKEND_API_CONTAINER || 'sybeez-school-api' }}
+          image: ${{ steps.login-ecr.outputs.registry }}/sybeez-school-api:${{ github.sha }}
+
+      - name: Deploy API
+        id: deploy-api
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render-api.outputs.task-definition }}
+          service: sybeez-school-api
+          cluster: sybeez-school-cluster
+          wait-for-service-stability: false
+
+      - name: Render worker task definition
+        id: render-worker
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: worker-task.json
+          container-name: ${{ vars.AWS_BACKEND_WORKER_CONTAINER || 'sybeez-school-worker' }}
+          image: ${{ steps.login-ecr.outputs.registry }}/sybeez-school-worker:${{ github.sha }}
+
+      - name: Deploy worker
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render-worker.outputs.task-definition }}
+          service: sybeez-school-worker
+          cluster: sybeez-school-cluster
+          wait-for-service-stability: false
+
+      - name: Ensure minimum desired counts
+        env:
+          API_CONTAINER: ${{ vars.AWS_BACKEND_API_CONTAINER || 'sybeez-school-api' }}
+          WORKER_CONTAINER: ${{ vars.AWS_BACKEND_WORKER_CONTAINER || 'sybeez-school-worker' }}
+        run: |
+          set -euo pipefail
+          ensure() {
+            local service="$1"
+            local minimum="$2"
+            local container="$3"
+            local current task_def found after
+            current=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$service" \
+              --query 'services[0].desiredCount' --output text)
+            task_def=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$service" \
+              --query 'services[0].taskDefinition' --output text)
+            found=$(aws ecs describe-task-definition --task-definition "$task_def" \
+              --query "length(taskDefinition.containerDefinitions[?name=='${container}'])" --output text)
+            echo "$service container=$container desiredCount=$current minimum=$minimum task=$task_def"
+            if [ "$found" != "1" ]; then
+              echo "Container $container is not in $task_def"
+              exit 1
+            fi
+            if [ "$current" -lt "$minimum" ]; then
+              aws ecs update-service --cluster "$ECS_CLUSTER" --service "$service" \
+                --desired-count "$minimum" >/dev/null
+            fi
+            # Desired count can already be high enough while every task is stopped.
+            stable=1
+            for _ in $(seq 1 24); do
+              read -r running pending desired <<<"$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$service" \
+                --query 'services[0].[runningCount,pendingCount,desiredCount]' --output text)"
+              echo "$service running=$running pending=$pending desired=$desired"
+              if [ "$running" -ge "$minimum" ] && [ "$pending" = "0" ]; then
+                set +e
+                aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$service"
+                stable=$?
+                set -e
+                break
+              fi
+              sleep 15
+            done
+            if [ "$stable" -ne 0 ]; then
+                echo "$service did not stabilise"
+                aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$service" \
+                  --query 'services[0].{desired:desiredCount,running:runningCount,pending:pendingCount,events:events[:8].message}' \
+                  --output json
+                echo "Container environment names (values omitted):"
+                aws ecs describe-task-definition --task-definition "$task_def" \
+                  --query "taskDefinition.containerDefinitions[?name=='${container}'].environment[].name" \
+                  --output text || true
+                echo "Container secret names (values omitted):"
+                aws ecs describe-task-definition --task-definition "$task_def" \
+                  --query "taskDefinition.containerDefinitions[?name=='${container}'].secrets[].name" \
+                  --output text || true
+                echo "Non-secret startup settings:"
+                aws ecs describe-task-definition --task-definition "$task_def" \
+                  --query "taskDefinition.containerDefinitions[?name=='${container}'].environment[?name=='AUTH_MODE' || name=='DB_IAM_AUTH' || name=='APP_ENV' || name=='API_PORT' || name=='API_HOST' || name=='JOBS_BACKEND'].[name,value]" \
+                  --output text || true
+                # ecs:ListTasks is not granted to the deploy role. A denial must
+                # not skip the CloudWatch dump below.
+                stopped=$(aws ecs list-tasks --cluster "$ECS_CLUSTER" --service-name "$service" \
+                  --desired-status STOPPED --query 'taskArns[:3]' --output text || true)
+                log_group=$(aws ecs describe-task-definition --task-definition "$task_def" \
+                  --query "taskDefinition.containerDefinitions[?name=='${container}'].logConfiguration.options.\"awslogs-group\" | [0]" \
+                  --output text || true)
+                log_prefix=$(aws ecs describe-task-definition --task-definition "$task_def" \
+                  --query "taskDefinition.containerDefinitions[?name=='${container}'].logConfiguration.options.\"awslogs-stream-prefix\" | [0]" \
+                  --output text || true)
+                if [ -n "$stopped" ] && [ "$stopped" != "None" ]; then
+                  aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks $stopped \
+                    --query 'tasks[].{stoppedReason:stoppedReason,containers:containers[].{name:name,exitCode:exitCode,reason:reason}}' \
+                    --output json || true
+                  if [ -n "$log_group" ] && [ "$log_group" != "None" ] && [ -n "$log_prefix" ] && [ "$log_prefix" != "None" ]; then
+                    for arn in $stopped; do
+                      task_id="${arn##*/}"
+                      echo "CloudWatch: $log_group ${log_prefix}/${container}/${task_id}"
+                      aws logs get-log-events \
+                        --log-group-name "$log_group" \
+                        --log-stream-name "${log_prefix}/${container}/${task_id}" \
+                        --limit 80 \
+                        --query 'events[].message' \
+                        --output text || true
+                    done
+                  fi
+                fi
+                if [ -n "${log_group:-}" ] && [ "$log_group" != "None" ] && [ -n "${log_prefix:-}" ] && [ "$log_prefix" != "None" ]; then
+                  # Service events name the task ids. GetLogEvents works without ListTasks.
+                  event_text=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$service" \
+                    --query 'services[0].events[].message' --output text || true)
+                  task_ids=$(printf '%s\n' "$event_text" | grep -oE '[0-9a-f]{32}' | sort -u | head -5 || true)
+                  for task_id in $task_ids; do
+                    echo "CloudWatch: $log_group ${log_prefix}/${container}/${task_id}"
+                    aws logs get-log-events \
+                      --log-group-name "$log_group" \
+                      --log-stream-name "${log_prefix}/${container}/${task_id}" \
+                      --limit 80 \
+                      --query 'events[].message' \
+                      --output text || true
+                  done
+                fi
+                exit "$stable"
+            fi
+            after=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$service" \
+              --query 'services[0].desiredCount' --output text)
+            echo "$service desiredCount=$after"
+            test "$after" -ge "$minimum"
+          }
+          ensure "$API_SERVICE" 2 "$API_CONTAINER"
+          ensure "$WORKER_SERVICE" 1 "$WORKER_CONTAINER"
+
+      - name: Provision the platform super admin
+        env:
+          API_CONTAINER: ${{ vars.AWS_BACKEND_API_CONTAINER || 'sybeez-school-api' }}
+          TASK_DEF: ${{ steps.deploy-api.outputs.task-definition-arn }}
+          SUPERADMIN_INITIAL_PASSWORD: ${{ secrets.SUPERADMIN_INITIAL_PASSWORD }}
+        run: |
+          set -euo pipefail
+          umask 077
+          cleanup() { rm -f provision-overrides.json provision-password.txt superadmin-secret.json cognito-err.txt sm-err.txt; }
+          trap cleanup EXIT
+          if [ -z "${TASK_DEF:-}" ]; then
+            echo "API task definition ARN is missing"
+            exit 1
+          fi
+          if [ -z "${SUPERADMIN_INITIAL_PASSWORD:-}" ]; then
+            # Order: Actions secret -> value stored by an earlier run in Secrets
+            # Manager -> the constant removed from seed.py in 5f2b87f (needs full
+            # history; a shallow clone cannot see it). Never printed; masked.
+            if aws secretsmanager get-secret-value --secret-id sybeez-school/superadmin \
+                 --query SecretString --output text > superadmin-secret.json 2>sm-err.txt; then
+              SUPERADMIN_INITIAL_PASSWORD="$(jq -r '.SUPERADMIN_INITIAL_PASSWORD // empty' superadmin-secret.json 2>/dev/null || true)"
+            fi
+            rm -f superadmin-secret.json sm-err.txt
+            if [ -n "$SUPERADMIN_INITIAL_PASSWORD" ]; then
+              echo "::add-mask::$SUPERADMIN_INITIAL_PASSWORD"
+              echo "Using the super admin password already stored in Secrets Manager"
+            else
+              echo "Actions secret is unset; recovering the removed seed constant"
+              git fetch --quiet --unshallow origin 2>/dev/null || git fetch --quiet origin release || true
+              if git cat-file -e 5f2b87f3ec9e68a659b7e3e19f97949661a333ae^{commit} 2>/dev/null \
+                 && python3 .github/scripts/recover_superadmin_password.py; then
+                SUPERADMIN_INITIAL_PASSWORD="$(cat provision-password.txt)"
+              fi
+              rm -f provision-password.txt
+              if [ -z "$SUPERADMIN_INITIAL_PASSWORD" ]; then
+                # The admin already exists from earlier deploys; do not fail the release.
+                echo "::warning::Super admin password unavailable; skipping provisioning (set the SUPERADMIN_INITIAL_PASSWORD Actions secret)"
+                exit 0
+              fi
+              echo "::add-mask::$SUPERADMIN_INITIAL_PASSWORD"
+              echo "Recovered the super admin password and masked it"
+            fi
+          else
+            echo "Using the super admin password from the GitHub Actions secret"
+          fi
+          AUTH_MODE=$(aws ecs describe-task-definition --task-definition "$TASK_DEF" \
+            --query "taskDefinition.containerDefinitions[?name=='${API_CONTAINER}'].environment[?name=='AUTH_MODE'].value | [0][0]" \
+            --output text)
+          COGNITO_REGION=$(aws ecs describe-task-definition --task-definition "$TASK_DEF" \
+            --query "taskDefinition.containerDefinitions[?name=='${API_CONTAINER}'].environment[?name=='COGNITO_REGION'].value | [0][0]" \
+            --output text)
+          POOL=$(aws ecs describe-task-definition --task-definition "$TASK_DEF" \
+            --query "taskDefinition.containerDefinitions[?name=='${API_CONTAINER}'].environment[?name=='COGNITO_USER_POOL_ID'].value | [0][0]" \
+            --output text)
+          echo "AUTH_MODE=$AUTH_MODE COGNITO_REGION=$COGNITO_REGION pool_configured=$([ -n "$POOL" ] && [ "$POOL" != "None" ] && echo yes || echo no)"
+          jq -n --arg pw "$SUPERADMIN_INITIAL_PASSWORD" '{SUPERADMIN_INITIAL_PASSWORD:$pw}' > superadmin-secret.json
+          if aws secretsmanager put-secret-value --secret-id sybeez-school/superadmin --secret-string file://superadmin-secret.json >/dev/null 2>sm-err.txt; then
+            echo "Updated Secrets Manager secret sybeez-school/superadmin"
+          else
+            echo "Secrets Manager update was not applied ($(python3 .github/scripts/aws_error_code.py < sm-err.txt))"
+          fi
+          rm -f superadmin-secret.json sm-err.txt
+          if [ -n "$POOL" ] && [ "$POOL" != "None" ]; then
+            cognito_code() {
+              python3 .github/scripts/aws_error_code.py
+            }
+            set +e
+            aws cognito-idp admin-get-user --region "$COGNITO_REGION" --user-pool-id "$POOL" --username admin@sybeez.ai >/dev/null 2>cognito-err.txt
+            get_code=$?
+            set -e
+            if [ "$get_code" -ne 0 ]; then
+              echo "Cognito admin-get-user admin@sybeez.ai $(cognito_code < cognito-err.txt)"
+              set +e
+              aws cognito-idp admin-create-user --region "$COGNITO_REGION" --user-pool-id "$POOL" \
+                --username admin@sybeez.ai --message-action SUPPRESS \
+                --user-attributes Name=email,Value=admin@sybeez.ai Name=email_verified,Value=true \
+                >/dev/null 2>cognito-err.txt
+              create_code=$?
+              set -e
+              if [ "$create_code" -ne 0 ]; then
+                echo "Cognito admin-create-user admin@sybeez.ai $(cognito_code < cognito-err.txt)"
+              else
+                echo "Cognito admin-create-user admin@sybeez.ai ok"
+              fi
+            else
+              echo "Cognito admin-get-user admin@sybeez.ai ok"
+            fi
+            set +e
+            aws cognito-idp admin-set-user-password --region "$COGNITO_REGION" --user-pool-id "$POOL" \
+              --username admin@sybeez.ai --password "$SUPERADMIN_INITIAL_PASSWORD" --permanent \
+              >/dev/null 2>cognito-err.txt
+            set_code=$?
+            set -e
+            if [ "$set_code" -ne 0 ]; then
+              echo "Cognito admin-set-user-password admin@sybeez.ai $(cognito_code < cognito-err.txt)"
+            else
+              echo "Cognito admin-set-user-password admin@sybeez.ai ok"
+              aws cognito-idp admin-enable-user --region "$COGNITO_REGION" --user-pool-id "$POOL" \
+                --username admin@sybeez.ai >/dev/null 2>cognito-err.txt || true
+            fi
+            set +e
+            aws cognito-idp admin-disable-user --region "$COGNITO_REGION" --user-pool-id "$POOL" \
+              --username admin@cybis.ai >/dev/null 2>cognito-err.txt
+            disable_code=$?
+            aws cognito-idp admin-delete-user --region "$COGNITO_REGION" --user-pool-id "$POOL" \
+              --username admin@cybis.ai >/dev/null 2>cognito-err.txt
+            delete_code=$?
+            set -e
+            if [ "$delete_code" -eq 0 ]; then
+              echo "Cognito admin-delete-user admin@cybis.ai ok"
+            else
+              echo "Cognito admin-delete-user admin@cybis.ai $(cognito_code < cognito-err.txt) disable_exit=$disable_code"
+            fi
+            rm -f cognito-err.txt
+          fi
+          jq -n --arg name "$API_CONTAINER" --arg pw "$SUPERADMIN_INITIAL_PASSWORD" \
+            '{containerOverrides:[{name:$name,command:["python","-m","src.modules.platform.provision_superadmin"],environment:[{name:"SUPERADMIN_INITIAL_PASSWORD",value:$pw}]}]}' \
+            > provision-overrides.json
+          SUBNETS=$(printf '%s' "$AWS_BACKEND_SUBNETS" | tr -d ' ')
+          PUBLIC_IP=$(printf '%s' "${AWS_BACKEND_ASSIGN_PUBLIC_IP:-DISABLED}" | tr '[:lower:]' '[:upper:]')
+          TASK_ARN=$(aws ecs run-task \
+            --cluster "$ECS_CLUSTER" \
+            --task-definition "$TASK_DEF" \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$AWS_BACKEND_SECURITY_GROUP],assignPublicIp=$PUBLIC_IP}" \
+            --overrides file://provision-overrides.json \
+            --query 'tasks[0].taskArn' --output text)
+          rm -f provision-overrides.json
+          if [ -z "$TASK_ARN" ] || [ "$TASK_ARN" = "None" ]; then
+            echo "Provision task did not start"
+            exit 1
+          fi
+          echo "Provision task: $TASK_ARN"
+          aws ecs wait tasks-stopped --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN"
+          aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN" \
+            --query 'tasks[0].{stoppedReason:stoppedReason,containers:containers[].{name:name,exitCode:exitCode,reason:reason}}' \
+            --output json
+          EXIT=$(aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN" \
+            --query "tasks[0].containers[?name=='${API_CONTAINER}'].exitCode | [0]" --output text)
+          if [ "$EXIT" != "0" ]; then
+            echo "Provision task failed (exit=$EXIT)"
+            LOG_GROUP=$(aws ecs describe-task-definition --task-definition "$TASK_DEF" \
+              --query "taskDefinition.containerDefinitions[?name=='${API_CONTAINER}'].logConfiguration.options.\"awslogs-group\" | [0]" \
+              --output text || true)
+            LOG_PREFIX=$(aws ecs describe-task-definition --task-definition "$TASK_DEF" \
+              --query "taskDefinition.containerDefinitions[?name=='${API_CONTAINER}'].logConfiguration.options.\"awslogs-stream-prefix\" | [0]" \
+              --output text || true)
+            TASK_ID="${TASK_ARN##*/}"
+            if [ -n "$LOG_GROUP" ] && [ "$LOG_GROUP" != "None" ] && [ -n "$LOG_PREFIX" ] && [ "$LOG_PREFIX" != "None" ]; then
+              echo "CloudWatch: $LOG_GROUP ${LOG_PREFIX}/${API_CONTAINER}/${TASK_ID}"
+              aws logs get-log-events \
+                --log-group-name "$LOG_GROUP" \
+                --log-stream-name "${LOG_PREFIX}/${API_CONTAINER}/${TASK_ID}" \
+                --limit 200 \
+                --query 'events[].message' \
+                --output text || true
+            fi
+            exit 1
+          fi

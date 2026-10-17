@@ -6,14 +6,30 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import CurrentUser, require_roles
 from src.core.database import get_db
+from src.core.exceptions import ForbiddenError
+from src.modules.access.deps import public, require_permission
 from src.modules.audit.schemas import AuditLogOut
 from src.modules.audit.service import AuditService
 from src.shared.enums import PlatformRole, UserRole
+from src.shared.pagination import Page, PageQuery
 
 router = APIRouter(prefix="/audit", tags=["audit"])
 
 
+@router.get("", response_model=Page[AuditLogOut])
+async def list_school_audit(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_permission("audit.read"))],
+    page: PageQuery,
+):
+    if user.school_id is None:
+        raise ForbiddenError("School context required")
+    items, total = await AuditService(db).list_school(user.school_id, page)
+    return Page(items=items, total=total, page=page.page, page_size=page.page_size)
+
+
 @router.get("/health")
+@public
 async def audit_health():
     return {"module": "audit", "status": "ok"}
 

@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 from datetime import date
-from pathlib import Path
 from uuid import UUID
 
 from fastapi import UploadFile
 from sqlalchemy import and_, func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.api.dependencies import CurrentUser
 from src.core.exceptions import ConflictError, ForbiddenError, NotFoundError
+from src.modules.access.scope import restrict_students
 from src.db.models import (
     AcademicYear,
     ClassRoom,
@@ -25,6 +26,7 @@ from src.db.models import (
 )
 from src.modules.schools.provisioning import create_school_user, set_user_active
 from src.modules.students.schemas import (
+    ParentCredential,
     BulkImportConfirmOut,
     BulkImportIssue,
     BulkImportRow,
@@ -99,11 +101,15 @@ class StudentService:
                 roll_number=data.roll_number,
             )
 
+        parent_creds: list[ParentCredential] = []
         for link in data.parents:
-            await self._link_or_create_parent(school_id, student.id, link)
+            cred = await self._link_or_create_parent(school_id, student.id, link)
+            if cred is not None:
+                parent_creds.append(cred)
 
         out = await self.get(school_id, student.id)
         out.temporary_password = temp
+        out.parent_credentials = parent_creds
         return out
 
     async def list(
@@ -120,6 +126,7 @@ class StudentService:
         sort: str = "name",
         actor_user_id: UUID | None = None,
         actor_role: UserRole | None = None,
+        user: CurrentUser | None = None,
     ) -> StudentPage:
         base = (
             select(Student)
@@ -197,6 +204,8 @@ class StudentService:
                     Enrollment.class_id.in_(class_teacher_sections),
                 )
             )
+        elif user is not None:
+            base = restrict_students(base, user, school_id)
 
         count_q = select(func.count()).select_from(base.order_by(None).subquery())
         total = int((await self.db.execute(count_q)).scalar_one())
@@ -215,8 +224,21 @@ class StudentService:
         items = [await self._to_out(s, include_history=False) for s in rows]
         return StudentPage(items=items, total=total, page=page, page_size=page_size)
 
-    async def get(self, school_id: UUID, student_id: UUID) -> StudentOut:
-        student = await self._get_student(school_id, student_id)
+    async def get(self, school_id: UUID, student_id: UUID, user: CurrentUser | None = None) -> StudentOut:
+        if user is None or user.role == UserRole.TEACHER:
+            student = await self._get_student(school_id, student_id)
+        else:
+            student = (
+                await self.db.execute(
+                    restrict_students(
+                        select(Student).where(Student.school_id == school_id, Student.id == student_id),
+                        user,
+                        school_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if student is None:
+                raise NotFoundError("Student not found")
         return await self._to_out(student, include_history=True)
 
     async def update(self, school_id: UUID, student_id: UUID, data: StudentUpdate) -> StudentOut:
@@ -615,12 +637,14 @@ class StudentService:
         if len(data) > 2_000_000:
             raise ConflictError("Photo too large (max 2MB)")
 
-        media_dir = Path(__file__).resolve().parents[3] / "media"
-        photo_dir = media_dir / "student-photos"
-        photo_dir.mkdir(parents=True, exist_ok=True)
-        filename = f"{student.id}{ext}"
-        (photo_dir / filename).write_bytes(data)
-        student.photo_url = f"/media/student-photos/{filename}"
+        from src.core.storage import put_object
+
+        key = put_object(
+            key=f"student-photos/{school_id}/{student.id}{ext}",
+            data=data,
+            content_type=content_type,
+        )
+        student.photo_url = key
         user = await self.db.get(User, student.user_id)
         if user:
             user.avatar_url = student.photo_url
@@ -703,8 +727,9 @@ class StudentService:
 
     async def _link_or_create_parent(
         self, school_id: UUID, student_id: UUID, link: ParentLinkInput
-    ) -> None:
+    ) -> ParentCredential | None:
         parent: Parent | None = None
+        parent_temp: str | None = None
         if link.parent_id:
             parent = (
                 await self.db.execute(
@@ -714,7 +739,7 @@ class StudentService:
             if not parent:
                 raise NotFoundError("Parent not found")
         elif link.email and link.full_name:
-            user, _, _ = await create_school_user(
+            user, _, parent_temp = await create_school_user(
                 self.db,
                 school_id=school_id,
                 email=link.email,
@@ -734,7 +759,7 @@ class StudentService:
             elif link.phone:
                 parent.phone = link.phone
         else:
-            return
+            return None
 
         existing = (
             await self.db.execute(
@@ -756,7 +781,7 @@ class StudentService:
             existing.relation_type = link.relationship
             existing.is_primary = link.is_primary
             await self.db.flush()
-            return
+            return self._parent_cred(link, parent_temp)
         self.db.add(
             StudentParent(
                 school_id=school_id,
@@ -767,6 +792,13 @@ class StudentService:
             )
         )
         await self.db.flush()
+        return self._parent_cred(link, parent_temp)
+
+    @staticmethod
+    def _parent_cred(link: ParentLinkInput, temp: str | None) -> ParentCredential | None:
+        if not temp or not link.email:
+            return None
+        return ParentCredential(email=str(link.email).lower().strip(), temporary_password=temp)
 
     def _find_section(
         self,

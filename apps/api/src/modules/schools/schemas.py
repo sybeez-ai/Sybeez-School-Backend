@@ -19,7 +19,14 @@ class SchoolProfileUpdate(BaseModel):
 
 
 class BranchOut(BaseModel):
+    """Payroll reads `name`. Finance branches also carry id and code for X-Branch-Id."""
+
     name: str
+    id: UUID | None = None
+    school_id: UUID | None = None
+    code: str | None = None
+    address: str | None = None
+    active: bool | None = None
 
 
 class BranchList(BaseModel):

@@ -5,13 +5,23 @@ from fastapi import APIRouter, Depends, File, Query, Response, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.dependencies import CurrentUser, require_admin_or_above, require_roles, require_super_admin
+from src.api.dependencies import (
+    CurrentUser,
+    require_admin_or_above,
+    require_platform_member,
+    require_roles,
+    require_super_admin,
+)
 from src.core.database import get_db
-from src.db.models import User
+from src.db.models import School, User
 from src.modules.audit.schemas import AuditLogOut
 from src.modules.audit.service import AuditService
+from src.modules.fees.route_schemas import PlatformRouteUpdate, RouteSchoolOut
+from src.modules.fees.route_service import RouteService
 from src.modules.platform.saas_service import PlatformSaasService
 from src.modules.platform.schemas import (
+    SchoolAdminLoginCreate,
+    SchoolAdminLoginOut,
     InvitationCreate,
     InvitationOut,
     PlanCreate,
@@ -38,8 +48,10 @@ from src.modules.platform.schemas import (
     SchoolUpdate,
 )
 from src.modules.platform.service import PlatformService
+from src.modules.platform.staff_service import StaffService
+from pydantic import BaseModel, EmailStr, Field
 from src.shared.enums import PlatformRole, SchoolStatus, UserRole
-from src.shared.pagination import Page
+from src.shared.pagination import Page, PageQuery
 
 router = APIRouter(prefix="/platform", tags=["platform"])
 
@@ -51,7 +63,7 @@ async def _actor_user(db: AsyncSession, actor: CurrentUser) -> User:
 @router.get("/dashboard", response_model=PlatformDashboard)
 async def dashboard(
     db: Annotated[AsyncSession, Depends(get_db)],
-    _: Annotated[CurrentUser, Depends(require_roles(UserRole.PLATFORM_ADMIN))],
+    _: Annotated[CurrentUser, Depends(require_platform_member)],
 ):
     counts = await PlatformService(db).dashboard()
     return PlatformDashboard(**counts)
@@ -102,10 +114,21 @@ async def update_employee(
     return await PlatformService(db).update_employee(employee_id, body, await _actor_user(db, actor))
 
 
+@router.get("/audit", response_model=Page[AuditLogOut])
+async def platform_audit(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _: Annotated[CurrentUser, Depends(require_super_admin)],
+    page: PageQuery,
+    action: str | None = Query(default=None),
+):
+    items, total = await AuditService(db).list_actions(page, action=action)
+    return Page(items=items, total=total, page=page.page, page_size=page.page_size)
+
+
 @router.get("/schools", response_model=Page[SchoolOut])
 async def list_schools(
     db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.PLATFORM_ADMIN))],
+    user: Annotated[CurrentUser, Depends(require_super_admin)],
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=100),
     q: str | None = Query(default=None),
@@ -205,6 +228,17 @@ async def delete_school(
     return Response(status_code=204)
 
 
+@router.post("/schools/{school_id}/admins", response_model=SchoolAdminLoginOut, status_code=201)
+async def create_school_admin_login(
+    school_id: UUID,
+    body: SchoolAdminLoginCreate,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_admin_or_above)],
+):
+    """Create a school-admin login (email + temporary password shown once) for a school."""
+    return await PlatformService(db).create_school_admin_login(actor, school_id, body)
+
+
 @router.post("/schools/{school_id}/admin/reset-password", response_model=SchoolAdminResetPasswordOut)
 async def reset_school_admin_password(
     school_id: UUID,
@@ -243,7 +277,7 @@ async def invite_admin(
     school_id: UUID,
     body: InvitationCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.PLATFORM_ADMIN))],
+    user: Annotated[CurrentUser, Depends(require_super_admin)],
 ):
     inv, raw = await PlatformService(db).invite_school_admin(user, school_id, body)
     out = InvitationOut.model_validate(inv)
@@ -255,7 +289,7 @@ async def invite_admin(
 async def list_invitations(
     school_id: UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
-    _: Annotated[CurrentUser, Depends(require_roles(UserRole.PLATFORM_ADMIN))],
+    _: Annotated[CurrentUser, Depends(require_super_admin)],
 ):
     return await PlatformService(db).repo.list_invitations(school_id)
 
@@ -287,7 +321,7 @@ async def get_school_admin(
 @router.get("/activity", response_model=list[AuditLogOut])
 async def platform_activity(
     db: Annotated[AsyncSession, Depends(get_db)],
-    actor: Annotated[CurrentUser, Depends(require_roles(UserRole.PLATFORM_ADMIN))],
+    actor: Annotated[CurrentUser, Depends(require_platform_member)],
     school_id: UUID | None = Query(default=None),
     limit: int = Query(200, ge=1, le=500),
 ):
@@ -343,7 +377,7 @@ async def revoke_school_access(
 @router.get("/plans", response_model=list[PlanOut])
 async def list_plans(
     db: Annotated[AsyncSession, Depends(get_db)],
-    _: Annotated[CurrentUser, Depends(require_roles(UserRole.PLATFORM_ADMIN))],
+    _: Annotated[CurrentUser, Depends(require_platform_member)],
     include_archived: bool = Query(default=False),
 ):
     return await PlatformSaasService(db).list_plans(include_archived=include_archived)
@@ -465,6 +499,132 @@ async def ai_models(
         "fallback_chat_model": settings.fallback_chat_model,
         "models": settings.models_json,
     }
+
+
+class StaffCreateIn(BaseModel):
+    email: EmailStr
+    full_name: str = Field(min_length=2, max_length=200)
+    password: str = Field(min_length=8, max_length=200)
+    portals: list[str] = Field(default_factory=list)
+    permissions: list[str] = Field(default_factory=list)
+
+
+class StaffAccessIn(BaseModel):
+    portals: list[str] = Field(default_factory=list)
+    permissions: list[str] = Field(default_factory=list)
+
+
+class StaffInviteIn(BaseModel):
+    email: EmailStr
+    portals: list[str] = Field(default_factory=list)
+    permissions: list[str] = Field(default_factory=list)
+    expires_in_days: int = Field(default=7, ge=1, le=30)
+
+
+class StaffOut(BaseModel):
+    id: UUID
+    user_id: UUID
+    email: str
+    full_name: str
+    status: str
+    portals: list[str]
+    permissions: list[str]
+
+
+def _staff_out(row: dict) -> StaffOut:
+    return StaffOut(**row)
+
+
+@router.get("/staff", response_model=list[StaffOut])
+async def list_staff(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _: Annotated[CurrentUser, Depends(require_super_admin)],
+):
+    return [_staff_out(row) for row in await StaffService(db).list_staff()]
+
+
+@router.post("/staff", response_model=StaffOut, status_code=201)
+async def create_staff(
+    body: StaffCreateIn,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_super_admin)],
+):
+    staff = await StaffService(db).create(
+        user,
+        email=body.email,
+        full_name=body.full_name,
+        password=body.password,
+        portals=body.portals,
+        permissions=body.permissions,
+    )
+    rows = await StaffService(db).list_staff()
+    match = next(row for row in rows if row["id"] == staff.id)
+    return _staff_out(match)
+
+
+@router.put("/staff/{staff_id}/access", response_model=StaffOut)
+async def set_staff_access(
+    staff_id: UUID,
+    body: StaffAccessIn,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_super_admin)],
+):
+    await StaffService(db).set_access(user, staff_id, portals=body.portals, permissions=body.permissions)
+    rows = await StaffService(db).list_staff()
+    return _staff_out(next(row for row in rows if row["id"] == staff_id))
+
+
+@router.post("/staff/{staff_id}/revoke", response_model=StaffOut)
+async def revoke_staff(
+    staff_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_super_admin)],
+):
+    await StaffService(db).revoke(user, staff_id)
+    rows = await StaffService(db).list_staff()
+    return _staff_out(next(row for row in rows if row["id"] == staff_id))
+
+
+@router.post("/staff-invitations", status_code=201)
+async def invite_staff(
+    body: StaffInviteIn,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_super_admin)],
+):
+    inv, raw = await StaffService(db).invite(
+        user,
+        email=body.email,
+        portals=body.portals,
+        permissions=body.permissions,
+        expires_in_days=body.expires_in_days,
+    )
+    return {
+        "id": str(inv.id),
+        "email": inv.email,
+        "status": inv.status,
+        "expires_at": inv.expires_at.isoformat(),
+        "invite_token": raw,
+    }
+
+
+@router.get("/route/accounts", response_model=list[RouteSchoolOut])
+async def list_route_accounts(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _: Annotated[CurrentUser, Depends(require_super_admin)],
+):
+    return await RouteService(db).list_schools()
+
+
+@router.patch("/schools/{school_id}/route", response_model=RouteSchoolOut)
+async def update_school_route(
+    school_id: UUID,
+    body: PlatformRouteUpdate,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_super_admin)],
+):
+    status = await RouteService(db).update_platform_fees(school_id, user.id, body)
+    school = await db.get(School, school_id)
+    return RouteSchoolOut(school_name=school.name if school else "", **status.model_dump())
 
 
 @router.get("/ai/usage", response_model=PlatformAiOverview)

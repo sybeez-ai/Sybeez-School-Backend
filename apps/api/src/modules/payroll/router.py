@@ -43,9 +43,11 @@ from src.modules.payroll.schemas import (
     TemplateCreate,
     WeeklyOffReplace,
 )
+from src.modules.payroll.permissions import payroll_access
 from src.modules.payroll.service import PayrollService, _settings_dict, dump
 
 router = APIRouter(prefix="/payroll", tags=["payroll"])
+
 Db = Annotated[AsyncSession, Depends(get_db)]
 
 
@@ -96,6 +98,15 @@ def _cut(response: Response, rows: list, page: dict, text_of) -> list:
 def _blob(row) -> str:
     data = dump(row) or {}
     return " ".join(str(value) for value in data.values() if value is not None)
+
+
+@router.get("/access")
+async def get_access(user: User, db: Db):
+    """The caller's payroll role and the actions the portal may offer."""
+    if user.school_id is None:
+        return {"role": "employee", "role_label": "Employee", "permissions": []}
+    await _svc(db, user)._bind()
+    return await payroll_access(db, user)
 
 
 @router.get("/settings")

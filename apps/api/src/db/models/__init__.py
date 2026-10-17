@@ -24,7 +24,28 @@ from src.db.models.diary import (
     PersonalHabit,
     PersonalHabitCheckin,
 )
+from src.db.models.online_test import (
+    OnlineTest,
+    OnlineTestAiUsage,
+    OnlineTestAnswer,
+    OnlineTestAttempt,
+    OnlineTestAuditLog,
+    OnlineTestEvent,
+    OnlineTestQuestion,
+    OnlineTestQuestionKey,
+    OnlineTestSchoolSettings,
+)
+from src.db.models.parent_messages import MessageTranslation, ParentMessagePreference, StudentProgressUpdate
+from src.db.models.reading import ReadingPassage, ReadingProgress, ReadingSession
 from src.db.models.personal_note import PersonalNote
+from src.db.models.push_device import PushDevice
+from src.db.models.permission import MembershipPermissionOverride, Permission, RolePermission
+from src.db.models.platform_staff import (
+    PlatformStaff,
+    PlatformStaffInvitation,
+    PlatformStaffPermission,
+    PlatformStaffPortal,
+)
 from src.db.models.enrollment import Enrollment
 from src.db.models.exam import (
     Exam,
@@ -57,6 +78,25 @@ from src.db.models.fee import (
     StudentFeeAccount,
 )
 from src.db.models.fee_reminder_log import FeeReminderLog
+from src.db.models.finance import (
+    FeeConcessionRequest,
+    FeeConcessionRule,
+    FeeDayClose,
+    FeeLedgerEntry,
+    FeePaymentTender,
+    ExpenseHead,
+    ExpenseLedgerEntry,
+    FeeRouteTransfer,
+    FeeWebhookEvent,
+    FinanceApproval,
+    FinanceStaffScope,
+    FinancialYear,
+    FineWaiverRequest,
+    SchoolBranch,
+    SchoolExpense,
+    SiblingGroup,
+    StudentFeeProfile,
+)
 from src.db.models.grade import Grade
 from src.db.models.homework import (
     Homework,
@@ -95,12 +135,36 @@ from src.db.models.payroll import (
     TaxDeclarationProof,
     WeeklyOffRule,
 )
+from src.db.models.hr_operations import (
+    HrApplication,
+    HrAppraisal,
+    HrAppraisalCycle,
+    HrAppraisalGoal,
+    HrAppraisalReview,
+    HrAsset,
+    HrAssetIssue,
+    HrExitCase,
+    HrInterview,
+    HrJobOpening,
+    HrOffer,
+    HrProbation,
+    HrReportExport,
+    HrRosterEntry,
+    HrSettlementLine,
+    HrShift,
+    HrTrainingProgram,
+    HrTrainingRecord,
+)
 from src.db.models.hr import (
     Department,
     Designation,
     Employee,
     EmployeeDocument,
+    EmployeeHistory,
+    HrHoliday,
+    HrLeaveType,
     HrLetter,
+    HrLetterTemplate,
     HrRequest,
     HrRequestEvent,
     HrSettings,
@@ -117,6 +181,13 @@ from src.db.models.learning_session import LearningSession
 from src.db.models.membership import SchoolMembership
 from src.db.models.notification import Notification, NotificationPreference
 from src.db.models.notification_delivery import NotificationDelivery
+from src.db.models.alerts import (
+    AlertAuditLog,
+    AlertChannelOptOut,
+    AlertInboundMessage,
+    AlertMessageTemplate,
+    SchoolAlertSettings,
+)
 from src.db.models.admissions import AdmissionApplication, AdmissionDocument, AdmissionEnquiry, AdmissionStatusHistory
 from src.db.models.parent import Parent
 from src.db.models.platform_saas import PlatformAiSettings, PlatformAiUsageDaily, PlatformPlan, PlatformSettings
@@ -140,6 +211,16 @@ from src.db.models.timetable import Room, TimetableEntry, TimetablePeriod, Timet
 from src.db.models.user import User
 
 __all__ = [
+    "OnlineTest",
+    "OnlineTestAiUsage",
+    "OnlineTestAnswer",
+    "OnlineTestAttempt",
+    "OnlineTestAuditLog",
+    "OnlineTestEvent",
+    "OnlineTestQuestion",
+    "OnlineTestQuestionKey",
+    "OnlineTestSchoolSettings",
+    "PushDevice",
     "User",
     "SchoolMembership",
     "Invitation",
@@ -191,12 +272,40 @@ __all__ = [
     "HrRequest",
     "HrRequestEvent",
     "HrSettings",
+    "HrHoliday",
+    "HrLeaveType",
+    "HrLetterTemplate",
+    "EmployeeHistory",
     "Employee",
+    "HrReportExport",
+    "HrProbation",
+    "HrAppraisalCycle",
+    "HrAppraisalGoal",
+    "HrAppraisal",
+    "HrAppraisalReview",
+    "HrJobOpening",
+    "HrApplication",
+    "HrInterview",
+    "HrOffer",
+    "HrTrainingProgram",
+    "HrTrainingRecord",
+    "HrShift",
+    "HrRosterEntry",
+    "HrAsset",
+    "HrAssetIssue",
+    "HrExitCase",
+    "HrSettlementLine",
     "Department",
     "Designation",
     "Document",
     "DiaryEntry",
     "PersonalNote",
+    "MessageTranslation",
+    "ParentMessagePreference",
+    "StudentProgressUpdate",
+    "ReadingPassage",
+    "ReadingProgress",
+    "ReadingSession",
     "PersonalGoal",
     "PersonalGoalMilestone",
     "PersonalHabit",
@@ -245,7 +354,6 @@ __all__ = [
     "Announcement",
     "Achievement",
     "AnnouncementAudience",
-    "Achievement",
     "Message",
     "Conversation",
     "ConversationParticipant",
@@ -254,6 +362,11 @@ __all__ = [
     "Notification",
     "NotificationPreference",
     "NotificationDelivery",
+    "AlertMessageTemplate",
+    "SchoolAlertSettings",
+    "AlertInboundMessage",
+    "AlertChannelOptOut",
+    "AlertAuditLog",
     "PayrollRun",
     "PayrollPayslip",
     "PayrollSchoolSettings",
@@ -290,4 +403,11 @@ __all__ = [
     "AdmissionStatusHistory",
     "AdmissionDocument",
     "SecurityEvent",
+    "Permission",
+    "RolePermission",
+    "MembershipPermissionOverride",
+    "PlatformStaff",
+    "PlatformStaffPortal",
+    "PlatformStaffPermission",
+    "PlatformStaffInvitation",
 ]

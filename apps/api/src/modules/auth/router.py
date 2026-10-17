@@ -1,31 +1,35 @@
-from typing import Annotated
-
 import json
 import secrets
+import urllib.parse
+from typing import Annotated
 
 import anyio
-import urllib.parse
-
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import CurrentUser, get_current_user
 from src.core.config import get_settings
+from src.core.cookies import clear_auth_cookies, set_auth_cookies
 from src.core.database import get_db
+from src.modules.access.deps import public
 from src.core.exceptions import NotFoundError, UnauthorizedError
 from src.core.redis import get_redis
 from src.modules.auth import cognito as cognito_svc
 from src.modules.auth.schemas import (
     AcceptInviteRequest,
+    ChangePasswordRequest,
     CompleteNewPasswordRequest,
+    DeleteAccountRequest,
     ConfirmForgotPasswordRequest,
     ForgotPasswordRequest,
     LoginRequest,
     LogoutRequest,
     MeResponse,
+    MembershipOut,
     MessageOut,
     RefreshRequest,
+    SwitchSchoolRequest,
     TokenResponse,
     UpdateProfileRequest,
 )
@@ -34,37 +38,77 @@ from src.modules.auth.service import AuthService
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
+def _attach(response: Response, token: TokenResponse) -> TokenResponse:
+    if not token.access_token or not token.refresh_token:
+        return token
+    set_auth_cookies(
+        response,
+        access_token=token.access_token,
+        refresh_token=token.refresh_token,
+        access_max_age=token.access_expires_in or 0,
+        refresh_max_age=token.refresh_expires_in or 0,
+    )
+    return token
+
+
 @router.post("/login", response_model=TokenResponse)
-async def login(body: LoginRequest, db: Annotated[AsyncSession, Depends(get_db)]):
-    return await AuthService(db).login(body)
+@public
+async def login(body: LoginRequest, response: Response, db: Annotated[AsyncSession, Depends(get_db)]):
+    return _attach(response, await AuthService(db).login(body))
 
 
 @router.post("/complete-new-password", response_model=TokenResponse)
+@public
 async def complete_new_password(
     body: CompleteNewPasswordRequest,
+    response: Response,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    return await AuthService(db).complete_new_password(body)
+    return _attach(response, await AuthService(db).complete_new_password(body))
 
 
 @router.post("/refresh", response_model=TokenResponse)
-async def refresh(body: RefreshRequest, db: Annotated[AsyncSession, Depends(get_db)]):
-    return await AuthService(db).refresh(body.refresh_token)
+@public
+async def refresh(
+    response: Response,
+    request: Request,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    body: RefreshRequest | None = None,
+):
+    settings = get_settings()
+    raw = None
+    if body is not None and body.refresh_token:
+        raw = body.refresh_token
+    raw = raw or request.cookies.get(settings.refresh_cookie_name)
+    if not raw:
+        raise UnauthorizedError("Missing refresh token")
+    return _attach(response, await AuthService(db).refresh(raw))
 
 
 @router.post("/logout", response_model=MessageOut)
-async def logout(body: LogoutRequest, db: Annotated[AsyncSession, Depends(get_db)]):
-    await AuthService(db).logout(body.refresh_token)
+@public
+async def logout(
+    response: Response,
+    request: Request,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    body: LogoutRequest | None = None,
+):
+    settings = get_settings()
+    raw = body.refresh_token if body is not None and body.refresh_token else request.cookies.get(settings.refresh_cookie_name)
+    await AuthService(db).logout(raw)
+    clear_auth_cookies(response)
     return MessageOut(message="Signed out")
 
 
 @router.post("/forgot-password", response_model=MessageOut)
+@public
 async def forgot_password(body: ForgotPasswordRequest, db: Annotated[AsyncSession, Depends(get_db)]):
     await AuthService(db).forgot_password(body.email)
     return MessageOut(message="If an account exists, a reset code has been sent")
 
 
 @router.post("/confirm-forgot-password", response_model=MessageOut)
+@public
 async def confirm_forgot_password(
     body: ConfirmForgotPasswordRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -78,8 +122,89 @@ async def confirm_forgot_password(
 
 
 @router.post("/accept-invitation", response_model=TokenResponse)
-async def accept_invitation(body: AcceptInviteRequest, db: Annotated[AsyncSession, Depends(get_db)]):
-    return await AuthService(db).accept_invitation(body)
+@public
+async def accept_invitation(
+    body: AcceptInviteRequest, response: Response, db: Annotated[AsyncSession, Depends(get_db)]
+):
+    return _attach(response, await AuthService(db).accept_invitation(body))
+
+
+@router.post("/accept-staff-invitation", response_model=TokenResponse)
+@public
+async def accept_staff_invitation(
+    body: AcceptInviteRequest, response: Response, db: Annotated[AsyncSession, Depends(get_db)]
+):
+    return _attach(response, await AuthService(db).accept_staff_invitation(body))
+
+
+@router.get("/memberships", response_model=list[MembershipOut])
+async def list_memberships(
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Schools and roles this user can sign into, including accountant, cashier, and auditor."""
+    return await AuthService(db).list_memberships(user.id)
+
+
+@router.post("/switch-school", response_model=TokenResponse)
+async def switch_school(
+    body: SwitchSchoolRequest,
+    response: Response,
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Issue a new access token for another school membership. Role is stamped on the token."""
+    return _attach(response, await AuthService(db).switch_school(user.id, body.school_id, body.role))
+
+
+async def _permissions(db: AsyncSession, user: CurrentUser) -> list[str]:
+    from src.modules.access.deps import effective_permissions
+
+    return sorted(await effective_permissions(db, user))
+
+
+@router.post("/change-password", response_model=MessageOut)
+async def change_password(
+    body: ChangePasswordRequest,
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Replace the current (e.g. admin-issued temporary) password and clear the forced change."""
+    await AuthService(db).change_password(
+        user.id, current_password=body.current_password, new_password=body.new_password
+    )
+    return MessageOut(message="Password changed")
+
+
+@router.post("/delete-account", response_model=MessageOut)
+async def delete_account(
+    body: DeleteAccountRequest,
+    request: Request,
+    response: Response,
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Permanently delete the signed-in user's account (re-authenticated, audited).
+
+    Personal data is anonymized in place, sessions, tokens and push tokens are destroyed and the
+    Cognito user is removed. School records are retained without personal data.
+    """
+    from src.modules.auth.account_deletion import delete_account as run_delete
+
+    iat = None
+    header = request.headers.get("authorization") or ""
+    if header.lower().startswith("bearer "):
+        from src.core.security import decode_token
+
+        try:
+            iat = int(decode_token(header.split(" ", 1)[1].strip()).get("iat"))
+        except (ValueError, TypeError):
+            iat = None
+    await run_delete(
+        db, user_id=user.id, body=body, token_iat=iat, ip=request.client.host if request.client else None
+    )
+    clear_auth_cookies(response)
+    return MessageOut(message="Your account has been deleted")
 
 
 @router.get("/me", response_model=MeResponse)
@@ -88,6 +213,7 @@ async def me(
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     from sqlalchemy import select
+
     from src.db.models import User
 
     row = (await db.execute(select(User).where(User.id == user.id))).scalar_one()
@@ -100,6 +226,9 @@ async def me(
         is_platform_admin=user.is_platform_admin,
         platform_role=user.platform_role,
         is_active=bool(row.is_active),
+        portals=sorted(user.portals),
+        permissions=await _permissions(db, user),
+        must_change_password=bool(row.must_change_password),
     )
 
 
@@ -119,10 +248,76 @@ async def update_me(
         is_platform_admin=user.is_platform_admin,
         platform_role=user.platform_role,
         is_active=bool(updated.is_active),
+        portals=sorted(user.portals),
+        permissions=await _permissions(db, user),
     )
 
 
+_HANDOFF_TTL = 60
+
+
+def safe_next_path(raw: str | None) -> str:
+    """Only same-site relative paths: blocks open redirects like //evil.com or /\\evil.com."""
+    if not raw or not raw.startswith("/") or raw.startswith("//") or "\\" in raw or "\n" in raw or "\r" in raw:
+        return "/"
+    return raw
+
+
+@router.post("/web-session/code")
+async def web_session_code(user: Annotated[CurrentUser, Depends(get_current_user)]):
+    """Mobile app: exchange the Bearer session for a one-time, 60s code that a WebView redeems
+    at GET /auth/web-session to receive the web portal's httpOnly cookies (no token in the URL)."""
+    code = secrets.token_urlsafe(32)
+    r = await get_redis()
+    await r.setex(
+        f"web_handoff:{code}",
+        _HANDOFF_TTL,
+        json.dumps(
+            {"user_id": str(user.id), "membership_id": str(user.membership_id) if user.membership_id else None},
+            separators=(",", ":"),
+        ),
+    )
+    return {"code": code, "expires_in": _HANDOFF_TTL, "redeem_path": "/api/v1/auth/web-session"}
+
+
+@router.get("/web-session")
+@public
+async def web_session_redeem(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    code: str = Query(..., min_length=16, max_length=128),
+    next: str | None = Query(default=None),
+):
+    """WebView lands here with a one-time code; sets auth cookies and redirects into the portal."""
+    from uuid import UUID
+
+    r = await get_redis()
+    key = f"web_handoff:{code}"
+    raw = await r.get(key)
+    if not raw:
+        raise UnauthorizedError("Sign-in link expired. Please try again from the app.")
+    await r.delete(key)
+    meta = json.loads(raw)
+    svc = AuthService(db)
+    user = await svc.repo.get_user(UUID(meta["user_id"]))
+    if user is None:
+        raise UnauthorizedError("Account not found")
+    membership = UUID(meta["membership_id"]) if meta.get("membership_id") else None
+    token = await svc._issue_session_for_user(user, membership_id=membership)
+    await db.commit()
+    if not token.access_token:
+        raise UnauthorizedError("Could not start a web session")
+    settings = get_settings()
+    response = RedirectResponse(
+        url=f"{settings.web_app_url.rstrip('/')}{safe_next_path(next)}", status_code=302
+    )
+    _attach(response, token)
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    return response
+
+
 @router.get("/cognito/google/start")
+@public
 async def cognito_google_start(
     next: str | None = Query(default=None),
 ):
@@ -135,6 +330,7 @@ async def cognito_google_start(
 
 
 @router.get("/cognito/callback")
+@public
 async def cognito_callback(
     db: Annotated[AsyncSession, Depends(get_db)],
     code: str = Query(...),
@@ -170,6 +366,7 @@ async def cognito_callback(
 
 
 @router.get("/cognito/result", response_model=TokenResponse)
+@public
 async def cognito_result(state: str = Query(...)):
     """Frontend polls this once to fetch the issued Sybeez JWT after OAuth."""
     r = await get_redis()

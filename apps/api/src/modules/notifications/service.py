@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import json
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,6 +21,37 @@ NON_DISABLEABLE = {
     NotificationType.LEAVE_REJECTED.value,
     NotificationType.PAYSLIP_PUBLISHED.value,
 }
+
+
+@asynccontextmanager
+async def notification_fanout_scope(db: AsyncSession, school_id: UUID | None):
+    """Let a staff action (teacher publishes homework, marks attendance) write notification
+    rows owned by *other* users of the same school.
+
+    notifications/notification_preferences are user-private under RLS, so a teacher session
+    could not insert a student's notification (403 "outside your school, class, or child
+    scope"). The role policy is relaxed only for this block and only transaction-locally;
+    the school policy's WITH CHECK still pins every written row to the session's school.
+    """
+    tenant = db.info.get("rls_tenant") if isinstance(db.info.get("rls_tenant"), dict) else None
+    session_school = (tenant or {}).get("school_id") or ""
+    scoped = (
+        school_id is not None
+        and tenant is not None
+        and tenant.get("bypass") != "on"
+        and session_school == str(school_id)
+    )
+    if not scoped:
+        yield
+        return
+    await db.execute(text("SELECT set_config('app.rls_bypass', 'on', true)"))
+    try:
+        yield
+        # Flush pending rows while the scope is open, so they are not autoflushed later
+        # under the caller's narrower role policy.
+        await db.flush()
+    finally:
+        await db.execute(text("SELECT set_config('app.rls_bypass', 'off', true)"))
 
 
 def _utcnow() -> datetime:
@@ -64,6 +96,40 @@ async def create_in_app_notification(
 
     Respects user preferences. Returns existing row on duplicate event_key.
     """
+    async with notification_fanout_scope(db, school_id):
+        return await _create_in_app(
+            db,
+            school_id=school_id,
+            user_id=user_id,
+            title=title,
+            body=body,
+            category=category,
+            link_path=link_path,
+            meta=meta,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            priority=priority,
+            event_key=event_key,
+            expires_at=expires_at,
+        )
+
+
+async def _create_in_app(
+    db: AsyncSession,
+    *,
+    school_id: UUID | None,
+    user_id: UUID,
+    title: str,
+    body: str,
+    category: str | None,
+    link_path: str | None,
+    meta: dict | None,
+    entity_type: str | None,
+    entity_id: UUID | None,
+    priority: str,
+    event_key: str | None,
+    expires_at: datetime | None,
+) -> Notification | None:
     if not await _in_app_allowed(db, user_id, category):
         return None
 
@@ -117,6 +183,38 @@ async def create_bulk_notifications(
     """Bulk-create notifications. Returns count of rows inserted/attempted."""
     if not recipient_user_ids:
         return 0
+    async with notification_fanout_scope(db, school_id):
+        return await _create_bulk(
+            db,
+            school_id=school_id,
+            recipient_user_ids=recipient_user_ids,
+            title=title,
+            body=body,
+            category=category,
+            link_path=link_path,
+            meta=meta,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            priority=priority,
+            event_key_prefix=event_key_prefix,
+        )
+
+
+async def _create_bulk(
+    db: AsyncSession,
+    *,
+    school_id: UUID | None,
+    recipient_user_ids: list[UUID],
+    title: str,
+    body: str,
+    category: str | None,
+    link_path: str | None,
+    meta: dict | None,
+    entity_type: str | None,
+    entity_id: UUID | None,
+    priority: str,
+    event_key_prefix: str | None,
+) -> int:
     # Deduplicate recipients
     unique_ids = list(dict.fromkeys(recipient_user_ids))
     allowed: list[UUID] = []

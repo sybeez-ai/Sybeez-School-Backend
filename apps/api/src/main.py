@@ -1,3 +1,5 @@
+import asyncio
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -11,6 +13,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from src.api.router import api_router
 from src.core.config import get_settings
+from src.core.csrf import csrf_response
+from src.core.database import AsyncSessionLocal
 from src.core.constants import APP_NAME, APP_VERSION
 from src.core.exceptions import AppError, http_error_body, validation_error_body
 from src.core.logging import setup_logging
@@ -22,12 +26,38 @@ from src.core.middleware import (
     internal_error_response,
 )
 from src.core.redis import close_redis
+from src.modules.platform.bootstrap import bootstrap_superadmin
+
+logger = logging.getLogger(__name__)
+
+
+async def _bootstrap_superadmin() -> None:
+    """Create the platform admin without blocking the process from listening."""
+    try:
+        async with AsyncSessionLocal() as session:
+            try:
+                await bootstrap_superadmin(session)
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
+    except Exception:
+        # A bootstrap or database failure must not keep the process from
+        # listening. The load balancer only needs /health to succeed.
+        logger.exception("Super admin bootstrap failed; continuing startup")
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     setup_logging()
+    bootstrap = asyncio.create_task(_bootstrap_superadmin())
     yield
+    if not bootstrap.done():
+        bootstrap.cancel()
+    try:
+        await bootstrap
+    except asyncio.CancelledError:
+        pass
     await close_redis()
 
 
@@ -55,10 +85,17 @@ def create_app() -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
-        expose_headers=["Content-Disposition", "X-Request-ID"],
+        expose_headers=["Content-Disposition", "X-Request-ID", "X-Total-Count"],
     )
     app.add_middleware(RequestIdMiddleware)
     app.add_middleware(TimingMiddleware)
+
+    @app.middleware("http")
+    async def csrf_middleware(request: Request, call_next):
+        blocked = csrf_response(request)
+        if blocked is not None:
+            return blocked
+        return await call_next(request)
 
     @app.exception_handler(AppError)
     async def app_error_handler(_: Request, exc: AppError):

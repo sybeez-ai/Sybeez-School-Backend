@@ -1,13 +1,15 @@
 """Loan ledger and loss-of-pay audit for daily payroll.
 
-Revision ID: 0041
-Revises: 0040
+Revision ID: 0044
+Revises: 0043
+
+Renumbered from 0041. Finance already uses 0041–0043.
 """
 
 from alembic import op
 
-revision = "0041"
-down_revision = "0040"
+revision = "0044"
+down_revision = "0043"
 branch_labels = None
 depends_on = None
 

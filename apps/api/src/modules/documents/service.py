@@ -1,6 +1,5 @@
 """Business logic for documents / study materials."""
 
-from pathlib import Path
 from uuid import UUID, uuid4
 
 from fastapi import UploadFile
@@ -23,17 +22,13 @@ from src.modules.documents.repository import DocumentRepository
 from src.modules.documents.schemas import DocumentCreate, DocumentOut, DocumentUpdate
 from src.shared.enums import EnrollmentStatus, UserRole
 
-MEDIA_ROOT = Path(__file__).resolve().parents[3] / "media"
-DOCUMENTS_DIR = MEDIA_ROOT / "documents"
 MAX_FILE_BYTES = 20_000_000  # 20 MB
 
 
 def _file_url(file_key: str | None) -> str | None:
-    if not file_key:
-        return None
-    if file_key.startswith("/"):
-        return file_key
-    return f"/media/{file_key}"
+    from src.core.storage import public_url
+
+    return public_url(file_key)
 
 
 class DocumentService:
@@ -323,11 +318,15 @@ class DocumentService:
                 if class_id not in class_ids:
                     raise ForbiddenError("You are not assigned to this class")
 
+        from src.core.storage import put_object
+
         raw, name, mime, size = await self._read_upload(file)
-        DOCUMENTS_DIR.mkdir(parents=True, exist_ok=True)
         key_name = f"{uuid4().hex[:10]}_{name}"
-        (DOCUMENTS_DIR / key_name).write_bytes(raw)
-        file_key = f"documents/{key_name}"
+        file_key = put_object(
+            key=f"documents/{school_id}/{key_name}",
+            data=raw,
+            content_type=mime,
+        )
 
         if class_id is not None:
             classroom = await self.db.get(ClassRoom, class_id)

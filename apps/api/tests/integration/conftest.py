@@ -47,7 +47,9 @@ async def api(db_session):
 
     app.dependency_overrides[get_db] = _get_db
     transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://test", headers={"Origin": "http://test"}
+    ) as client:
         yield client
     app.dependency_overrides.pop(get_db, None)
 
