@@ -20,6 +20,7 @@ from src.modules.auth.schemas import (
     AcceptInviteRequest,
     ChangePasswordRequest,
     CompleteNewPasswordRequest,
+    DeleteAccountRequest,
     ConfirmForgotPasswordRequest,
     ForgotPasswordRequest,
     LoginRequest,
@@ -173,6 +174,37 @@ async def change_password(
         user.id, current_password=body.current_password, new_password=body.new_password
     )
     return MessageOut(message="Password changed")
+
+
+@router.post("/delete-account", response_model=MessageOut)
+async def delete_account(
+    body: DeleteAccountRequest,
+    request: Request,
+    response: Response,
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Permanently delete the signed-in user's account (re-authenticated, audited).
+
+    Personal data is anonymized in place, sessions, tokens and push tokens are destroyed and the
+    Cognito user is removed. School records are retained without personal data.
+    """
+    from src.modules.auth.account_deletion import delete_account as run_delete
+
+    iat = None
+    header = request.headers.get("authorization") or ""
+    if header.lower().startswith("bearer "):
+        from src.core.security import decode_token
+
+        try:
+            iat = int(decode_token(header.split(" ", 1)[1].strip()).get("iat"))
+        except (ValueError, TypeError):
+            iat = None
+    await run_delete(
+        db, user_id=user.id, body=body, token_iat=iat, ip=request.client.host if request.client else None
+    )
+    clear_auth_cookies(response)
+    return MessageOut(message="Your account has been deleted")
 
 
 @router.get("/me", response_model=MeResponse)
