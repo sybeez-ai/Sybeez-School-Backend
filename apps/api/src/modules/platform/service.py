@@ -625,7 +625,7 @@ class PlatformService:
         return inv, raw
 
     async def reset_school_admin_password(
-        self, actor: CurrentUser, school_id: UUID, *, temporary_password: str
+        self, actor: CurrentUser, school_id: UUID, *, temporary_password: str | None = None
     ) -> tuple[str, str]:
         school = await self.repo.get_school(school_id)
         if school is None:
@@ -634,7 +634,17 @@ class PlatformService:
         admin_email, _, _ = await self._primary_admin(school_id)
         if not admin_email:
             raise NotFoundError("School admin not found")
-        await self._reset_password(admin_email, temporary_password)
+        from src.modules.schools.provisioning import issue_temporary_password
+
+        user = (
+            await self.db.execute(select(User).where(User.email == admin_email.lower().strip()))
+        ).scalar_one_or_none()
+        if user is None:
+            raise NotFoundError("User not found")
+        # Cognito (or local fallback), sessions revoked, password change forced at next sign-in.
+        temporary_password = await issue_temporary_password(
+            self.db, user=user, temporary_password=temporary_password
+        )
         await self.audit.write(
             action="platform.school.admin.reset_password",
             actor_id=actor.id,

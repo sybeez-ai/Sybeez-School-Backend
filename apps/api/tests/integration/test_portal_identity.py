@@ -142,6 +142,17 @@ async def test_published_payslip_is_visible_only_to_that_employee(api, db_sessio
         json={"email": email, "password": person["temporary_password"], "portal": "staff"},
     )
     assert signed_in.status_code == 200, signed_in.text
+    assert signed_in.json()["must_change_password"] is True  # admin-issued temporary password
+    tmp = {"Authorization": f"Bearer {signed_in.json()['access_token']}"}
+    changed = await api.post(
+        "/api/v1/auth/change-password",
+        json={"current_password": person["temporary_password"], "new_password": "Own-Staff-Pass-9!"},
+        headers=tmp,
+    )
+    assert changed.status_code == 200, changed.text
+    signed_in = await api.post(
+        "/api/v1/auth/login", json={"email": email, "password": "Own-Staff-Pass-9!", "portal": "staff"}
+    )
     staff = {"Authorization": f"Bearer {signed_in.json()['access_token']}"}
 
     hidden = await api.get(STAFF, headers=staff)

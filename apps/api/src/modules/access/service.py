@@ -208,6 +208,35 @@ class AccessService:
         )
         return membership
 
+    async def reset_member_login(self, actor: CurrentUser, school_id: UUID, membership_id: UUID):
+        """New temporary password for a school member (HR, payroll, finance, staff...). Shown once."""
+        from src.modules.schools.login_reset import LoginCredentialsOut
+        from src.modules.schools.provisioning import issue_temporary_password
+
+        membership = await self._membership(school_id, membership_id)
+        self._reject_self(actor, membership)
+        if membership.role in (UserRole.SCHOOL_ADMIN.value, UserRole.PLATFORM_ADMIN.value):
+            raise ConflictError("School admin passwords are reset by Sybeez support")
+        if membership.status != MembershipStatus.ACTIVE.value:
+            raise ConflictError("Only active members can have their login reset")
+        user = await self.db.get(User, membership.user_id)
+        if user is None or user.is_platform_admin:
+            raise NotFoundError("Login account not found")
+        temp = await issue_temporary_password(self.db, user=user)
+        await write_audit(
+            self.db,
+            school_id=school_id,
+            actor_id=actor.id,
+            action="login.reset",
+            resource_type="user",
+            resource_id=str(user.id),
+            message=f"Temporary password issued for {membership.role} login",
+            details={"membership_id": str(membership.id), "role": membership.role},
+        )
+        return LoginCredentialsOut(
+            user_id=user.id, email=user.email, temporary_password=temp, login_path="/login"
+        )
+
     async def set_override(
         self, actor: CurrentUser, school_id: UUID, membership_id: UUID, data: PermissionChangeIn
     ) -> MembershipPermissionOverride:

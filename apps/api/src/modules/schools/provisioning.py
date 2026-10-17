@@ -18,9 +18,8 @@ from src.shared.enums import MembershipStatus, UserRole
 
 logger = logging.getLogger(__name__)
 
-# Roles whose admin-issued temporary password must be changed at first sign-in.
-# HR/payroll/staff logins keep their existing flow (HRM portal + mobile) for now.
-FORCED_CHANGE_ROLES = frozenset({UserRole.STUDENT, UserRole.TEACHER, UserRole.PARENT})
+# Every admin-issued temporary password must be replaced at first sign-in, for all roles
+# (the web AuthProvider and the mobile app both handle must_change_password).
 
 
 async def get_or_create_user(
@@ -189,7 +188,7 @@ async def create_school_user(
     membership = await ensure_membership(
         db, user_id=user.id, school_id=school_id, role=role, actor_id=actor_id
     )
-    if temp and role in FORCED_CHANGE_ROLES:
+    if temp:
         # An admin-issued password is temporary: the person must choose their own at first login.
         user.must_change_password = True
     return user, membership, temp
