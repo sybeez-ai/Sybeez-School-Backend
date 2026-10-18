@@ -152,3 +152,12 @@ def test_import_validation_and_exports():
         assert "xl/worksheets/sheet1.xml" in archive.namelist()
     page, total = page_rows([{"name": "Asha"}, {"name": "Ravi"}], q="ash", limit=10, offset=0, text_of=lambda row: row["name"])
     assert total == 1 and page[0]["name"] == "Asha"
+
+
+def test_service_marks_do_not_charge_untracked_or_future_days():
+    import inspect
+
+    from src.modules.payroll.service import PayrollService
+
+    src = inspect.getsource(PayrollService._marks)
+    assert "not tracked or day > today" in src

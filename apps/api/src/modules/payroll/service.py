@@ -1076,7 +1076,7 @@ class PayrollService(PayrollFlow):
         run = PayrollRun(
             id=uuid4(),
             school_id=self.school_id,
-            label=period_label(period_start, period_end),
+            label=(period_label(period_start, period_end) + (f" · {reason.strip()[:80]}" if source == "MANUAL" and reason and reason.strip() else "")),
             period_start=period_start,
             period_end=period_end,
             status="DRAFT",
@@ -1353,10 +1353,16 @@ class PayrollService(PayrollFlow):
                 paid.add(day)
                 day += timedelta(days=1)
         marks = []
+        today = date.today()
+        # Unmarked days only cost pay when attendance is actually being kept for this employee in the period
+        # and the day has already happened. No marks at all, or a day still in the future, is not "absent".
+        tracked = bool(by_day)
         for day in working_days(start, end, weekly, holidays):
             status = by_day.get(day, "UNMARKED")
             if status == "UNMARKED" and day in paid:
                 status = "LEAVE"
+            elif status == "UNMARKED" and (not tracked or day > today):
+                status = "PRESENT"
             marks.append(DayMark(day, status, paid_leave=day in paid))
         return marks
 
@@ -1541,7 +1547,7 @@ class PayrollService(PayrollFlow):
                         )
                     )
                 ).scalar_one_or_none()
-            payload = _pdf_payload(school, settings, run, slip, lines, employee, profile, bank, code=await self._employee_code(employee))
+            payload = _pdf_payload(school, settings, run, slip, lines, employee, profile, bank, code=await self._employee_code(employee), name=await self._employee_name(employee))
             try:
                 pdf = build_payslip_pdf(payload)
                 key = f"schools/{self.school_id}/payslips/{slip.id}.pdf"
@@ -1679,7 +1685,7 @@ class PayrollService(PayrollFlow):
         )
         employee = await self.db.get(Employee, slip.employee_id) if slip.employee_id else None
         pdf = build_payslip_pdf(
-            _pdf_payload(school, settings_row, run, slip, lines, employee, None, None, code=await self._employee_code(employee))
+            _pdf_payload(school, settings_row, run, slip, lines, employee, None, None, code=await self._employee_code(employee), name=await self._employee_name(employee))
         )
         return pdf, f"payslip-{slip.id}.pdf"
 
@@ -1763,6 +1769,21 @@ class PayrollService(PayrollFlow):
             "esi_deducted": str(totals.get("ESI", _ZERO)),
             "snapshot": latest,
         }
+
+    async def _employee_name(self, employee) -> str | None:
+        """Real name for documents: the linked login's name, else the employee record's."""
+        if employee is None:
+            return None
+        uid = None
+        if employee.teacher_id:
+            teacher = await self.db.get(Teacher, employee.teacher_id)
+            uid = teacher.user_id if teacher else None
+        uid = uid or employee.user_id
+        if uid:
+            user = await self.db.get(User, uid)
+            if user and user.full_name:
+                return user.full_name
+        return employee.full_name or None
 
     async def _employee_code(self, employee: Employee | None) -> str | None:
         """Teaching staff keep their code on the teacher record; HRM shows the same fallback."""
@@ -2364,7 +2385,7 @@ def _pay_dict(pay) -> dict:
     }
 
 
-def _pdf_payload(school, settings, run, slip, lines, employee, profile, bank, code: str | None = None) -> dict:
+def _pdf_payload(school, settings, run, slip, lines, employee, profile, bank, code: str | None = None, name: str | None = None) -> dict:
     def _bucket(kind):
         return [{"name": line.name, "amount": str(line.amount)} for line in lines if line.kind == kind]
 
@@ -2377,7 +2398,7 @@ def _pdf_payload(school, settings, run, slip, lines, employee, profile, bank, co
         "accent_color": settings.accent_color,
         "school_name": school.name if school else "Sybeez School",
         "period": f"{run.period_start.isoformat()} to {run.period_end.isoformat()}" if run else "",
-        "employee_name": (employee.full_name if employee and employee.full_name else "Employee"),
+        "employee_name": name or (employee.full_name if employee and employee.full_name else "Employee"),
         "employee_code": code or (employee.employee_code if employee else None),
         "pan_masked": pan,
         "uan": profile.uan if profile else None,
