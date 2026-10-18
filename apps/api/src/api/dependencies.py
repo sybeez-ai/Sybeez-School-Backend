@@ -37,6 +37,20 @@ async def get_current_user(
     creds: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> CurrentUser:
+    """Resolve the caller once per request (the feature gate and the route both ask for it)."""
+    cached = getattr(request.state, "current_user", None)
+    if cached is not None:
+        return cached
+    user = await _resolve_current_user(request, creds, db)
+    request.state.current_user = user
+    return user
+
+
+async def _resolve_current_user(
+    request: Request,
+    creds: HTTPAuthorizationCredentials | None,
+    db: AsyncSession,
+) -> CurrentUser:
     from src.core.config import get_settings
 
     settings = get_settings()
