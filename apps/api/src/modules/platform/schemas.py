@@ -186,7 +186,7 @@ class SchoolAdminMfaRecoveryOut(BaseModel):
 class SchoolAdminDirectoryOut(BaseModel):
     id: UUID
     full_name: str
-    email: EmailStr
+    email: str  # output only: never 500 a directory listing over a stored address
     school_id: UUID
     school_name: str
     role: str

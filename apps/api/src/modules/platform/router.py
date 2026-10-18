@@ -56,6 +56,18 @@ from src.shared.pagination import Page, PageQuery
 router = APIRouter(prefix="/platform", tags=["platform"])
 
 
+async def _platform_read_scope(db: AsyncSession) -> None:
+    """Cross-school, read-only aggregation for platform staff.
+
+    Tenant tables are forced-RLS, so a platform session (no school) would see zero students, memberships and
+    audit rows. These endpoints are already limited to platform members; the bypass is transaction-local and
+    only these read handlers call it.
+    """
+    from sqlalchemy import text
+
+    await db.execute(text("SELECT set_config('app.rls_bypass', 'on', true)"))
+
+
 async def _actor_user(db: AsyncSession, actor: CurrentUser) -> User:
     return (await db.execute(select(User).where(User.id == actor.id))).scalar_one()
 
@@ -65,6 +77,7 @@ async def dashboard(
     db: Annotated[AsyncSession, Depends(get_db)],
     _: Annotated[CurrentUser, Depends(require_platform_member)],
 ):
+    await _platform_read_scope(db)
     counts = await PlatformService(db).dashboard()
     return PlatformDashboard(**counts)
 
@@ -303,6 +316,7 @@ async def list_school_admins(
     q: str | None = Query(default=None),
     school_id: UUID | None = Query(default=None),
 ):
+    await _platform_read_scope(db)
     items, total = await PlatformService(db).list_school_admins(
         q=q, school_id=school_id, page=page, page_size=page_size
     )
@@ -315,6 +329,7 @@ async def get_school_admin(
     db: Annotated[AsyncSession, Depends(get_db)],
     _: Annotated[CurrentUser, Depends(require_roles(UserRole.PLATFORM_ADMIN))],
 ):
+    await _platform_read_scope(db)
     return await PlatformService(db).get_school_admin(admin_id)
 
 
@@ -325,6 +340,7 @@ async def platform_activity(
     school_id: UUID | None = Query(default=None),
     limit: int = Query(200, ge=1, le=500),
 ):
+    await _platform_read_scope(db)
     return await AuditService(db).list_platform_activity(
         actor_id=actor.id,
         is_admin=(
