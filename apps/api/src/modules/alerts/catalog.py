@@ -44,6 +44,8 @@ SAMPLE_VALUES: dict[str, str] = {
     "leave_type": "Paid leave",
     "from_date": "20 Oct 2026",
     "to_date": "21 Oct 2026",
+    "time": "09:00",
+    "class_name": "Class 5-A",
     "title": "School closed Friday",
     "preview": "The campus is closed on 16 Oct for a holiday.",
 }
@@ -81,6 +83,7 @@ EVENT_NOTIFICATION_TYPE = {
     "lop_update": "LOP_UPDATE",
     "leave_approved": "LEAVE_APPROVED",
     "announcement": "ANNOUNCEMENT",
+    "substitute_assigned": "SYSTEM",
     "progress_update": "PROGRESS_UPDATE",
 }
 
@@ -107,6 +110,7 @@ _RUN = ("period_label", "employee_count", "school_name")
 _LOP = ("employee_name", "period_label", "lop_days", "school_name")
 _LEAVE = ("employee_name", "leave_type", "from_date", "to_date", "school_name")
 _ANN = ("title", "preview", "school_name")
+_SUB = ("employee_name", "date", "time", "class_name", "school_name")
 
 DEFAULT_TEMPLATES: tuple[TemplateSeed, ...] = (
     _seed("student_absent", "en", _ABSENT, "{{1}} was absent on {{2}}. - {{3}}", "{#var#} was absent on {#var#}. - {#var#}"),
@@ -283,6 +287,9 @@ DEFAULT_TEMPLATES: tuple[TemplateSeed, ...] = (
         "{{1}}, {{3}} முதல் {{4}} வரையிலான {{2}} விடுப்பு அங்கீகரிக்கப்பட்டது. - {{5}}",
         "{#var#}, {#var#} முதல் {#var#} வரையிலான {#var#} விடுப்பு அங்கீகரிக்கப்பட்டது. - {#var#}",
     ),
+    _seed("substitute_assigned", "en", _SUB, "{{1}}, you are covering {{4}} on {{2}} at {{3}}. - {{5}}", ""),
+    _seed("substitute_assigned", "hi", _SUB, "{{1}}, आप {{2}} को {{3}} बजे {{4}} की कक्षा संभालेंगे। - {{5}}", ""),
+    _seed("substitute_assigned", "ta", _SUB, "{{1}}, {{2}} அன்று {{3}} மணிக்கு {{4}} வகுப்பை நீங்கள் கவனிக்க வேண்டும். - {{5}}", ""),
     _seed(
         "announcement",
         "en",
