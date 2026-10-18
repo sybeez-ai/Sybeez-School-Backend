@@ -155,8 +155,8 @@ class AiReportsService:
                 {
                     "school_id": str(school_id),
                     "student_id": str(student_id),
-                    "start": period_start.isoformat(),
-                    "end": period_end.isoformat(),
+                    "start": period_start,
+                    "end": period_end,
                 },
             )
         ).mappings().all()
@@ -172,16 +172,20 @@ class AiReportsService:
                     LEFT JOIN homework_submissions hs ON hs.homework_id = h.id
                                                      AND hs.student_id = :student_id
                     WHERE h.school_id = :school_id
-                      AND h.due_date BETWEEN :start AND :end
-                    ORDER BY h.due_date DESC
+                      AND h.due_at::date BETWEEN :start AND :end
+                      AND h.class_id IN (
+                          SELECT e.class_id FROM enrollments e
+                          WHERE e.student_id = :student_id AND e.status = 'ACTIVE'
+                      )
+                    ORDER BY h.due_at DESC
                     LIMIT 10
                     """
                 ),
                 {
                     "school_id": str(school_id),
                     "student_id": str(student_id),
-                    "start": period_start.isoformat(),
-                    "end": period_end.isoformat(),
+                    "start": period_start,
+                    "end": period_end,
                 },
             )
         ).mappings().all()
@@ -213,8 +217,8 @@ class AiReportsService:
                 {
                     "school_id": str(school_id),
                     "student_id": str(student_id),
-                    "start": period_start.isoformat(),
-                    "end": period_end.isoformat(),
+                    "start": period_start,
+                    "end": period_end,
                 },
             )
         ).mappings().all()
@@ -238,8 +242,8 @@ class AiReportsService:
                 {
                     "school_id": str(school_id),
                     "student_id": str(student_id),
-                    "start": period_start.isoformat(),
-                    "end": period_end.isoformat(),
+                    "start": period_start,
+                    "end": period_end,
                 },
             )
         ).mappings().all()
