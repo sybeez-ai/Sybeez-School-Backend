@@ -106,6 +106,12 @@ class CommunicationService:
         u = await self.db.get(User, user_id)
         return u.full_name if u else None
 
+    async def _user_email(self, user_id: UUID | None) -> str | None:
+        if not user_id:
+            return None
+        u = await self.db.get(User, user_id)
+        return u.email if u else None
+
     async def _audit(
         self,
         school_id: UUID,
@@ -1334,7 +1340,7 @@ class CommunicationService:
                     parent = await self.db.get(Parent, link.parent_id)
                     if not parent:
                         continue
-                    pname = parent.full_name or await self._user_name(parent.user_id)
+                    pname = await self._user_name(parent.user_id)
                     await add(
                         contact_user_id=parent.user_id,
                         full_name=pname,
@@ -1360,12 +1366,12 @@ class CommunicationService:
                 await self.db.execute(select(Parent).where(Parent.school_id == school_id))
             ).scalars().all()
             for p in parents:
-                pname = p.full_name or await self._user_name(p.user_id)
+                pname = await self._user_name(p.user_id)
                 await add(
                     contact_user_id=p.user_id,
                     full_name=pname,
                     contact_role="PARENT",
-                    detail=p.email,
+                    detail=await self._user_email(p.user_id),
                 )
             students = (
                 await self.db.execute(select(Student).where(Student.school_id == school_id))
