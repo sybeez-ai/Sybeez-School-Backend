@@ -76,7 +76,7 @@ class AdmissionApplicationOut(BaseModel):
     created_by: UUID | None
     first_name: str
     last_name: str
-    email: EmailStr
+    email: str
     phone: str | None
     date_of_birth: date | None
     desired_grade_id: UUID | None
