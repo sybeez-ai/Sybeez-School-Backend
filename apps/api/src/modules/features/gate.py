@@ -20,7 +20,8 @@ PLATFORM_ROLES = {UserRole.PLATFORM_ADMIN, UserRole.PLATFORM_STAFF}
 
 def disabled_error(label: str, locked_by: str | None) -> ForbiddenError:
     who = "Sybeez" if locked_by == "platform" else "your school admin"
-    return ForbiddenError(f"{label} is turned off for your school by {who}.", code="feature_disabled")
+    scope = "your account" if locked_by == "staff" else "your school"
+    return ForbiddenError(f"{label} is turned off for {scope} by {who}.", code="feature_disabled")
 
 
 async def feature_gate(
@@ -44,7 +45,7 @@ async def feature_gate(
     keys = [k for k in (feature_for_path(path), PORTAL_FOR_ROLE.get(user.role.value)) if k]
     if not keys:
         return
-    a = await access_for(db, user.school_id, keys)
+    a = await access_for(db, user.school_id, keys, user.membership_id)
     if not a.enabled:
         label = FEATURES.get(a.key or "", {}).get("label", "This feature")
         raise disabled_error(label, a.locked_by)

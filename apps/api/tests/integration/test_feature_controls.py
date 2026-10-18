@@ -125,3 +125,36 @@ async def test_platform_changes_are_audited(api, db_session):  # noqa: F811
     n = (await db_session.execute(text("SELECT count(*) FROM audit_logs WHERE details->>'school_id' = :s AND action = 'feature.platform_rule'"), {"s": str(w.school_id)})).scalar_one()
     assert n == 1
     service.invalidate()
+
+
+async def test_per_staff_feature_limit(api, db_session):  # noqa: F811
+    w = await build_world(db_session)
+    await db_session.commit()
+    mid = {}
+    for name, p in (("t1", w.teacher), ("t2", w.teacher2)):
+        mid[name] = (await db_session.execute(
+            text("SELECT id FROM school_memberships WHERE user_id = :u AND school_id = :s"),
+            {"u": p.user_id, "s": w.school_id})).scalar_one()
+    tok = {n: {"Authorization": "Bearer " + create_access_token(subject=p.user_id, role="TEACHER", school_id=w.school_id, membership_id=mid[n])}
+           for n, p in (("t1", w.teacher), ("t2", w.teacher2))}
+    url = "/api/v1/online-tests"
+    base = (await api.get(url, headers=tok["t1"])).status_code
+    assert base != 403
+    r = await api.put(f"/api/v1/features/members/{mid['t1']}/online_tests", json={"enabled": False}, headers=w.admin.h)
+    assert r.status_code == 200 and r.json()["off"] == ["online_tests"], r.text
+    blocked = await api.get(url, headers=tok["t1"])
+    assert blocked.status_code == 403 and blocked.json()["error"]["code"] == "feature_disabled"
+    assert (await api.get(url, headers=tok["t2"])).status_code == base  # colleague unaffected
+    me = {f["key"]: f for f in (await api.get("/api/v1/features/me", headers=tok["t1"])).json()}
+    assert me["online_tests"]["enabled"] is False
+    # only the school admin, only in their own school, never themselves
+    assert (await api.put(f"/api/v1/features/members/{mid['t2']}/fees", json={"enabled": False}, headers=w.teacher.h)).status_code == 403
+    assert (await api.put(f"/api/v1/features/members/{mid['t2']}/fees", json={"enabled": False}, headers=w.other_admin.h)).status_code == 404
+    assert (await api.get(f"/api/v1/features/members/{mid['t1']}", headers=w.other_admin.h)).status_code == 404
+    admin_mid = (await db_session.execute(text("SELECT id FROM school_memberships WHERE user_id = :u"), {"u": w.admin.user_id})).scalar_one()
+    assert (await api.put(f"/api/v1/features/members/{admin_mid}/fees", json={"enabled": False}, headers=w.admin.h)).status_code == 403
+    # restoring
+    await api.put(f"/api/v1/features/members/{mid['t1']}/online_tests", json={"enabled": True}, headers=w.admin.h)
+    assert (await api.get(url, headers=tok["t1"])).status_code == base
+    n = (await db_session.execute(text("SELECT count(*) FROM audit_logs WHERE school_id = :s AND action = 'feature.member_switch'"), {"s": w.school_id})).scalar_one()
+    assert n == 2
