@@ -126,6 +126,13 @@ class Settings(BaseSettings):
     s3_bucket: str = ""
     s3_region: str = ""
     s3_public_base_url: str = ""
+    # Virus scanning of every stored upload. "none" (default, off) or "clamav" (clamd reachable at host:port).
+    virus_scan_provider: str = "none"
+    clamav_host: str = ""
+    clamav_port: int = 3310
+    clamav_timeout_seconds: int = 20
+    # When scanning is on and the scanner is unreachable: refuse the upload (true) or store it unscanned (false).
+    virus_scan_fail_closed: bool = True
     payroll_rate_limit_per_minute: int = 120
     # Payroll assistant. local answers from the payroll tools without an outbound model.
     # openai uses an OpenAI-compatible chat API. ai_service reuses AI_SERVICE_URL.
