@@ -37,6 +37,7 @@ from src.db.models.online_test import (
 )
 from src.db.models.parent_messages import MessageTranslation, ParentMessagePreference, StudentProgressUpdate
 from src.db.models.reading import ReadingPassage, ReadingProgress, ReadingSession
+from src.db.models.feature_controls import PlatformFeatureRule, SchoolFeatureSetting
 from src.db.models.school_ops import AiGradeSuggestion, FamilyDocument, SubstituteAssignment
 from src.db.models.personal_note import PersonalNote
 from src.db.models.push_device import PushDevice
@@ -368,6 +369,8 @@ __all__ = [
     "SubstituteAssignment",
     "AiGradeSuggestion",
     "FamilyDocument",
+    "PlatformFeatureRule",
+    "SchoolFeatureSetting",
     "AlertInboundMessage",
     "AlertChannelOptOut",
     "AlertAuditLog",
