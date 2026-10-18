@@ -207,3 +207,23 @@ async def internal_run_daily_summaries(db: Annotated[AsyncSession, Depends(get_d
             await db.rollback()
             logging.getLogger("sybeez.daily_summary").exception("daily summary failed for a school")
     return {"schools": len(school_ids), "sent": sent}
+
+
+@router.post("/cognito/sync-groups/run-all", dependencies=[Depends(require_internal_token)])
+async def internal_sync_cognito_groups(db: Annotated[AsyncSession, Depends(get_db)], limit: int = Query(500, ge=1, le=2000)):
+    """Reconcile Cognito groups with database roles for users that live in the pool. Groups are informational only."""
+    from src.db.models import User
+    from src.modules.auth import cognito as cognito_svc
+    from src.modules.fees.tenant import set_rls_bypass
+    from src.modules.schools.provisioning import sync_cognito_groups
+
+    if not cognito_svc.cognito_configured():
+        return {"checked": 0, "synced": 0, "skipped": "cognito not configured"}
+    await set_rls_bypass(db, True)
+    users = (
+        await db.execute(select(User).where(User.cognito_sub.is_not(None), User.is_active.is_(True)).limit(limit))
+    ).scalars().all()
+    ok = 0
+    for user in users:
+        ok += 1 if await sync_cognito_groups(db, user) else 0
+    return {"checked": len(users), "synced": ok}

@@ -599,3 +599,63 @@ def delete_user_after_deletion(*, email: str) -> bool:
 
 def reenable_user(*, email: str) -> None:
     admin_set_enabled(email=email, enabled=True)
+
+
+# ── groups (informational claims only: the database role is always the authority) ──────────────────────────
+GROUP_FOR_ROLE = {
+    "PLATFORM_ADMIN": "PLATFORM_ADMIN",
+    "PLATFORM_STAFF": "PLATFORM_STAFF",
+    "SCHOOL_ADMIN": "SCHOOL_ADMIN",
+    "TEACHER": "TEACHER",
+    "STUDENT": "STUDENT",
+    "PARENT": "PARENT",
+    "HR_MANAGER": "HRM",
+    "HR": "HRM",
+    "PAYROLL_ADMIN": "FINANCE",
+    "PAYROLL_APPROVER": "FINANCE",
+    "ACCOUNTANT": "FINANCE",
+    "CASHIER": "FINANCE",
+    "AUDITOR": "FINANCE",
+    "FINANCE": "FINANCE",
+    "STAFF": "STAFF",
+}
+MANAGED_GROUPS = frozenset(GROUP_FOR_ROLE.values())
+
+
+def groups_for_roles(roles) -> set[str]:
+    return {GROUP_FOR_ROLE[str(r)] for r in roles if str(r) in GROUP_FOR_ROLE}
+
+
+def sync_user_groups(*, email: str, roles) -> bool:
+    """Make the pool user's managed groups equal the groups for ``roles``. Best effort: never raises.
+
+    Groups are informational. Authorization always comes from school_memberships in the database, so a failure here
+    (or a stale group) never grants or removes access.
+    """
+    if not cognito_configured():
+        return False
+    s = get_settings()
+    want = groups_for_roles(roles)
+    try:
+        client = _client()
+        username = _resolve_username(email)
+        have: set[str] = set()
+        token = None
+        while True:
+            kw = {"UserPoolId": s.cognito_user_pool_id, "Username": username}
+            if token:
+                kw["NextToken"] = token
+            page = client.admin_list_groups_for_user(**kw)
+            have |= {g["GroupName"] for g in page.get("Groups", [])}
+            token = page.get("NextToken")
+            if not token:
+                break
+        for g in sorted(want - have):
+            client.admin_add_user_to_group(UserPoolId=s.cognito_user_pool_id, Username=username, GroupName=g)
+        for g in sorted((have & MANAGED_GROUPS) - want):
+            client.admin_remove_user_from_group(UserPoolId=s.cognito_user_pool_id, Username=username, GroupName=g)
+        return True
+    except Exception as exc:  # noqa: BLE001
+        code = (getattr(exc, "response", None) or {}).get("Error", {}).get("Code") or type(exc).__name__
+        logger.warning("Cognito group sync failed (%s)", code)
+        return False
