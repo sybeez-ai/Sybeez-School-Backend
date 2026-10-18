@@ -37,7 +37,7 @@ from src.db.models.online_test import (
 )
 from src.db.models.parent_messages import MessageTranslation, ParentMessagePreference, StudentProgressUpdate
 from src.db.models.reading import ReadingPassage, ReadingProgress, ReadingSession
-from src.db.models.school_ops import AiGradeSuggestion, SubstituteAssignment
+from src.db.models.school_ops import AiGradeSuggestion, FamilyDocument, SubstituteAssignment
 from src.db.models.personal_note import PersonalNote
 from src.db.models.push_device import PushDevice
 from src.db.models.permission import MembershipPermissionOverride, Permission, RolePermission
@@ -367,6 +367,7 @@ __all__ = [
     "SchoolAlertSettings",
     "SubstituteAssignment",
     "AiGradeSuggestion",
+    "FamilyDocument",
     "AlertInboundMessage",
     "AlertChannelOptOut",
     "AlertAuditLog",

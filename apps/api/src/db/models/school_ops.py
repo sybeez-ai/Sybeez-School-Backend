@@ -74,3 +74,26 @@ class AiGradeSuggestion(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class FamilyDocument(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """A progress card, mark sheet or certificate for one student. Family-only: teachers never see these."""
+
+    __tablename__ = "family_documents"
+
+    school_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    student_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("students.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    doc_type: Mapped[str] = mapped_column(String(20), nullable=False)  # PROGRESS_CARD|MARK_SHEET|CERTIFICATE|TC|OTHER
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    academic_year: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    file_key: Mapped[str] = mapped_column(String(500), nullable=False)  # private; never returned to clients
+    file_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    mime_type: Mapped[str] = mapped_column(String(80), nullable=False)
+    file_size: Mapped[int] = mapped_column(nullable=False)
+    uploaded_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
