@@ -43,7 +43,7 @@ def _load(path: Path, name: str):
 
 
 def test_every_template_placeholder_matches_variables():
-    assert len(DEFAULT_TEMPLATES) == 50
+    assert len(DEFAULT_TEMPLATES) == 53
     keys = {seed.event_key for seed in DEFAULT_TEMPLATES}
     assert keys == {
         "student_absent",

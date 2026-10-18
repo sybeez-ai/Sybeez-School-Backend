@@ -1457,3 +1457,85 @@ Locale `pa`. Variables, in order: title, preview, school_name.
   ]
 }
 ```
+
+
+Locale `en`. Variables, in order: employee_name, date, time, class_name, school_name.
+
+```json
+{
+  "name": "sybeez_substitute_assigned_en",
+  "language": "en",
+  "category": "UTILITY",
+  "components": [
+    {
+      "type": "BODY",
+      "text": "{{1}}, you are covering {{4}} on {{2}} at {{3}}. - {{5}}",
+      "example": {
+        "body_text": [
+          [
+            "Meera Iyer",
+            "11 Oct 2026",
+            "09:00",
+            "Class 5-A",
+            "Sybeez Public School"
+          ]
+        ]
+      }
+    }
+  ]
+}
+```
+
+Locale `hi`. Variables, in order: employee_name, date, time, class_name, school_name.
+
+```json
+{
+  "name": "sybeez_substitute_assigned_hi",
+  "language": "hi",
+  "category": "UTILITY",
+  "components": [
+    {
+      "type": "BODY",
+      "text": "{{1}}, आप {{2}} को {{3}} बजे {{4}} की कक्षा संभालेंगे। - {{5}}",
+      "example": {
+        "body_text": [
+          [
+            "Meera Iyer",
+            "11 Oct 2026",
+            "09:00",
+            "Class 5-A",
+            "Sybeez Public School"
+          ]
+        ]
+      }
+    }
+  ]
+}
+```
+
+Locale `ta`. Variables, in order: employee_name, date, time, class_name, school_name.
+
+```json
+{
+  "name": "sybeez_substitute_assigned_ta",
+  "language": "ta",
+  "category": "UTILITY",
+  "components": [
+    {
+      "type": "BODY",
+      "text": "{{1}}, {{2}} அன்று {{3}} மணிக்கு {{4}} வகுப்பை நீங்கள் கவனிக்க வேண்டும். - {{5}}",
+      "example": {
+        "body_text": [
+          [
+            "Meera Iyer",
+            "11 Oct 2026",
+            "09:00",
+            "Class 5-A",
+            "Sybeez Public School"
+          ]
+        ]
+      }
+    }
+  ]
+}
+```

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import calendar
+import logging
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
@@ -196,7 +197,35 @@ class SchoolOpsService:
                 link_path="/teacher/timetable",
                 event_key=f"SUBSTITUTE:{row.id}",
             )
+            await self._whatsapp_cover(school_id, teacher, row, entry, on)
         return row
+
+    async def _whatsapp_cover(self, school_id: UUID, teacher: Teacher, row: SubstituteAssignment, entry, on: date) -> None:
+        """WhatsApp the covering teacher. Inert unless the school's WhatsApp switch, Meta credentials and the
+        teacher's own opt-in are all on. Never raises: a failed message must not undo the assignment."""
+        try:
+            async with self.db.begin_nested():
+                from src.modules.alerts.service import dispatch_alert, school_display_name
+
+                teacher_user = await self.db.get(User, teacher.user_id)
+                classroom = await self.db.get(ClassRoom, entry.class_id)
+                await dispatch_alert(
+                    self.db,
+                    school_id=school_id,
+                    event_key="substitute_assigned",
+                    variables={
+                        "employee_name": teacher_user.full_name if teacher_user else "Teacher",
+                        "date": on.strftime("%d %b %Y"),
+                        "time": entry.starts_at.strftime("%H:%M"),
+                        "class_name": getattr(classroom, "name", None) or "a class",
+                        "school_name": await school_display_name(self.db, school_id),
+                    },
+                    explicit_user_ids=[teacher.user_id],
+                    dedupe_key=f"substitute:{row.id}",
+                    link_path="/teacher/timetable",
+                )
+        except Exception:  # noqa: BLE001
+            logging.getLogger(__name__).exception("substitute WhatsApp notification failed")
 
     async def cancel(self, user: CurrentUser, assignment_id: UUID) -> None:
         school_id = self._sid(user)
