@@ -61,6 +61,7 @@ AUDIT_READ = {
     UserRole.ACCOUNTANT.value,
     UserRole.AUDITOR.value,
 }
+PORTAL_ONLY_ROLES = {UserRole.ACCOUNTANT.value, UserRole.HR_MANAGER.value}
 # Approver-only users do not see the payroll dashboard.
 DASHBOARD = {
     UserRole.SCHOOL_ADMIN.value,
@@ -120,6 +121,10 @@ async def require_payroll(db: AsyncSession, user: CurrentUser, allowed: set[str]
         held.add(UserRole.AUDITOR.value)
     if "payroll.approve" in perms and "payroll.approve" not in defaults:
         held.add(UserRole.PAYROLL_APPROVER.value)
+    # Finance (Accountant) and HR Manager are portal roles, not payroll roles: they read or run payroll only
+    # through an explicit payroll grant. HR Managers keep the payroll attendance actions.
+    if role in PORTAL_ONLY_ROLES and role not in extra and not (role == UserRole.HR_MANAGER.value and allowed == ATTENDANCE_ADMIN):
+        held.discard(role)
     held |= extra
     if held.isdisjoint(allowed):
         raise ForbiddenError("You do not have access to this payroll action")
