@@ -145,7 +145,7 @@ class InvitationCreate(BaseModel):
 class InvitationOut(BaseModel):
     id: UUID
     school_id: UUID
-    email: EmailStr
+    email: str
     role: str
     status: str
     expires_at: datetime
@@ -167,14 +167,14 @@ class SchoolAdminLoginCreate(BaseModel):
 
 class SchoolAdminLoginOut(BaseModel):
     user_id: UUID
-    admin_email: EmailStr
+    admin_email: str
     full_name: str
     temporary_password: str
     login_url: str = "/school-admin/login"
 
 
 class SchoolAdminResetPasswordOut(BaseModel):
-    admin_email: EmailStr
+    admin_email: str
     temporary_password: str
 
 
