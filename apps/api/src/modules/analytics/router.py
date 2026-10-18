@@ -16,6 +16,7 @@ from src.modules.analytics.schemas import (
     AnalyticsSettingsOut,
     AnalyticsSettingsUpdate,
 )
+from src.modules.analytics.heatmap import class_heatmap
 from src.modules.analytics.service import AnalyticsService
 from src.shared.enums import UserRole
 
@@ -154,6 +155,20 @@ async def classes(
     if user.role.value == UserRole.TEACHER.value:
         return (await svc.teacher(_sid(user), user.id, f)).classes
     return await svc.classes(_sid(user), f)
+
+
+@router.get("/classes/{section_id}/heatmap")
+async def heatmap(
+    section_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN, UserRole.TEACHER))],
+):
+    """Students x subjects from computed progress. Teachers only see classes they are assigned to."""
+    if user.role.value == UserRole.TEACHER.value:
+        allowed = await AnalyticsService(db)._teacher_class_ids(_sid(user), user.id)
+        if section_id not in allowed:
+            raise ForbiddenError("Not assigned to this class")
+    return await class_heatmap(db, _sid(user), section_id)
 
 
 @router.get("/classes/{section_id}")
