@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 
 class SchoolProfile(BaseModel):
@@ -10,6 +10,13 @@ class SchoolProfile(BaseModel):
     status: str
     timezone: str
     logo_url: str | None = None
+
+    @field_validator("logo_url", mode="before")
+    @classmethod
+    def _logo_path(cls, value):
+        from src.core.storage import school_logo_path
+
+        return school_logo_path(value)
 
     model_config = {"from_attributes": True}
 
