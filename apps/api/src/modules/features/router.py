@@ -11,7 +11,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.api.dependencies import CurrentUser, get_current_user, require_roles
 from src.core.database import get_db
 from src.core.exceptions import ForbiddenError, NotFoundError, ValidationError
-from src.db.models import PlatformFeatureRule, School, SchoolFeatureSetting
+from src.db.models import (
+    MembershipFeatureLimit,
+    PlatformFeatureRule,
+    School,
+    SchoolFeatureSetting,
+    SchoolMembership,
+)
 from src.modules.access.audit import write_audit
 from src.modules.access.deps import require_super_admin
 from src.modules.features import service
@@ -54,8 +60,10 @@ def _school(user: CurrentUser) -> UUID:
     return user.school_id
 
 
-async def _states(db: AsyncSession, school_id: UUID, role: str, *, detail: bool) -> list[FeatureState]:
-    amap = await service.effective_map(db, school_id, role)
+async def _states(
+    db: AsyncSession, school_id: UUID, role: str, *, detail: bool, membership_id: UUID | None = None
+) -> list[FeatureState]:
+    amap = await service.effective_map(db, school_id, role, membership_id)
     own: set[str] = set()
     if detail:
         rows = (
@@ -91,7 +99,9 @@ async def my_features(db: DB, user: Annotated[CurrentUser, Depends(get_current_u
         return [
             FeatureState(key=k, label=m["label"], portal=m["portal"], enabled=True) for k, m in FEATURES.items()
         ]
-    return await _states(db, user.school_id, user.role.value, detail=user.role == UserRole.SCHOOL_ADMIN)
+    return await _states(
+        db, user.school_id, user.role.value, detail=user.role == UserRole.SCHOOL_ADMIN, membership_id=user.membership_id
+    )
 
 
 @me_router.get("/school", response_model=list[FeatureState])
@@ -213,3 +223,82 @@ async def school_view(school_id: UUID, db: DB, _: Annotated[CurrentUser, Depends
     if await db.get(School, school_id) is None:
         raise NotFoundError("School not found")
     return await _states(db, school_id, UserRole.SCHOOL_ADMIN.value, detail=True)
+
+
+class MemberFeaturesOut(BaseModel):
+    membership_id: UUID
+    role: str
+    off: list[str]
+
+
+@me_router.get("/members/{membership_id}", response_model=MemberFeaturesOut)
+async def member_features(
+    membership_id: UUID, db: DB, user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))]
+):
+    m = await _member(db, user, membership_id)
+    return MemberFeaturesOut(membership_id=m.id, role=m.role, off=sorted(await _off(db, m.id)))
+
+
+async def _off(db: AsyncSession, membership_id: UUID) -> set[str]:
+    rows = (
+        await db.execute(
+            select(MembershipFeatureLimit.feature_key).where(MembershipFeatureLimit.membership_id == membership_id)
+        )
+    ).scalars().all()
+    return set(rows)
+
+
+async def _member(db: AsyncSession, user: CurrentUser, membership_id: UUID) -> SchoolMembership:
+    m = (
+        await db.execute(
+            select(SchoolMembership).where(
+                SchoolMembership.id == membership_id, SchoolMembership.school_id == _school(user)
+            )
+        )
+    ).scalar_one_or_none()
+    if m is None:
+        raise NotFoundError("Membership not found")
+    if m.user_id == user.id or m.role in (UserRole.SCHOOL_ADMIN.value, UserRole.PLATFORM_ADMIN.value):
+        raise ForbiddenError("School admins' own access is managed by Sybeez")
+    return m
+
+
+@me_router.put("/members/{membership_id}/{key}", response_model=MemberFeaturesOut)
+async def set_member_feature(
+    membership_id: UUID,
+    key: str,
+    body: SchoolSwitchIn,
+    db: DB,
+    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+):
+    """Turn one feature off (or back on) for one staff member. Only narrows what the platform and school allow."""
+    _check(key)
+    m = await _member(db, user, membership_id)
+    row = (
+        await db.execute(
+            select(MembershipFeatureLimit).where(
+                MembershipFeatureLimit.membership_id == m.id, MembershipFeatureLimit.feature_key == key
+            )
+        )
+    ).scalar_one_or_none()
+    if body.enabled and row is not None:
+        await db.execute(delete(MembershipFeatureLimit).where(MembershipFeatureLimit.id == row.id))
+    elif not body.enabled and row is None:
+        db.add(
+            MembershipFeatureLimit(
+                school_id=_school(user), membership_id=m.id, feature_key=key, updated_by=user.id
+            )
+        )
+    await write_audit(
+        db,
+        school_id=_school(user),
+        actor_id=user.id,
+        action="feature.member_switch",
+        resource_type="membership",
+        resource_id=str(m.id),
+        message=f"School admin turned {FEATURES[key]['label']} {'on' if body.enabled else 'off'} for a {m.role} member",
+        details={"feature": key, "membership_id": str(m.id), "role": m.role, "after": body.enabled},
+    )
+    await db.flush()
+    service.invalidate_member(m.id)
+    return MemberFeaturesOut(membership_id=m.id, role=m.role, off=sorted(await _off(db, m.id)))

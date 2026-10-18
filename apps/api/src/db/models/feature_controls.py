@@ -44,3 +44,19 @@ class SchoolFeatureSetting(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     feature_key: Mapped[str] = mapped_column(String(64), nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     updated_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+
+
+class MembershipFeatureLimit(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """A school admin switches one feature off for one staff member (third layer, narrows only)."""
+
+    __tablename__ = "membership_feature_limits"
+    __table_args__ = (Index("uq_membership_feature_limit", "membership_id", "feature_key", unique=True),)
+
+    school_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    membership_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("school_memberships.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    feature_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    updated_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
