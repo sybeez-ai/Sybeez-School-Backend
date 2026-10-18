@@ -12,7 +12,7 @@ RUN pip install --no-cache-dir \
     "pydantic>=2.10.0" "pydantic-settings>=2.6.0" "python-jose[cryptography]>=3.3.0" \
     "passlib[argon2]>=1.7.4" "argon2-cffi>=23.1.0" "redis>=5.2.0" "httpx>=0.28.0" \
     "email-validator>=2.2.0" "python-multipart>=0.0.17" "pgvector>=0.3.6" \
-    "boto3>=1.35.0"
+    "boto3>=1.35.0" "segno>=1.6.0"
 
 COPY apps/api /app
 RUN chown -R app:app /app
