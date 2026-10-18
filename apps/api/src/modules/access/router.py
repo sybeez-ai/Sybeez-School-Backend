@@ -1,7 +1,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import CurrentUser
@@ -66,8 +66,10 @@ async def list_memberships(
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[CurrentUser, Depends(require_permission("access.read"))],
     page: PageQuery,
+    q: str | None = Query(None, max_length=120),
+    role: str | None = Query(None, max_length=40),
 ):
-    items, total = await AccessService(db).list_memberships(_school(user), page)
+    items, total = await AccessService(db).list_memberships(_school(user), page, q=q, role=role)
     return Page(items=[MembershipOut(**item) for item in items], total=total, page=page.page, page_size=page.page_size)
 
 

@@ -332,12 +332,20 @@ class AccessService:
             details={"membership_id": str(membership.id), "permission": code, "cleared_effect": effect},
         )
 
-    async def list_memberships(self, school_id: UUID, page: PageParams) -> tuple[list[dict], int]:
+    async def list_memberships(
+        self, school_id: UUID, page: PageParams, *, q: str | None = None, role: str | None = None
+    ) -> tuple[list[dict], int]:
+        """Every login in the school. ``q`` matches email or name (case-insensitive); ``role`` filters one role."""
         base = (
             select(SchoolMembership, User)
             .join(User, User.id == SchoolMembership.user_id)
             .where(SchoolMembership.school_id == school_id)
         )
+        if q and q.strip():
+            term = f"%{q.strip().lower().replace('%', '').replace('_', ' ')}%"
+            base = base.where(func.lower(User.email).like(term) | func.lower(User.full_name).like(term))
+        if role:
+            base = base.where(SchoolMembership.role == role.upper())
         total = (await self.db.execute(select(func.count()).select_from(base.order_by(None).subquery()))).scalar_one()
         result = await self.db.execute(
             base.order_by(SchoolMembership.created_at.desc()).offset(page.offset).limit(page.page_size)
