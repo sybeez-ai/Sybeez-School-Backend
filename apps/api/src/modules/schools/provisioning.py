@@ -160,6 +160,21 @@ async def ensure_membership(
     return membership
 
 
+async def sync_cognito_groups(db: AsyncSession, user: User) -> bool:
+    """Mirror the user's active database roles into Cognito groups (informational, best effort)."""
+    if not cognito_svc.cognito_configured() or not user.cognito_sub or not user.email:
+        return False
+    rows = await db.execute(
+        select(SchoolMembership.role).where(
+            SchoolMembership.user_id == user.id, SchoolMembership.status == MembershipStatus.ACTIVE.value
+        )
+    )
+    roles = {r for (r,) in rows.all()}
+    if user.is_platform_admin:
+        roles.add(UserRole.PLATFORM_ADMIN.value)
+    return cognito_svc.sync_user_groups(email=user.email, roles=roles)
+
+
 async def create_school_user(
     db: AsyncSession,
     *,
@@ -191,6 +206,7 @@ async def create_school_user(
     if temp:
         # An admin-issued password is temporary: the person must choose their own at first login.
         user.must_change_password = True
+    await sync_cognito_groups(db, user)
     return user, membership, temp
 
 

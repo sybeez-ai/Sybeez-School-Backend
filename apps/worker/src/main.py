@@ -92,6 +92,7 @@ def _fee_reminders_tick() -> None:
 
 
 _last_daily_summary = 0.0
+_last_group_sync = 0.0
 
 
 def _daily_summary_tick() -> None:
@@ -117,6 +118,30 @@ def _daily_summary_tick() -> None:
             response.read()
     except Exception:
         logger.warning("Could not run daily parent summaries")
+
+
+def _cognito_group_sync_tick() -> None:
+    """Once a day: reconcile Cognito groups with database roles (informational only)."""
+    global _last_group_sync
+    now = time.time()
+    if now - _last_group_sync < 86400:
+        return
+    _last_group_sync = now
+    settings = get_settings()
+    base = (settings.core_api_url or "").rstrip("/")
+    if not base:
+        return
+    request = urllib.request.Request(
+        f"{base}/internal/v1/cognito/sync-groups/run-all",
+        data=b"{}",
+        method="POST",
+        headers={"Content-Type": "application/json", "X-Internal-Token": settings.core_internal_token},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=300) as response:
+            response.read()
+    except Exception:
+        logger.warning("Could not reconcile Cognito groups")
 
 
 def redis_reachable() -> bool:
@@ -146,6 +171,7 @@ def consume_forever(stop: threading.Event | None = None) -> None:
             _online_tests_tick()
             _fee_reminders_tick()
             _daily_summary_tick()
+            _cognito_group_sync_tick()
         return
 
     client = get_redis()
@@ -159,6 +185,7 @@ def consume_forever(stop: threading.Event | None = None) -> None:
         _online_tests_tick()
         _fee_reminders_tick()
         _daily_summary_tick()
+        _cognito_group_sync_tick()
 
 
 def main() -> None:

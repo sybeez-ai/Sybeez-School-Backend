@@ -186,9 +186,11 @@ class AccessService:
         self._assignable(actor, role)
         if base.role in {UserRole.STUDENT.value, UserRole.PARENT.value}:
             raise ForbiddenError("Students and parents cannot be given staff portals")
-        return await ensure_membership(
+        granted = await ensure_membership(
             self.db, user_id=base.user_id, school_id=school_id, role=role, actor_id=actor.id
         )
+        await self._sync_groups(base.user_id)
+        return granted
 
     async def revoke_membership(self, actor: CurrentUser, school_id: UUID, membership_id: UUID) -> SchoolMembership:
         membership = await self._membership(school_id, membership_id)
@@ -206,7 +208,17 @@ class AccessService:
             message=f"Revoked role {membership.role}",
             details={"user_id": str(membership.user_id), "role": membership.role},
         )
+        await self._sync_groups(membership.user_id)
         return membership
+
+    async def _sync_groups(self, user_id: UUID) -> None:
+        """Keep the informational Cognito groups in step with the database roles (never blocks the change)."""
+        from src.modules.schools.provisioning import sync_cognito_groups
+
+        user = await self.db.get(User, user_id)
+        if user is not None:
+            await self.db.flush()
+            await sync_cognito_groups(self.db, user)
 
     async def reset_member_login(self, actor: CurrentUser, school_id: UUID, membership_id: UUID):
         """New temporary password for a school member (HR, payroll, finance, staff...). Shown once."""
