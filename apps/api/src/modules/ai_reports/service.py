@@ -291,24 +291,21 @@ class AiReportsService:
     async def _notify_parent(
         self, school_id: UUID, parent_user_id: UUID, title: str
     ) -> None:
-        await self.db.execute(
-            text(
-                """
-                INSERT INTO notifications
-                    (id, school_id, user_id, title, body, type, priority, read, created_at)
-                VALUES
-                    (gen_random_uuid(), :school_id, :user_id, :title, :body,
-                     'AI_REPORT', 'normal', false, NOW())
-                """
-            ),
-            {
-                "school_id": str(school_id),
-                "user_id": str(parent_user_id),
-                "title": "New AI Report Ready",
-                "body": title,
-            },
-        )
-        await self.db.commit()
+        from src.db.models import Notification
+
+        # Savepoint: a failed notification must not abort the report's own transaction.
+        async with self.db.begin_nested():
+            self.db.add(
+                Notification(
+                    school_id=school_id,
+                    user_id=parent_user_id,
+                    title="New AI Report Ready",
+                    body=title,
+                    category="AI_REPORT",
+                    link_path="/parent/ai-reports",
+                )
+            )
+            await self.db.flush()
 
 
 # ──────────────────────────────────────────────────────────────────────────────

@@ -27,3 +27,18 @@ async def test_report_context_query_accepts_dates(db_session):
     end = date.today()
     ctx = await AiReportsService(db_session)._gather_context(w.school_id, w.students[0].profile_id, end - timedelta(days=7), end)
     assert ctx["period_end"] == end.isoformat()
+
+
+async def test_parent_generates_weekly_report_end_to_end(api, db_session, monkeypatch):  # noqa: F811
+    from src.modules.ai_reports import service as svc
+
+    async def no_ai(self, ctx, *, bearer_token=None):
+        return svc._template_summary(ctx)
+
+    monkeypatch.setattr(svc.AiReportsService, "_call_ai", no_ai)
+    w = await build_world(db_session)
+    await db_session.commit()
+    r = await api.post("/api/v1/ai-reports/generate", json={"student_id": str(w.students[0].profile_id)}, headers=w.parent.h)
+    assert r.status_code in (200, 201), r.text
+    assert r.json()["status"] == "READY"
+    assert (await api.get("/api/v1/ai-reports/me", headers=w.parent.h)).status_code == 200
