@@ -43,7 +43,8 @@ from src.modules.payroll.schemas import (
     TemplateCreate,
     WeeklyOffReplace,
 )
-from src.modules.payroll.permissions import payroll_access
+from src.shared.enums import UserRole
+from src.modules.payroll.permissions import PAYROLL_ROLES, payroll_access
 from src.modules.payroll.service import PayrollService, _settings_dict, dump
 
 router = APIRouter(prefix="/payroll", tags=["payroll"])
@@ -51,11 +52,27 @@ router = APIRouter(prefix="/payroll", tags=["payroll"])
 Db = Annotated[AsyncSession, Depends(get_db)]
 
 
+# Employee self-service writes are open to any signed-in employee; every other write needs a payroll role.
+# The check runs here, as a dependency, so a caller without payroll access gets 403 before body validation (422).
+_SELF_WRITE = ("/me/", "/reimbursements")
+
+
+async def _staff_write_gate(request: Request, user: CurrentUser, db: AsyncSession) -> None:
+    if request.method in ("GET", "HEAD", "OPTIONS"):
+        return
+    path = request.url.path.split("/payroll", 1)[-1]
+    if path.startswith(_SELF_WRITE) and not path.startswith("/reimbursements/") or (path.startswith("/declarations/") and path.endswith("/proofs")):
+        return
+    await PayrollService(db, user)._allow(PAYROLL_ROLES | {UserRole.SCHOOL_ADMIN.value, UserRole.PLATFORM_ADMIN.value})
+
+
 async def limited(
     request: Request,
     user: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
 ) -> CurrentUser:
     await payroll_rate_limit(request, user)
+    await _staff_write_gate(request, user, db)
     return user
 
 
