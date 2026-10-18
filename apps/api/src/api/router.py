@@ -57,6 +57,7 @@ from src.modules.parent_messages.router import router as parent_messages_router
 from src.modules.reading_buddy.router import router as reading_buddy_router
 from src.modules.school_ops.router import router as school_ops_router
 from src.modules.content_library.router import router as content_library_router
+from src.modules.exam_prep.router import router as exam_prep_router
 from src.modules.family_documents.router import router as family_documents_router
 from src.modules.learning_paths.router import router as learning_paths_router
 from src.modules.teacher_tools.router import router as teacher_tools_router
@@ -168,5 +169,6 @@ api_router.include_router(teacher_tools_router, prefix=API_V1_PREFIX, dependenci
 api_router.include_router(learning_paths_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
 api_router.include_router(family_documents_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
 api_router.include_router(content_library_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
+api_router.include_router(exam_prep_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
 api_router.include_router(features_me_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
 api_router.include_router(features_platform_router, prefix=API_V1_PREFIX)
