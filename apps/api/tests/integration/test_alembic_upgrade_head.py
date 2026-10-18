@@ -47,7 +47,7 @@ async def test_upgrade_head_on_empty_postgres():
             templates = await conn.fetchval(
                 "SELECT count(*) FROM alert_message_templates WHERE school_id IS NULL"
             )
-            assert templates == 50
+            assert templates == 53
             forced_alerts = await conn.fetchval(
                 "SELECT relforcerowsecurity FROM pg_class WHERE relname = 'alert_message_templates'"
             )

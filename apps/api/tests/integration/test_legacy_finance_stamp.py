@@ -123,7 +123,7 @@ async def test_legacy_finance_0030_upgrades_to_head():
             templates = await conn.fetchval(
                 "SELECT count(*) FROM alert_message_templates WHERE school_id IS NULL"
             )
-            assert templates == 50
+            assert templates == 53
             assert await conn.fetchval("SELECT to_regclass('public.school_alert_settings')") == "school_alert_settings"
         finally:
             await conn.close()
