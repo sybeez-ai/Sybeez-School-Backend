@@ -37,6 +37,7 @@ FEATURES: dict[str, dict] = {
         "prefixes": ["learning-paths", "progress", "learning-sessions"],
     },
     "family_documents": {"label": "Family documents", "portal": "all", "prefixes": ["family-documents"]},
+    "content_library": {"label": "Content library (board-tagged notes and question banks)", "portal": "all", "prefixes": ["content-library"]},
     "documents": {"label": "Document library", "portal": "all", "prefixes": ["documents"]},
     "analytics": {"label": "Analytics and reports", "portal": "school", "prefixes": ["analytics", "reports"]},
     "principal_ops": {"label": "Principal tools (cover and reports)", "portal": "school", "prefixes": ["ops"]},
