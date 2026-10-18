@@ -13,6 +13,13 @@ def _escape(text: str) -> str:
     )
 
 
+def _half(rate) -> str:
+    try:
+        return f"{float(rate) / 2:g}"
+    except (TypeError, ValueError):
+        return "0"
+
+
 def build_receipt_pdf(payload: dict) -> bytes:
     lines = [
         str(payload.get("school_name") or "School").upper(),
@@ -33,6 +40,18 @@ def build_receipt_pdf(payload: dict) -> bytes:
         "",
         f"Status: {payload.get('status') or 'SUCCESS'}",
     ]
+    if payload.get("gst_mode"):  # tax identity block, present once the school has a fee profile
+        lines += ["", f"GSTIN: {payload.get('gstin') or '-'}   SAC: {payload.get('sac_code') or '-'}"]
+        if payload.get("gst_mode") == "TAXABLE":
+            lines += [
+                f"Taxable value: INR {payload.get('taxable')}",
+                f"CGST ({_half(payload.get('gst_rate'))}%): INR {payload.get('cgst')}",
+                f"SGST ({_half(payload.get('gst_rate'))}%): INR {payload.get('sgst')}",
+            ]
+        else:
+            lines += ["GST: exempt (educational services). No tax charged."]
+        if payload.get("footer"):
+            lines += ["", str(payload["footer"])]
     y = 800
     content_ops: list[str] = ["BT", "/F1 11 Tf", "14 TL"]
     for i, line in enumerate(lines):

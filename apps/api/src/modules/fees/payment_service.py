@@ -1153,8 +1153,25 @@ class PaymentService:
         from src.db.models import School
 
         school = await self.db.get(School, school_id)
+        from decimal import Decimal as _D
+
+        from src.db.models import SchoolFeeProfile
+        from src.modules.fee_profile.upi import gst_breakup
+
+        profile = (
+            await self.db.execute(select(SchoolFeeProfile).where(SchoolFeeProfile.school_id == school_id))
+        ).scalar_one_or_none()
+        gst = {}
+        if profile is not None:
+            parts = gst_breakup(_D(str(detail.amount or "0")), profile.gst_mode, profile.gst_rate)
+            gst = {
+                "gstin": profile.gstin, "sac_code": profile.sac_code, "gst_mode": parts["mode"],
+                "gst_rate": str(profile.gst_rate), "taxable": str(parts["taxable"]), "cgst": str(parts["cgst"]),
+                "sgst": str(parts["sgst"]), "footer": profile.receipt_footer, "state_code": profile.state_code,
+            }
         return build_receipt_pdf(
             {
+                **gst,
                 "school_name": school.name if school else "School",
                 "receipt_number": detail.receipt_number,
                 "payment_number": payment.payment_number if payment else "-",

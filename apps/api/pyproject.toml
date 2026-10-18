@@ -20,6 +20,7 @@ dependencies = [
   "python-multipart>=0.0.17",
   "pgvector>=0.3.6",
   "boto3>=1.35.0",
+  "segno>=1.6.0",
 ]
 
 [project.optional-dependencies]

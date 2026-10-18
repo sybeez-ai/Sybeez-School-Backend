@@ -437,3 +437,22 @@ class FeeAuditLog(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     new_values: Mapped[str | None] = mapped_column(Text, nullable=True)
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
+class SchoolFeeProfile(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """Where a school receives fees outside a gateway (UPI) and the tax identity printed on receipts."""
+
+    __tablename__ = "school_fee_profiles"
+
+    school_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    upi_vpa: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    payee_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    gstin: Mapped[str | None] = mapped_column(String(15), nullable=True)
+    state_code: Mapped[str | None] = mapped_column(String(2), nullable=True)
+    sac_code: Mapped[str] = mapped_column(String(8), nullable=False, default="999293")
+    gst_mode: Mapped[str] = mapped_column(String(16), nullable=False, default="EXEMPT")  # EXEMPT | TAXABLE
+    gst_rate: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False, default=Decimal("0"))
+    receipt_footer: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    updated_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)

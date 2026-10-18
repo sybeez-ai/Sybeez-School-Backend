@@ -62,6 +62,7 @@ from src.db.models.exam import (
     StudentMark,
 )
 from src.db.models.fee import (
+    SchoolFeeProfile,
     FeeAdjustment,
     FeeAuditLog,
     FeeCategory,
@@ -369,6 +370,7 @@ __all__ = [
     "SubstituteAssignment",
     "AiGradeSuggestion",
     "FamilyDocument",
+    "SchoolFeeProfile",
     "MembershipFeatureLimit",
     "PlatformFeatureRule",
     "SchoolFeatureSetting",
