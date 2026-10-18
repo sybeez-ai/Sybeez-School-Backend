@@ -74,3 +74,15 @@ def test_rediss_worker_client_uses_tls():
     finally:
         secure.close()
         plain.close()
+
+
+def test_empty_queue_read_timeout_is_idle_not_an_error():
+    import redis
+
+    from src.queue import poll_redis
+
+    class Idle:
+        def blpop(self, *a, **k):
+            raise redis.exceptions.TimeoutError("Timeout reading from socket")
+
+    assert poll_redis(Idle(), timeout=5) is False
