@@ -152,7 +152,9 @@ async def download(doc_id: UUID, db: DB, user: Family):
 @router.delete("/{doc_id}", status_code=204)
 async def delete(doc_id: UUID, db: DB, user: Admin):
     row = await _get(db, user, doc_id)
+    file_key = row.file_key
     await db.delete(row)
     await _audit(db, user, action="family_document.deleted", resource_type="family_document", resource_id=str(doc_id),
                  message="Document deleted", details={"student_id": str(row.student_id)})
+    storage.delete_object(file_key)  # the file goes with the row
     return Response(status_code=204)

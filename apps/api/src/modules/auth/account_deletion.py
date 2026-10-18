@@ -123,6 +123,18 @@ async def delete_account(
     try:
         # The function acts on app.user_id; pin it to the authenticated caller for this transaction.
         await db.execute(text("SELECT set_config('app.user_id', :v, true)"), {"v": str(user_id)})
+        # Remember the family-document files that the database function is about to remove, then delete them.
+        file_keys = list(
+            (
+                await db.execute(
+                    text(
+                        "SELECT file_key FROM family_documents WHERE student_id IN "
+                        "(SELECT id FROM students WHERE user_id = :u)"
+                    ),
+                    {"u": str(user_id)},
+                )
+            ).scalars()
+        )
         rid = (
             await db.execute(
                 text("SELECT app.delete_my_account(:m, :c, :ip)"),
@@ -130,6 +142,10 @@ async def delete_account(
             )
         ).scalar_one()
         await db.commit()
+        from src.core.storage import delete_object
+
+        for key in file_keys:
+            delete_object(key)
     except Exception:
         await db.rollback()
         if cognito_status == "disabled":
