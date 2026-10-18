@@ -26,6 +26,7 @@ cat > /tmp/ctrl-policy.json <<POL
  {"Effect":"Allow","Action":["ecs:DescribeServices","ecs:ListTasks","ecs:DescribeTasks"],"Resource":"*"},
  {"Effect":"Allow","Action":"ecs:UpdateService","Resource":"arn:aws:ecs:$AWS_REGION:$ACC:service/$CLUSTER/sybeez-school-*"},
  {"Effect":"Allow","Action":["elasticloadbalancing:DescribeRules","elasticloadbalancing:DescribeTargetGroups","elasticloadbalancing:DescribeTargetHealth","elasticloadbalancing:CreateRule","elasticloadbalancing:DeleteRule","elasticloadbalancing:AddTags"],"Resource":"*"},
+ {"Effect":"Allow","Action":"logs:FilterLogEvents","Resource":["arn:aws:logs:$AWS_REGION:$ACC:log-group:/ecs/sybeez-school-api:*","arn:aws:logs:$AWS_REGION:$ACC:log-group:/ecs/sybeez-school-ai:*"]},
  {"Effect":"Allow","Action":["cloudwatch:GetMetricStatistics","cloudwatch:PutMetricData"],"Resource":"*"},
  {"Effect":"Allow","Action":"sqs:GetQueueAttributes","Resource":"arn:aws:sqs:$AWS_REGION:$ACC:sybeez-school-jobs"},
  {"Effect":"Allow","Action":"sns:Publish","Resource":"$TOPIC_ARN"},

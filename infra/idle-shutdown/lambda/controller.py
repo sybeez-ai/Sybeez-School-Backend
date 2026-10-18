@@ -101,23 +101,50 @@ def _sum_metric(client, namespace, name, dims, start, end, stat="Sum"):
                                      StartTime=start, EndTime=end, Period=60, Statistics=[stat])
     return sum(p[stat] for p in r["Datapoints"])
 
+LOG_GROUPS = [x for x in os.environ.get("ACTIVITY_LOG_GROUPS", "/ecs/sybeez-school-api,/ecs/sybeez-school-ai").split(",") if x]
+logs = boto3.client("logs", region_name=REGION)
+
+def _log_hits(group, start, end, cap=200):
+    """User API requests in app logs. Pattern "/api/v1/" excludes /health and the worker's
+    periodic /internal/v1/* calls (which would otherwise keep the platform awake forever)."""
+    n = 0; token = None
+    while n < cap:
+        kw = dict(logGroupName=group, startTime=int(start.timestamp() * 1000), endTime=int(end.timestamp() * 1000),
+                  filterPattern='"/api/v1/"', limit=100)
+        if token: kw["nextToken"] = token
+        r = logs.filter_log_events(**kw)
+        n += len(r.get("events", [])); token = r.get("nextToken")
+        if not token or n > 0: break      # any hit is enough to call it non-idle
+    return n
+
 def activity(window_min):
-    """Real user activity over the window. ALB RequestCount counts only requests that went
-    through the load balancer to targets (target health checks are NOT counted)."""
+    """Decision signal = authenticated/user API requests seen by the app (api + ai services),
+    plus in-flight SQS jobs. ALB RequestCount / CloudFront are recorded for information only:
+    the worker polls /internal/v1/* through the ALB every ~30s, so ALB counts never reach zero."""
     end = now().replace(second=0, microsecond=0) - datetime.timedelta(minutes=1)
     start = end - datetime.timedelta(minutes=window_min)
     detail = {}
-    for tg in TG_DIMS:
-        detail["alb:" + tg.split("/")[1]] = _sum_metric(cw, "AWS/ApplicationELB", "RequestCount",
-            [{"Name": "LoadBalancer", "Value": LB_DIM}, {"Name": "TargetGroup", "Value": tg}], start, end)
-    for d in CF_DIST_IDS:
-        detail["cloudfront:" + d] = _sum_metric(cw_use1, "AWS/CloudFront", "Requests",
-            [{"Name": "DistributionId", "Value": d}, {"Name": "Region", "Value": "Global"}], start, end)
+    for g in LOG_GROUPS:
+        try: detail["applog:" + g.split("/")[-1]] = _log_hits(g, start, end)
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "ResourceNotFoundException": detail["applog:" + g.split("/")[-1]] = 0
+            else: raise
     if QUEUE_URL:
         a = sqs.get_queue_attributes(QueueUrl=QUEUE_URL, AttributeNames=["ApproximateNumberOfMessages",
             "ApproximateNumberOfMessagesNotVisible", "ApproximateNumberOfMessagesDelayed"])["Attributes"]
         detail["sqs_pending_jobs"] = sum(int(v) for v in a.values())
-    return sum(detail.values()), detail, start, end
+    total = sum(detail.values())
+    info = {}
+    try:
+        for tg in TG_DIMS:
+            info["info_alb:" + tg.split("/")[1]] = _sum_metric(cw, "AWS/ApplicationELB", "RequestCount",
+                [{"Name": "LoadBalancer", "Value": LB_DIM}, {"Name": "TargetGroup", "Value": tg}], start, end)
+        for d in CF_DIST_IDS:
+            info["info_cloudfront:" + d] = _sum_metric(cw_use1, "AWS/CloudFront", "Requests",
+                [{"Name": "DistributionId", "Value": d}, {"Name": "Region", "Value": "Global"}], start, end)
+    except Exception as e: info["info_error"] = str(e)
+    detail.update(info)
+    return total, detail, start, end
 
 def rotation_window():
     """Returns (block_stop, need_wake, why) for Secrets Manager rotation that needs the DB up."""
