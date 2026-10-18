@@ -255,6 +255,13 @@ EventType = Literal[
     "DEVTOOLS_HINT",
     "FULLSCREEN_UNSUPPORTED",
     "NETWORK_LOST",
+    # Native app (mobile lockdown) events
+    "APP_BACKGROUND",
+    "SCREENSHOT_ATTEMPT",
+    "SCREEN_RECORDING",
+    "MULTI_WINDOW",
+    "LOCKDOWN_BROKEN",
+    "LOCKDOWN_UNAVAILABLE",
 ]
 
 

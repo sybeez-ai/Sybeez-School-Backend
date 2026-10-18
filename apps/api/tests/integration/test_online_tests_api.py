@@ -684,3 +684,17 @@ async def test_audit_log_records_key_actions(api, world, db_session):
     for a in ("TEST_CREATED", "QUESTIONS_ADDED", "TEST_PUBLISHED", "ATTEMPT_STARTED", "ATTEMPT_SUBMITTED"):
         assert a in actions, a
     assert json.dumps(actions).count("correct") == 0
+
+
+async def test_native_app_events_count_except_lockdown_unavailable(api, world, db_session):
+    t = await make_test(api, world)
+    st = world.students[0]
+    s = (await start(api, world, t)).json()
+    url = f"{API}/online-test-attempts/{s['attempt_id']}/events"
+    r0 = (await api.post(url, json={"events": [{"type": "LOCKDOWN_UNAVAILABLE", "meta": {"platform": "android"}}]}, headers=st.h)).json()
+    assert r0["violation_count"] == 0  # logged for the teacher, never counted against the student
+    r1 = (await api.post(url, json={"events": [{"type": "APP_BACKGROUND"}]}, headers=st.h)).json()
+    assert r1["violation_count"] == 1 and r1["warnings_left"] == 2
+    await age_events(db_session, s["attempt_id"])
+    r2 = (await api.post(url, json={"events": [{"type": "SCREENSHOT_ATTEMPT"}]}, headers=st.h)).json()
+    assert r2["violation_count"] == 2

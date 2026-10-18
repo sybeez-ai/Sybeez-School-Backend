@@ -61,7 +61,12 @@ AUTO_SUBMITTED = "AUTO_SUBMITTED"
 VOID = "VOID"
 FINAL_STATES = (SUBMITTED, AUTO_SUBMITTED)
 GRACE_SECONDS = 5  # network slack for the last answer / submit before the deadline closes the door
-COUNTED_EVENTS = {"FULLSCREEN_EXIT", "TAB_HIDDEN", "WINDOW_BLUR", "COPY_ATTEMPT", "PASTE_ATTEMPT", "PRINT_ATTEMPT"}
+COUNTED_EVENTS = {
+    "FULLSCREEN_EXIT", "TAB_HIDDEN", "WINDOW_BLUR", "COPY_ATTEMPT", "PASTE_ATTEMPT", "PRINT_ATTEMPT",
+    # native app: leaving the app, capturing the screen, split-screen, or breaking the OS lockdown. LOCKDOWN_UNAVAILABLE
+    # (device cannot pin the screen) is logged for the teacher but never counts against the student.
+    "APP_BACKGROUND", "SCREENSHOT_ATTEMPT", "SCREEN_RECORDING", "MULTI_WINDOW", "LOCKDOWN_BROKEN",
+}
 DEDUPE_SECONDS = 1.5  # blur + hidden fire together for one tab switch; count it once
 _rng = random.SystemRandom()
 
