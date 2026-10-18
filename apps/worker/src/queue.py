@@ -24,7 +24,13 @@ def handle_body(raw: str) -> None:
 
 
 def poll_redis(client, *, timeout: int = 5) -> bool:
-    item = client.blpop(QUEUE, timeout=timeout)
+    import redis
+
+    try:
+        item = client.blpop(QUEUE, timeout=timeout)
+    except redis.exceptions.TimeoutError:
+        # The connection's read timeout fired while waiting on an empty queue. That is idle, not a failure.
+        return False
     if not item:
         return False
     _, raw = item
