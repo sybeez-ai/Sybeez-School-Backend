@@ -108,3 +108,13 @@ def public_url(key: str | None) -> str | None:
         region = settings.s3_region or settings.aws_region or "us-east-1"
         return f"https://{bucket}.s3.{region}.amazonaws.com/{key}"
     return key
+
+
+def school_logo_path(value: str | None) -> str | None:
+    """Browser-loadable path for a stored school logo key. Absolute URLs pass through."""
+    if not value or value.startswith(("http://", "https://", "/")):
+        return value
+    if value.startswith("school-logos/"):
+        stem = value.split("/", 1)[1].rsplit(".", 1)[0]
+        return f"/api/v1/public/school-logos/{stem}"
+    return public_url(value)

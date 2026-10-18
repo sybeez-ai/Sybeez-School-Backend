@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
 # --- Dashboard ---
@@ -108,6 +108,13 @@ class SchoolOut(BaseModel):
     timezone: str
     currency: str = "INR"
     logo_url: str | None = None
+
+    @field_validator("logo_url", mode="before")
+    @classmethod
+    def _logo_path(cls, value):
+        from src.core.storage import school_logo_path
+
+        return school_logo_path(value)
     plan_code: str | None = None
     subscription_status: str | None = None
     students_count: int = 0

@@ -69,6 +69,7 @@ from src.modules.questions.router import router as questions_router
 from src.modules.reports.router import router as reports_router
 from src.modules.results.router import router as results_router
 from src.modules.school_admin.router import router as school_admin_router
+from src.modules.schools.public import router as school_logo_router
 from src.modules.schools.router import router as schools_router
 from src.modules.staff_portal.router import router as staff_portal_router
 from src.modules.payroll.assistant.router import router as payroll_assistant_router
@@ -98,6 +99,7 @@ api_router.include_router(online_test_attempts_router, prefix=API_V1_PREFIX, dep
 api_router.include_router(access_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
 api_router.include_router(platform_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
 api_router.include_router(schools_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
+api_router.include_router(school_logo_router, prefix=API_V1_PREFIX)
 api_router.include_router(users_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
 api_router.include_router(invitations_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
 api_router.include_router(subscriptions_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
