@@ -58,6 +58,7 @@ def test_every_template_placeholder_matches_variables():
         "leave_approved",
         "announcement",
         "progress_update",
+        "substitute_assigned",
     }
     for seed in DEFAULT_TEMPLATES:
         numbers = {int(item) for item in re.findall(r"\{\{(\d+)\}\}", seed.body_text)}
