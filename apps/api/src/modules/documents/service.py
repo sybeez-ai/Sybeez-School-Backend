@@ -415,7 +415,14 @@ class DocumentService:
         if not doc:
             raise NotFoundError("Document not found")
         await self._assert_can_manage(school_id=school_id, user_id=user_id, role=role, doc=doc)
+        file_key = doc.file_key
         await self.repo.soft_delete(doc)
+        # The row stays (soft-deleted); its stored file is removed once the delete is committed.
+        await self.db.commit()
+        if file_key and file_key.startswith("documents/"):
+            from src.core.storage import delete_object
+
+            delete_object(file_key)
 
     # ── ACL helpers ───────────────────────────────────────────────────────────
 
