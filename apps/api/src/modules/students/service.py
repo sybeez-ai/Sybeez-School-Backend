@@ -132,6 +132,8 @@ class StudentService:
             select(Student)
             .where(Student.school_id == school_id)
             .join(User, User.id == Student.user_id)
+            # Accounts deleted by their owner are anonymised ("Deleted user") and leave every list.
+            .where(User.status != "DELETED")
         )
 
         if status:
