@@ -129,7 +129,12 @@ class PlatformService:
 
     async def _people_counts(self, school_id: UUID) -> tuple[int, int]:
         students = (
-            await self.db.execute(select(func.count()).select_from(Student).where(Student.school_id == school_id))
+            await self.db.execute(
+                select(func.count())
+                .select_from(Student)
+                .join(User, User.id == Student.user_id)
+                .where(Student.school_id == school_id, User.status != "DELETED")
+            )
         ).scalar_one()
         teachers = (
             await self.db.execute(select(func.count()).select_from(Teacher).where(Teacher.school_id == school_id))
