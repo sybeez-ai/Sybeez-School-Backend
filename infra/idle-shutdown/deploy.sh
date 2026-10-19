@@ -20,7 +20,7 @@ mkrole(){ aws iam get-role --role-name "$1" >/dev/null 2>&1 || aws iam create-ro
 mkrole $CTRL-role; mkrole $WAKE-role
 cat > /tmp/ctrl-policy.json <<POL
 {"Version":"2012-10-17","Statement":[
- {"Effect":"Allow","Action":["ssm:GetParameter","ssm:PutParameter"],"Resource":"arn:aws:ssm:$AWS_REGION:$ACC:parameter$PFX/*"},
+ {"Effect":"Allow","Action":["ssm:GetParameter","ssm:PutParameter","ssm:DeleteParameter"],"Resource":"arn:aws:ssm:$AWS_REGION:$ACC:parameter$PFX/*"},
  {"Effect":"Allow","Action":["rds:DescribeDBInstances"],"Resource":"*"},
  {"Effect":"Allow","Action":["rds:StopDBInstance","rds:StartDBInstance"],"Resource":"arn:aws:rds:$AWS_REGION:$ACC:db:sybeez-school-db"},
  {"Effect":"Allow","Action":["ecs:DescribeServices","ecs:ListTasks","ecs:DescribeTasks"],"Resource":"*"},

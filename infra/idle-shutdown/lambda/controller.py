@@ -251,7 +251,37 @@ def advance_wake(deadline):
     return True
 
 # ---------------------------------------------------------------- main pass
+def set_stopped():
+    # a wake request that arrived mid-stop wins: keep WAKING, next pass starts everything again
+    if get_param("state", "") != "WAKING": put_param("state", "STOPPED")
+    else: jlog("wake_requested_during_stop_keeping_WAKING")
+
+def acquire_lock(ttl):
+    """Atomic create-if-absent SSM lock (no Overwrite) so only one pass runs at a time."""
+    for _ in range(2):
+        try:
+            ssm.put_parameter(Name=f"{P}/lock", Value=str(int(time.time()) + ttl), Type="String"); return True
+        except ClientError as e:
+            if e.response["Error"]["Code"] != "ParameterAlreadyExists": raise
+            try: exp = int(get_param("lock", "0"))
+            except Exception: exp = 0
+            if exp > time.time(): return False
+            try: ssm.delete_parameter(Name=f"{P}/lock")
+            except ClientError: pass
+    return False
+
+def release_lock():
+    try: ssm.delete_parameter(Name=f"{P}/lock")
+    except ClientError: pass
+
 def handler(event, context):
+    ttl = int(context.get_remaining_time_in_millis() / 1000) + 30
+    if not acquire_lock(ttl):
+        jlog("pass_skipped_lock_held"); return {"skipped": "lock held"}
+    try: return _handler(event, context)
+    finally: release_lock()
+
+def _handler(event, context):
     deadline = time.time() + context.get_remaining_time_in_millis() / 1000 - 45
     action = (event or {}).get("action", "check")
     state = get_param("state", "RUNNING")
@@ -271,14 +301,14 @@ def handler(event, context):
         elif state == "STOPPING":
             if dry_run(): return {"dry_run": True}
             ok = advance_stop(deadline)
-            if ok: put_param("state", "STOPPED"); notify("Sybeez School: stopped", "RDS and ECS fully stopped (resumed interrupted stop).")
+            if ok: set_stopped(); notify("Sybeez School: stopped", "RDS and ECS fully stopped (resumed interrupted stop).")
             return {"state": "STOPPED" if ok else "STOPPING"}
         else:  # STOPPED: make sure it really is fully down (RDS auto-restarts after 7 days)
             st = rds_status(); svcs = ecs_state()
             if st in ("available", "starting") or any(s["desiredCount"] > 0 for s in svcs.values()):
                 if dry_run(): jlog("DRY_RUN_would_restop"); return {"dry_run": True}
                 put_param("state", "STOPPING"); ok = advance_stop(deadline)
-                if ok: put_param("state", "STOPPED"); jlog("restopped_after_drift", rds=st)
+                if ok: set_stopped(); jlog("restopped_after_drift", rds=st)
                 return {"state": "STOPPED" if ok else "STOPPING"}
             ensure_wake_rule(); return {"state": "STOPPED"}
     if state == "WAKING":
@@ -296,7 +326,7 @@ def handler(event, context):
     if st in ("stopped", "stopping") or zero:
         jlog("drift_detected", rds=st, zero_services=zero)
         if dry_run(): jlog("DRY_RUN_would_wake_for_drift"); return {"dry_run": True}
-        put_param("state", "WAKING"); return handler({"action": "check"}, context)
+        put_param("state", "WAKING"); return _handler({"action": "check"}, context)
     # ---- idle decision
     if not en: jlog("kill_switch_off_no_action"); return {"state": "RUNNING", "enabled": False}
     total, detail, start, end = activity(IDLE_MINUTES)
@@ -319,6 +349,6 @@ def handler(event, context):
     notify("Sybeez School: stopping", f"No activity for {IDLE_MINUTES} min. Scaling ECS to 0 and stopping RDS {DB_ID}.")
     ok = advance_stop(deadline)
     if ok:
-        put_param("state", "STOPPED"); metric("StopCompleted", 1)
+        set_stopped(); metric("StopCompleted", 1)
         notify("Sybeez School: stopped", "RDS and ECS fully stopped.")
     return {"state": "STOPPED" if ok else "STOPPING"}
