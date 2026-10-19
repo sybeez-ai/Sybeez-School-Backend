@@ -126,6 +126,22 @@ async def get_db(request: Request) -> AsyncGenerator[AsyncSession, None]:
                 # Name the policy/table (never row values) so 403s are diagnosable.
                 detail = str(getattr(exc, "orig", exc)).splitlines()[0][:200]
                 logger.warning("RLS violation on %s %s: %s", request.method, request.url.path, detail)
+                try:
+                    from src.core.event_log import record_event_soon
+
+                    tenant = session.info.get("rls_tenant") or {}
+                    record_event_soon(
+                        "app.access_denied",
+                        message=f"{request.method} {request.url.path} blocked by row-level security",
+                        school_id=tenant.get("school_id") or None,
+                        actor_id=tenant.get("user_id") or None,
+                        resource_type="api",
+                        resource_id=str(request.url.path)[:64],
+                        details={"source": "api", "method": request.method, "path": str(request.url.path),
+                                 "role": tenant.get("role") or None, "policy": detail, "status": 403},
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
                 raise ForbiddenError(
                     "You cannot access or change rows outside your school, class, or child scope"
                 ) from exc

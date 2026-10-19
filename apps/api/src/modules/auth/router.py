@@ -53,8 +53,37 @@ def _attach(response: Response, token: TokenResponse) -> TokenResponse:
 
 @router.post("/login", response_model=TokenResponse)
 @public
-async def login(body: LoginRequest, response: Response, db: Annotated[AsyncSession, Depends(get_db)]):
-    return _attach(response, await AuthService(db).login(body))
+async def login(
+    body: LoginRequest,
+    request: Request,
+    response: Response,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    from src.core.event_log import client_ip, record_event
+    from src.core.exceptions import AppError
+
+    try:
+        return _attach(response, await AuthService(db).login(body))
+    except AppError as exc:
+        # Failed sign-ins land in the platform logs (no password, only who/where/why).
+        await record_event(
+            "auth.login_failed",
+            message=f"Login failed on {body.portal or 'web'}: {exc.message}"[:300],
+            actor_email=str(body.email),
+            school_id=body.school_id,
+            resource_type="auth",
+            resource_id=(body.portal or "web")[:64],
+            ip_address=client_ip(request),
+            details={
+                "email": str(body.email).lower(),
+                "portal": body.portal,
+                "reason": exc.message[:300],
+                "code": exc.code,
+                "status": exc.status_code,
+                "user_agent": (request.headers.get("user-agent") or "")[:200],
+            },
+        )
+        raise
 
 
 @router.post("/complete-new-password", response_model=TokenResponse)

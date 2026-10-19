@@ -69,6 +69,10 @@ def require_permission(code: str):
         user: Annotated[CurrentUser, Depends(get_current_user)],
         db: Annotated[AsyncSession, Depends(get_db)],
     ) -> CurrentUser:
+        from src.api.dependencies import is_super_admin
+
+        if is_super_admin(user):
+            return user
         if code not in await effective_permissions(db, user):
             raise ForbiddenError(f"Missing permission: {code}")
         return user

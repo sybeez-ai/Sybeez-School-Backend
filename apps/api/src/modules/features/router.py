@@ -21,7 +21,7 @@ from src.db.models import (
 from src.modules.access.audit import write_audit
 from src.modules.access.deps import require_super_admin
 from src.modules.features import service
-from src.modules.features.catalog import FEATURES
+from src.modules.features.catalog import FEATURES, is_known_key, label_for
 from src.shared.enums import UserRole
 
 DB = Annotated[AsyncSession, Depends(get_db)]
@@ -50,7 +50,7 @@ class SchoolSwitchIn(BaseModel):
 
 
 def _check(key: str) -> None:
-    if key not in FEATURES:
+    if not is_known_key(key):
         raise NotFoundError("Unknown feature")
 
 
@@ -75,8 +75,8 @@ async def _states(
         ).scalars().all()
         own = {r.feature_key for r in rows}
     out = []
-    for key, meta in FEATURES.items():
-        a = amap[key]
+    for key, a in amap.items():
+        meta = FEATURES.get(key) or {"label": label_for(key), "portal": key.split(".")[1] if key.startswith("nav.") else "all"}
         out.append(
             FeatureState(
                 key=key,
@@ -119,7 +119,7 @@ async def set_school_feature(
     """Turn a feature off (or back on) for this school only. Cannot touch anything the platform has blocked."""
     _check(key)
     sid = _school(user)
-    a = (await service.effective_map(db, sid, UserRole.SCHOOL_ADMIN.value))[key]
+    a = (await service.effective_map(db, sid, UserRole.SCHOOL_ADMIN.value)).get(key, service.Access(True))
     if a.locked_by == "platform":
         raise ForbiddenError("This feature is locked by Sybeez and cannot be changed by the school.", code="feature_locked")
     if key == "portal.school" and not body.enabled:
@@ -144,7 +144,7 @@ async def set_school_feature(
         action="feature.school_switch",
         resource_type="feature",
         resource_id=key,
-        message=f"School admin turned {FEATURES[key]['label']} {'on' if body.enabled else 'off'}",
+        message=f"School admin turned {label_for(key)} {'on' if body.enabled else 'off'}",
         details={"feature": key, "before": before, "after": body.enabled},
     )
     await db.flush()
@@ -193,7 +193,7 @@ async def _put_rule(db: AsyncSession, user: CurrentUser, key: str, school_id: UU
         action="feature.platform_rule",
         resource_type="feature",
         resource_id=key,
-        message=f"Platform {'enabled' if body.enabled else 'blocked'} {FEATURES[key]['label']} for {scope}",
+        message=f"Platform {'enabled' if body.enabled else 'blocked'} {label_for(key)} for {scope}",
         details={"feature": key, "school_id": None if school_id is None else str(school_id),
                  "scope": "global" if school_id is None else "school", "before": before,
                  "after": body.enabled, "reason": body.reason},
@@ -296,7 +296,7 @@ async def set_member_feature(
         action="feature.member_switch",
         resource_type="membership",
         resource_id=str(m.id),
-        message=f"School admin turned {FEATURES[key]['label']} {'on' if body.enabled else 'off'} for a {m.role} member",
+        message=f"School admin turned {label_for(key)} {'on' if body.enabled else 'off'} for a {m.role} member",
         details={"feature": key, "membership_id": str(m.id), "role": m.role, "after": body.enabled},
     )
     await db.flush()

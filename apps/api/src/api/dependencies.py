@@ -216,11 +216,24 @@ def _perm_satisfies(perms: set[str], code: str) -> bool:
     return False
 
 
+def is_super_admin(user: CurrentUser) -> bool:
+    """The Sybeez super admin (admin@sybeez.ai) has unrestricted access to every role gate."""
+    if not user.is_platform_admin:
+        return False
+    if user.platform_role == PlatformRole.SUPER_ADMIN.value:
+        return True
+    from src.core.config import get_settings
+
+    return user.email.lower() == get_settings().superadmin_email.lower()
+
+
 def require_roles(*roles: UserRole):
     async def _dep(
         user: Annotated[CurrentUser, Depends(get_current_user)],
         db: Annotated[AsyncSession, Depends(get_db)],
     ) -> CurrentUser:
+        if is_super_admin(user):
+            return user
         role_ok = user.role in roles or (UserRole.PLATFORM_ADMIN in roles and user.is_platform_admin)
         code = _finance_gate(set(roles))
         if code is not None:

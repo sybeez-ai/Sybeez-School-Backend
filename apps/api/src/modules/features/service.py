@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.db.models import MembershipFeatureLimit, PlatformFeatureRule, SchoolFeatureSetting
-from src.modules.features.catalog import FEATURES, PORTAL_FOR_ROLE
+from src.modules.features.catalog import FEATURES, is_nav_key, portal_keys_for_role
 
 TTL_SECONDS = 30.0
 # school_id -> (loaded_at, global_off, school_off_by_platform, school_off_by_admin); reasons kept for the UI.
@@ -113,12 +113,20 @@ async def effective_map(
 ) -> dict[str, Access]:
     glob, per_school, school_off = await _load(db, school_id)
     school_off = set(school_off) | await member_off(db, membership_id)
-    portal = PORTAL_FOR_ROLE.get(role)
-    portal_access = decide(portal, glob, per_school, school_off) if portal else Access(True)
+    portal_access = Access(True)
+    for portal in portal_keys_for_role(role):
+        pa = decide(portal, glob, per_school, school_off)
+        if not pa.enabled:
+            portal_access = pa
+            break
     out: dict[str, Access] = {}
     for key in FEATURES:
         a = decide(key, glob, per_school, school_off)
         if a.enabled and not portal_access.enabled and not key.startswith("portal."):
             a = portal_access
         out[key] = a
+    # Sidebar switches (nav.<portal>.<item>) only appear once someone has switched one off.
+    for key in sorted({*glob, *per_school, *school_off}):
+        if is_nav_key(key):
+            out[key] = decide(key, glob, per_school, school_off)
     return out
