@@ -68,6 +68,11 @@ async def manual_attendance(body: ManualAttendance, user: Self, db: Db):
     return dump(await _svc(db, user).manual(body.model_dump()))
 
 
+@router.get("/shift/me")
+async def my_shift(user: Self, db: Db):
+    return await _svc(db, user).my_shift()
+
+
 @router.get("/sessions/me")
 async def my_sessions(user: Self, db: Db, date_from: date, date_to: date):
     return [dump(row) for row in await _svc(db, user).list_mine(date_from, date_to)]

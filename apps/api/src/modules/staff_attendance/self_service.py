@@ -356,6 +356,21 @@ class StaffSelfAttendance:
         )
         return {"lock_id": existing.id, "run_id": result["run"].id, "created": result["created"], "skipped": result["skipped"]}
 
+    async def my_shift(self) -> dict:
+        """Shift timings and whether location check-in is on, for the signed-in staff member."""
+        row = await self._policy()
+
+        def hhmm(value):
+            return value.isoformat() if value is not None else None
+
+        return {
+            "shift_start": hhmm(row.shift_start),
+            "shift_end": hhmm(row.shift_end),
+            "grace_minutes": row.grace_minutes,
+            "geofence_enabled": bool(row.geofence_enabled),
+            "geofence_radius_m": row.geofence_radius_m,
+        }
+
     async def _policy(self):
         row = await self.payroll.load_settings()
         if row is not None:
