@@ -1921,6 +1921,15 @@ class FinanceService:
                 .limit(200)
             )
         ).scalars().all()
+        actor_ids = {r.actor_user_id for r in rows if r.actor_user_id}
+        names: dict = {}
+        if actor_ids:
+            names = {
+                uid: name
+                for uid, name in (
+                    await self.db.execute(select(User.id, User.full_name).where(User.id.in_(actor_ids)))
+                ).all()
+            }
         return [
             AuditRow(
                 id=r.id,
@@ -1928,6 +1937,7 @@ class FinanceService:
                 entity_type=r.entity_type,
                 entity_id=r.entity_id,
                 actor_user_id=r.actor_user_id,
+                actor_name=names.get(r.actor_user_id),
                 reason=r.reason,
                 old_values=r.old_values,
                 new_values=r.new_values,
