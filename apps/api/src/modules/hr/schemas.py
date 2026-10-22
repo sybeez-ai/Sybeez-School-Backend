@@ -31,6 +31,14 @@ class StaffLeaveRevokeIn(BaseModel):
         return v.strip() if isinstance(v, str) else v
 
 
+class StaffLeaveOnBehalfIn(StaffLeaveRequestCreate):
+    """HR enters leave for an employee (phone call, paper form). Notice rules do not apply."""
+
+    user_id: UUID
+    approve: bool = False
+    decision_note: str | None = Field(default=None, max_length=2000)
+
+
 class StaffLeaveDecisionIn(BaseModel):
     decision: str = Field(pattern="^(APPROVED|REJECTED)$")
     decision_note: str | None = Field(default=None, max_length=2000)

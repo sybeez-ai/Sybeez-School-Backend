@@ -35,6 +35,7 @@ from src.modules.hr.schemas import (
     PayrollRunDetailOut,
     PayrollRunOut,
     StaffLeaveDecisionIn,
+    StaffLeaveOnBehalfIn,
     StaffLeaveRequestCreate,
     StaffLeaveRequestOut,
     StaffLeaveRevokeIn,
@@ -95,6 +96,7 @@ class HRService:
         data: StaffLeaveRequestCreate,
         *,
         resubmitted_from_id: UUID | None = None,
+        enforce_notice: bool = True,
     ) -> StaffLeaveRequestOut:
         if data.end_date < data.start_date:
             raise AppError("End date must be on or after the start date", status_code=422)
@@ -106,7 +108,7 @@ class HRService:
                 status_code=422,
             )
         notice = rules.leave_min_notice_days
-        if notice and data.start_date < date.today() + timedelta(days=notice):
+        if enforce_notice and notice and data.start_date < date.today() + timedelta(days=notice):
             raise AppError(
                 f"Leave must be requested at least {notice} day{'s' if notice != 1 else ''} in advance",
                 status_code=422,
@@ -183,6 +185,26 @@ class HRService:
             event="submitted",
             actor=user_id,
         )
+        return out
+
+    async def create_staff_leave_on_behalf(
+        self, school_id: UUID, hr_user_id: UUID, data: StaffLeaveOnBehalfIn
+    ) -> StaffLeaveRequestOut:
+        """HR records leave for an employee; optionally approves it in the same step."""
+        if data.user_id == hr_user_id and data.approve:
+            raise ForbiddenError("You cannot approve your own leave request")
+        base = StaffLeaveRequestCreate(
+            start_date=data.start_date,
+            end_date=data.end_date,
+            reason=data.reason,
+            leave_type_id=data.leave_type_id,
+        )
+        out = await self.create_staff_leave(school_id, data.user_id, base, enforce_notice=False)
+        if data.approve:
+            note = data.decision_note or "Entered and approved by HR"
+            out = await self.decide_staff_leave(
+                school_id, out.id, hr_user_id, StaffLeaveDecisionIn(decision="APPROVED", decision_note=note)
+            )
         return out
 
     async def resubmit_staff_leave(
