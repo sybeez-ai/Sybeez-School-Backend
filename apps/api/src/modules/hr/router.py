@@ -18,6 +18,7 @@ from src.modules.hr.schemas import (
     PayrollRunDetailOut,
     PayrollRunOut,
     StaffLeaveDecisionIn,
+    StaffLeaveOnBehalfIn,
     StaffLeaveRequestCreate,
     StaffLeaveRequestOut,
     StaffLeaveRevokeIn,
@@ -83,6 +84,13 @@ async def create_my_staff_leave(
     body: StaffLeaveRequestCreate, db: Annotated[AsyncSession, Depends(get_db)], user: SelfService
 ):
     return await HRService(db).create_staff_leave(_sid(user), user.id, body)
+
+
+@router.post("/leave/requests/on-behalf", response_model=StaffLeaveRequestOut, status_code=201)
+async def create_staff_leave_on_behalf(
+    body: StaffLeaveOnBehalfIn, db: Annotated[AsyncSession, Depends(get_db)], user: Admin
+):
+    return await HRService(db).create_staff_leave_on_behalf(_sid(user), user.id, body)
 
 
 @router.post("/leave/requests/{leave_id}/cancel", response_model=StaffLeaveRequestOut)
