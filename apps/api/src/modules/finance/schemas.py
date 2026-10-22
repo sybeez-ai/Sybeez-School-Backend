@@ -359,6 +359,7 @@ class AuditRow(BaseModel):
     entity_type: str
     entity_id: UUID | None = None
     actor_user_id: UUID | None = None
+    actor_name: str | None = None
     reason: str | None = None
     old_values: str | None = None
     new_values: str | None = None
