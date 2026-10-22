@@ -212,6 +212,22 @@ async def list_fee_students(
     )
 
 
+@router.get("/fees/student-access")
+async def student_fee_access(
+    db: Annotated[AsyncSession, Depends(scoped_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(UserRole.STUDENT, UserRole.PARENT, *FINANCE_VIEW))],
+):
+    """Whether this school lets students see their own fees (so the student portal can skip the call)."""
+    from sqlalchemy import select
+
+    from src.db.models.fee import FeeSettings
+
+    settings = (
+        await db.execute(select(FeeSettings.allow_student_view_fees).where(FeeSettings.school_id == _sid(user)))
+    ).scalar_one_or_none()
+    return {"student_fee_view": bool(settings)}
+
+
 @router.get("/fees/students/{student_id}")
 async def student_fees(
     student_id: UUID,
