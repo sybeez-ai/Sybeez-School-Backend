@@ -726,6 +726,10 @@ class HrOperations:
         await self.db.flush()
         return await dumped(self.db, row)
 
+    async def list_shifts(self, school_id: UUID) -> list[dict]:
+        stmt = select(HrShift).where(HrShift.school_id == school_id).order_by(HrShift.start_time, HrShift.name)
+        return [dump(row) for row in (await self.db.execute(stmt)).scalars()]
+
     async def assign_roster(self, school_id: UUID, actor: UUID, data: dict) -> dict:
         employee = await self._employee(school_id, data["employee_id"])
         shift = await self.db.get(HrShift, data["shift_id"])
