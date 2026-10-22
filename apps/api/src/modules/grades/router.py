@@ -5,11 +5,12 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import CurrentUser, require_roles, require_school_scope
+from src.modules.access.deps import require_permission
+from src.shared.enums import UserRole
 from src.core.database import get_db
 from src.core.exceptions import ForbiddenError
 from src.modules.grades.schemas import GradeCreate, GradeOut, GradeUpdate
 from src.modules.grades.service import GradeService
-from src.shared.enums import UserRole
 
 router = APIRouter(prefix="/grades", tags=["grades"])
 
@@ -33,7 +34,7 @@ async def list_grades(
 async def create_grade(
     body: GradeCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    user: Annotated[CurrentUser, Depends(require_permission("grades.write"))],
 ):
     return await GradeService(db).create(_sid(user), body)
 

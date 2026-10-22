@@ -1,13 +1,15 @@
 """Proposed payroll assistant actions.
 
-Revision ID: 0042
-Revises: 0041
+Revision ID: 0045
+Revises: 0044
+
+Renumbered from 0042. Finance already uses 0041–0043.
 """
 
 from alembic import op
 
-revision = "0042"
-down_revision = "0041"
+revision = "0045"
+down_revision = "0044"
 branch_labels = None
 depends_on = None
 

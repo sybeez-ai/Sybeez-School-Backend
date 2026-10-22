@@ -5,7 +5,11 @@ from fastapi import APIRouter, Depends, File, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import CurrentUser, require_roles
+from src.modules.access.deps import require_permission
+from src.shared.enums import UserRole
 from src.core.database import get_db
+from src.db.models import Teacher as _TeacherModel
+from src.modules.schools.login_reset import LoginCredentialsOut, reset_login
 from src.core.exceptions import ForbiddenError
 from src.modules.teachers.schemas import (
     TeacherCreate,
@@ -15,15 +19,15 @@ from src.modules.teachers.schemas import (
     TeacherUpdate,
 )
 from src.modules.teachers.service import TeacherService
-from src.shared.enums import UserRole
+from src.shared.pagination import Page, PageQuery
 
 router = APIRouter(prefix="/teachers", tags=["teachers"])
 
 
-def _sid(u: CurrentUser) -> UUID:
-    if u.school_id is None:
+def _sid(user: CurrentUser) -> UUID:
+    if user.school_id is None:
         raise ForbiddenError("School context required")
-    return u.school_id
+    return user.school_id
 
 
 @router.get("/me", response_model=TeacherOut)
@@ -45,7 +49,18 @@ async def my_teacher_dashboard(
 @router.get("", response_model=list[TeacherOut])
 async def list_teachers(
     db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    user: Annotated[
+        CurrentUser,
+        Depends(
+            require_roles(
+                UserRole.SCHOOL_ADMIN,
+                UserRole.HR,
+                UserRole.HR_MANAGER,
+                UserRole.PAYROLL_ADMIN,
+                UserRole.PAYROLL_APPROVER,
+            )
+        ),
+    ],
     q: str | None = Query(None),
     status: str | None = Query(None),
     academic_year_id: UUID | None = Query(None),
@@ -59,7 +74,7 @@ async def list_teachers(
 async def create_teacher(
     body: TeacherCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    user: Annotated[CurrentUser, Depends(require_permission("teachers.write"))],
 ):
     return await TeacherService(db).create(_sid(user), body)
 
@@ -107,3 +122,15 @@ async def upload_teacher_photo(
     file: UploadFile = File(...),
 ):
     return await TeacherService(db).upload_photo(_sid(user), teacher_id, file)
+
+
+@router.post("/{teacher_id}/reset-login", response_model=LoginCredentialsOut)
+async def reset_teacher_login(
+    teacher_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+):
+    """Issue a new temporary password (shown once); the teacher must change it at sign-in."""
+    return await reset_login(
+        db, school_id=_sid(user), model=_TeacherModel, entity_id=teacher_id, actor_id=user.id
+    )

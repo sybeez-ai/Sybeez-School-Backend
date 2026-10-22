@@ -5,11 +5,12 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import CurrentUser, require_roles
+from src.shared.enums import UserRole
 from src.core.database import get_db
 from src.core.exceptions import ForbiddenError
+from src.modules.access.deps import require_permission
 from src.modules.teacher_assignments.schemas import TeacherAssignmentCreate, TeacherAssignmentOut
 from src.modules.teacher_assignments.service import TeacherAssignmentService
-from src.shared.enums import UserRole
 
 router = APIRouter(prefix="/teacher-assignments", tags=["teacher_assignments"])
 
@@ -48,7 +49,7 @@ async def list_assignments(
 async def create_assignment(
     body: TeacherAssignmentCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    user: Annotated[CurrentUser, Depends(require_permission("teacher_assignments.write"))],
 ):
     return await TeacherAssignmentService(db).create(_sid(user), body)
 

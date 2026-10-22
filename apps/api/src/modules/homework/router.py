@@ -20,8 +20,10 @@ from src.modules.homework.schemas import (
     SubmissionOut,
     SubmissionStatsOut,
 )
+from src.modules.access.deps import public, require_permission
 from src.modules.homework.service import HomeworkService
 from src.shared.enums import UserRole
+from src.shared.pagination import Page, PageQuery
 
 router = APIRouter(prefix="/homework", tags=["homework"])
 
@@ -33,6 +35,7 @@ def _sid(u: CurrentUser) -> UUID:
 
 
 @router.get("/health")
+@public
 async def homework_health():
     return {"module": "homework", "status": "ok"}
 
@@ -270,7 +273,9 @@ async def homework_stats(
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN, UserRole.TEACHER))],
 ):
-    return await HomeworkService(db).submission_stats(school_id=_sid(user), homework_id=homework_id)
+    svc = HomeworkService(db)
+    await svc.get(school_id=_sid(user), user_id=user.id, role=user.role.value, homework_id=homework_id)
+    return await svc.submission_stats(school_id=_sid(user), homework_id=homework_id)
 
 
 @router.get("/{homework_id}/submission", response_model=SubmissionOut | None)
@@ -284,7 +289,7 @@ async def my_submission(
     )
 
 
-@router.post("/{homework_id}/submission", response_model=SubmissionOut)
+@router.post("/{homework_id}/submission", response_model=SubmissionOut, status_code=201)
 async def submit_homework(
     homework_id: UUID,
     body: SubmissionCreate,

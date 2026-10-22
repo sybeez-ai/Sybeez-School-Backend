@@ -1,13 +1,15 @@
 """Payroll assistant imports and opening year-to-date figures.
 
-Revision ID: 0043
-Revises: 0042
+Revision ID: 0046
+Revises: 0045
+
+Renumbered from 0043. Finance already uses 0041–0043.
 """
 
 from alembic import op
 
-revision = "0043"
-down_revision = "0042"
+revision = "0046"
+down_revision = "0045"
 branch_labels = None
 depends_on = None
 

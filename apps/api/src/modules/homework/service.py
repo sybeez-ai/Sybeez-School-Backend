@@ -1,10 +1,11 @@
 from datetime import datetime, timezone
-from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import UploadFile
+from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import attributes
 
 from src.core.exceptions import AppError, ConflictError, ForbiddenError, NotFoundError
 from src.db.models import (
@@ -41,12 +42,10 @@ from src.shared.enums import (
     EnrollmentStatus,
     HomeworkStatus,
     HomeworkSubmissionStatus,
+    HomeworkType,
     UserRole,
 )
 
-MEDIA_ROOT = Path(__file__).resolve().parents[3] / "media"
-HOMEWORK_DIR = MEDIA_ROOT / "homework"
-SUBMISSION_DIR = MEDIA_ROOT / "homework-submissions"
 MAX_FILE_BYTES = 10_000_000
 
 
@@ -55,9 +54,9 @@ def _utcnow() -> datetime:
 
 
 def _file_url(file_key: str) -> str:
-    if file_key.startswith("/"):
-        return file_key
-    return f"/media/{file_key}"
+    from src.core.storage import public_url
+
+    return public_url(file_key) or file_key
 
 
 class HomeworkService:
@@ -169,29 +168,20 @@ class HomeworkService:
 
         assigned = (
             await self.db.execute(
-                select(TeacherAssignment).where(
+                select(TeacherAssignment.id)
+                .where(
                     TeacherAssignment.school_id == school_id,
                     TeacherAssignment.teacher_id == teacher.id,
                     TeacherAssignment.class_id == class_id,
                     TeacherAssignment.subject_id == subject_id,
                 )
+                .limit(1)
             )
         ).scalar_one_or_none()
         if assigned:
             return classroom
+        # The section's class teacher may set homework for any subject in their own section.
         if classroom.class_teacher_id == teacher.id:
-            return classroom
-        # Also allow any assignment to this class (subject flexibility for MVP)
-        any_class = (
-            await self.db.execute(
-                select(TeacherAssignment).where(
-                    TeacherAssignment.school_id == school_id,
-                    TeacherAssignment.teacher_id == teacher.id,
-                    TeacherAssignment.class_id == class_id,
-                )
-            )
-        ).scalar_one_or_none()
-        if any_class:
             return classroom
         raise ForbiddenError(
             "You are not assigned to teach this subject/section. Ask admin to add a teaching assignment."
@@ -209,6 +199,16 @@ class HomeworkService:
             url=_file_url(row.file_key),
         )
 
+    async def _ensure_loaded(self, row, *names: str) -> None:
+        unloaded = attributes.instance_state(row).unloaded
+        missing = [name for name in names if name in unloaded]
+        if missing:
+            await self.db.refresh(row, attribute_names=missing)
+
+    async def _attachment_list(self, row) -> list:
+        await self._ensure_loaded(row, "attachments")
+        return list(row.attachments or [])
+
     async def _to_homework_out(
         self,
         row: Homework,
@@ -216,6 +216,11 @@ class HomeworkService:
         with_stats: bool = False,
         my_submission: HomeworkSubmission | None = None,
     ) -> HomeworkOut:
+        # A flushed UPDATE expires server-side columns (updated_at onupdate=now()); reading
+        # them lazily under asyncio raises MissingGreenlet -> 500 on publish/update/close.
+        await self.db.flush()
+        if sa_inspect(row).expired_attributes:
+            await self.db.refresh(row)
         out = HomeworkOut(
             id=row.id,
             school_id=row.school_id,
@@ -236,7 +241,7 @@ class HomeworkService:
             status=row.status,
             created_at=row.created_at,
             updated_at=row.updated_at,
-            attachments=[self._att_out(a) for a in (row.attachments or [])],
+            attachments=[self._att_out(a) for a in await self._attachment_list(row)],
         )
         if with_stats:
             stats = await self.submission_stats(school_id=row.school_id, homework_id=row.id)
@@ -271,7 +276,7 @@ class HomeworkService:
             reviewed_by_name=await self._user_name(row.reviewed_by),
             reviewed_at=row.reviewed_at,
             created_at=row.created_at,
-            attachments=[self._att_out(a) for a in (row.attachments or [])],
+            attachments=[self._att_out(a) for a in await self._attachment_list(row)],
             homework_title=hw.title if hw else None,
             max_marks=hw.max_marks if hw else None,
         )
@@ -443,6 +448,12 @@ class HomeworkService:
                 raise ForbiddenError("You can only manage your own homework")
             return
         raise ForbiddenError("Not allowed")
+
+    async def assert_kind(self, *, school_id: UUID, homework_id: UUID, kind: str) -> None:
+        row = await self.repo.get(school_id, homework_id)
+        label = "Assignment" if kind == HomeworkType.ASSIGNMENT.value else "Homework"
+        if not row or row.homework_type != kind:
+            raise NotFoundError(f"{label} not found")
 
     async def get(
         self, *, school_id: UUID, user_id: UUID, role: str, homework_id: UUID
@@ -822,12 +833,15 @@ class HomeworkService:
         if not row:
             raise NotFoundError("Homework not found")
         await self._assert_can_manage(school_id=school_id, user_id=user_id, role=role, homework=row)
+        from src.core.storage import put_object
+
         data, name, mime, size = await self._read_upload(file)
-        HOMEWORK_DIR.mkdir(parents=True, exist_ok=True)
         key_name = f"{homework_id}_{uuid4().hex[:8]}_{name}"
-        path = HOMEWORK_DIR / key_name
-        path.write_bytes(data)
-        file_key = f"homework/{key_name}"
+        file_key = put_object(
+            key=f"homework/{school_id}/{key_name}",
+            data=data,
+            content_type=mime,
+        )
         att = HomeworkAttachment(
             school_id=school_id,
             homework_id=homework_id,
@@ -875,12 +889,15 @@ class HomeworkService:
             )
         assert sub is not None
 
+        from src.core.storage import put_object
+
         data, name, mime, size = await self._read_upload(file)
-        SUBMISSION_DIR.mkdir(parents=True, exist_ok=True)
         key_name = f"{sub.id}_{uuid4().hex[:8]}_{name}"
-        path = SUBMISSION_DIR / key_name
-        path.write_bytes(data)
-        file_key = f"homework-submissions/{key_name}"
+        file_key = put_object(
+            key=f"homework-submissions/{school_id}/{key_name}",
+            data=data,
+            content_type=mime,
+        )
         att = SubmissionAttachment(
             school_id=school_id,
             submission_id=sub.id,

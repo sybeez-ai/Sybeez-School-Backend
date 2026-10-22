@@ -13,14 +13,23 @@ class MockGateway:
     name = "mock"
 
     async def create_order(
-        self, *, amount: Decimal, currency: str, receipt: str, notes: dict | None = None
+        self,
+        *,
+        amount: Decimal,
+        currency: str,
+        receipt: str,
+        notes: dict | None = None,
+        transfers: list[dict] | None = None,
     ) -> GatewayOrder:
+        meta = {"receipt": receipt, **(notes or {})}
+        if transfers:
+            meta["transfers"] = transfers
         return GatewayOrder(
             order_id=f"mock_order_{uuid4().hex[:12]}",
             amount=money(amount),
             currency=currency,
             provider=self.name,
-            meta={"receipt": receipt, **(notes or {})},
+            meta=meta,
         )
 
     async def verify_payment(
@@ -44,7 +53,10 @@ class MockGateway:
             raw={"provider": self.name},
         )
 
-    async def refund(self, *, payment_id: str, amount: Decimal) -> GatewayRefundResult:
+    async def refund(
+        self, *, payment_id: str, amount: Decimal, reverse_all: bool = False
+    ) -> GatewayRefundResult:
+        del reverse_all
         return GatewayRefundResult(
             success=True,
             refund_id=f"mock_rfnd_{uuid4().hex[:10]}",
@@ -60,13 +72,27 @@ class MockGateway:
         currency = str(payload.get("currency") or "INR")
         # Require mock signature header for webhook authenticity
         sig = headers.get("x-mock-signature") or headers.get("X-Mock-Signature")
-        ok = bool(order_id.startswith("mock_order_") and sig == "mock_secret")
+        signed = bool(order_id.startswith("mock_order_") and sig == "mock_secret")
+        event = str(payload.get("event") or "")
+        status = str(payload.get("status") or "").lower()
+        failed = event in {"payment.failed", "payment.authorized"} or status == "failed"
+        if failed:
+            credit: bool | None = False
+            success = signed
+        elif event in {"payment.captured", "order.paid"}:
+            credit = True
+            success = signed and amount > 0
+        else:
+            credit = None
+            success = signed and amount > 0
         return GatewayVerifyResult(
-            success=ok and amount > 0,
+            success=success,
             order_id=order_id,
             payment_id=str(payment_id) if payment_id else None,
             amount=amount,
             currency=currency,
             reference=str(sig) if sig else None,
             raw=payload,
+            credit=credit,
+            event=event or None,
         )

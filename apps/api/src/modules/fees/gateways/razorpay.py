@@ -1,11 +1,14 @@
-"""Razorpay adapter stub — configure secrets via env, never expose to frontend."""
+"""Razorpay orders, refunds, and webhook verification.
+
+Keys come from the environment or Secrets Manager. They are never returned
+to the browser except the public key id already stored on fee settings.
+"""
 
 from __future__ import annotations
 
 import hashlib
 import hmac
-import os
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from uuid import uuid4
 
 import httpx
@@ -14,19 +17,48 @@ from src.core.exceptions import AppError
 from src.core.config import get_settings
 from src.modules.fees.calculations import money
 from src.modules.fees.gateways.base import GatewayOrder, GatewayRefundResult, GatewayVerifyResult
+from src.modules.fees.gateways.razorpay_route import RazorpayRouteClient
+from src.modules.fees.razorpay_secrets import razorpay_env
+from src.modules.fees.route_events import describe_webhook
+
+
+def _paise(amount: Decimal) -> int:
+    return int((money(amount) * Decimal("100")).to_integral_value(rounding=ROUND_HALF_UP))
+
+
+def _string_notes(notes: dict | None) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for key, value in (notes or {}).items():
+        if value is None:
+            continue
+        out[str(key)[:64]] = str(value)[:256]
+    return out
 
 
 class RazorpayGateway:
     name = "razorpay"
 
-    def __init__(self) -> None:
-        self.key_id = os.getenv("RAZORPAY_KEY_ID", "")
-        self.key_secret = os.getenv("RAZORPAY_KEY_SECRET", "")
+    def __init__(self, *, transport: httpx.AsyncBaseTransport | None = None) -> None:
+        self.key_id = razorpay_env("RAZORPAY_KEY_ID")
+        self.key_secret = razorpay_env("RAZORPAY_KEY_SECRET")
+        self._transport = transport
+
+    def client(self) -> RazorpayRouteClient:
+        self.key_id = self.key_id or razorpay_env("RAZORPAY_KEY_ID")
+        self.key_secret = self.key_secret or razorpay_env("RAZORPAY_KEY_SECRET")
+        return RazorpayRouteClient(self.key_id, self.key_secret, transport=self._transport)
 
     async def create_order(
-        self, *, amount: Decimal, currency: str, receipt: str, notes: dict | None = None
+        self,
+        *,
+        amount: Decimal,
+        currency: str,
+        receipt: str,
+        notes: dict | None = None,
+        transfers: list[dict] | None = None,
     ) -> GatewayOrder:
         settings = get_settings()
+        string_notes = _string_notes(notes)
         if not self.key_id or not self.key_secret:
             # Development convenience only — never allow stub orders in production.
             if (settings.app_env or "").lower() == "production":
@@ -36,31 +68,18 @@ class RazorpayGateway:
                 amount=money(amount),
                 currency=currency,
                 provider=self.name,
-                meta={"receipt": receipt, "mode": "stub", **(notes or {})},
+                meta={"receipt": receipt, "mode": "stub", "transfers": transfers or [], **string_notes},
             )
 
-        # Razorpay expects amount in paise (integer).
-        amount_paise = int((money(amount) * Decimal("100")).to_integral_value())
-        payload = {
-            "amount": amount_paise,
+        payload: dict = {
+            "amount": _paise(amount),
             "currency": currency,
-            "receipt": receipt,
-            "notes": notes or {},
+            "receipt": receipt[:40],
+            "notes": string_notes,
         }
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.post(
-                    "https://api.razorpay.com/v1/orders",
-                    auth=(self.key_id, self.key_secret),
-                    json=payload,
-                )
-        except httpx.HTTPError as e:
-            raise AppError(f"Razorpay order create failed: {e}", status_code=502) from e
-
-        if resp.status_code >= 400:
-            raise AppError(f"Razorpay order create failed ({resp.status_code})", status_code=502)
-
-        data = resp.json()
+        if transfers:
+            payload["transfers"] = transfers
+        data = await self.client().create_order(payload)
         order_id = str(data.get("id") or "")
         if not order_id:
             raise AppError("Razorpay order create returned no id", status_code=502)
@@ -69,7 +88,7 @@ class RazorpayGateway:
             amount=money(amount),
             currency=currency,
             provider=self.name,
-            meta={"receipt": receipt, "mode": "live", **(notes or {})},
+            meta={"receipt": receipt, "mode": "live", "transfers": transfers or [], **string_notes},
         )
 
     async def verify_payment(
@@ -108,7 +127,9 @@ class RazorpayGateway:
             reference=signature,
         )
 
-    async def refund(self, *, payment_id: str, amount: Decimal) -> GatewayRefundResult:
+    async def refund(
+        self, *, payment_id: str, amount: Decimal, reverse_all: bool = False
+    ) -> GatewayRefundResult:
         settings = get_settings()
         if not self.key_id or not self.key_secret:
             # Development convenience only — never allow stub refunds in production.
@@ -120,22 +141,10 @@ class RazorpayGateway:
                 amount=money(amount),
             )
 
-        amount_paise = int((money(amount) * Decimal("100")).to_integral_value())
-        payload = {"amount": amount_paise}
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.post(
-                    f"https://api.razorpay.com/v1/payments/{payment_id}/refund",
-                    auth=(self.key_id, self.key_secret),
-                    json=payload,
-                )
-        except httpx.HTTPError as e:
-            raise AppError(f"Razorpay refund failed: {e}", status_code=502) from e
-
-        if resp.status_code >= 400:
-            raise AppError(f"Razorpay refund failed ({resp.status_code})", status_code=502)
-
-        data = resp.json()
+        payload: dict = {"amount": _paise(amount)}
+        if reverse_all:
+            payload["reverse_all"] = True
+        data = await self.client().refund(payment_id, payload)
         refund_id = str(data.get("id") or "")
         if not refund_id:
             raise AppError("Razorpay refund returned no id", status_code=502)
@@ -149,7 +158,7 @@ class RazorpayGateway:
         self, *, payload: dict, headers: dict, raw_body: bytes | None = None
     ) -> GatewayVerifyResult:
         # Verify Razorpay webhook signature with RAZORPAY_WEBHOOK_SECRET.
-        secret = os.getenv("RAZORPAY_WEBHOOK_SECRET", "")
+        secret = razorpay_env("RAZORPAY_WEBHOOK_SECRET")
         sig = headers.get("x-razorpay-signature") or headers.get("X-Razorpay-Signature")
         if not secret or not sig or raw_body is None:
             return GatewayVerifyResult(
@@ -172,38 +181,33 @@ class RazorpayGateway:
                 currency="INR",
                 reference=str(sig),
                 raw=payload,
+                credit=False,
+                event=str(payload.get("event") or ""),
             )
 
-        order_id = str(
-            (payload.get("payload") or {}).get("payment", {}).get("entity", {}).get("order_id")
-            or payload.get("order_id")
-            or ""
-        )
-        payment_id = (
-            (payload.get("payload") or {}).get("payment", {}).get("entity", {}).get("id")
-            or payload.get("payment_id")
-        )
-        amount_paise = (
-            (payload.get("payload") or {}).get("payment", {}).get("entity", {}).get("amount")
-            or payload.get("amount")
-            or 0
-        )
-        try:
-            amount = money(Decimal(str(int(amount_paise))) / Decimal("100"))
-        except Exception:
-            amount = money(0)
-        currency = str(
-            (payload.get("payload") or {}).get("payment", {}).get("entity", {}).get("currency")
-            or payload.get("currency")
-            or "INR"
-        )
-        ok = bool(order_id)
+        described = describe_webhook(payload)
+        signed_ok = bool(described["order_id"]) or described["kind"] in {
+            "account",
+            "transfer",
+            "settlement",
+            "refund",
+        }
         return GatewayVerifyResult(
-            success=ok,
-            order_id=order_id,
-            payment_id=str(payment_id) if payment_id else None,
-            amount=amount,
-            currency=currency,
+            success=signed_ok,
+            order_id=described["order_id"],
+            payment_id=described["payment_id"],
+            amount=described["amount"],
+            currency=described["currency"],
             reference=str(sig),
             raw=payload,
+            credit=described["credit"],
+            event=described["event"],
+            kind=described["kind"],
+            account_id=described["account_id"],
+            route_status=described["route_status"],
+            transfer_id=described["transfer_id"],
+            transfer_status=described["transfer_status"],
+            settlement_id=described["settlement_id"],
+            refund_id=described["refund_id"],
+            failure_reason=described["failure_reason"],
         )

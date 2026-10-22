@@ -60,6 +60,9 @@ class PersonalGoal(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 class PersonalGoalMilestone(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "personal_goal_milestones"
 
+    school_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     goal_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("personal_goals.id", ondelete="CASCADE"), nullable=False, index=True
     )
@@ -97,6 +100,9 @@ class PersonalHabitCheckin(Base, UUIDPrimaryKeyMixin):
     __tablename__ = "personal_habit_checkins"
     __table_args__ = (UniqueConstraint("habit_id", "checkin_date", name="uq_habit_checkin_day"),)
 
+    school_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     habit_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("personal_habits.id", ondelete="CASCADE"), nullable=False, index=True
     )

@@ -13,11 +13,30 @@ class StaffLeaveRequestCreate(BaseModel):
     start_date: date
     end_date: date
     reason: str = Field(min_length=3, max_length=4000)
+    # Required once the school has configured leave types.
+    leave_type_id: UUID | None = None
 
     @field_validator("reason", mode="before")
     @classmethod
     def _trim_reason(cls, v):
         return v.strip() if isinstance(v, str) else v
+
+
+class StaffLeaveRevokeIn(BaseModel):
+    reason: str = Field(min_length=3, max_length=2000)
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def _trim_reason(cls, v):
+        return v.strip() if isinstance(v, str) else v
+
+
+class StaffLeaveOnBehalfIn(StaffLeaveRequestCreate):
+    """HR enters leave for an employee (phone call, paper form). Notice rules do not apply."""
+
+    user_id: UUID
+    approve: bool = False
+    decision_note: str | None = Field(default=None, max_length=2000)
 
 
 class StaffLeaveDecisionIn(BaseModel):
@@ -45,6 +64,12 @@ class StaffLeaveRequestOut(BaseModel):
     start_date: date
     end_date: date
     days: int | None = None
+    working_days: Decimal | None = None
+    leave_type_id: UUID | None = None
+    leave_type_name: str | None = None
+    leave_type_is_paid: bool | None = None
+    resubmitted_from_id: UUID | None = None
+    resubmitted_as_id: UUID | None = None
     reason: str
     status: str
     decided_by: UUID | None
@@ -112,7 +137,8 @@ class PayrollPayslipOut(BaseModel):
     id: UUID
     school_id: UUID
     payroll_run_id: UUID
-    teacher_id: UUID
+    teacher_id: UUID | None = None
+    employee_id: UUID | None = None
     gross_amount: Decimal
     deductions_amount: Decimal
     net_amount: Decimal

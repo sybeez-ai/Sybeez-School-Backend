@@ -5,11 +5,12 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import CurrentUser, require_roles, require_school_scope
+from src.modules.access.deps import require_permission
+from src.shared.enums import UserRole
 from src.core.database import get_db
 from src.core.exceptions import ForbiddenError
 from src.modules.classes.schemas import ClassCreate, ClassOut, ClassUpdate
 from src.modules.classes.service import ClassService
-from src.shared.enums import UserRole
 
 router = APIRouter(prefix="/classes", tags=["classes"])
 
@@ -32,7 +33,7 @@ async def list_classes(
 async def create_class(
     body: ClassCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    user: Annotated[CurrentUser, Depends(require_permission("classes.write"))],
 ):
     return await ClassService(db).create(_sid(user), body)
 

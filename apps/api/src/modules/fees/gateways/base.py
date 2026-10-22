@@ -23,6 +23,17 @@ class GatewayVerifyResult:
     currency: str
     reference: str | None = None
     raw: dict | None = None
+    # None → follow `success` (mock). False → signature may be valid but do not credit.
+    credit: bool | None = None
+    event: str | None = None
+    kind: str | None = None
+    account_id: str | None = None
+    route_status: str | None = None
+    transfer_id: str | None = None
+    transfer_status: str | None = None
+    settlement_id: str | None = None
+    refund_id: str | None = None
+    failure_reason: str | None = None
 
 
 @dataclass
@@ -36,14 +47,22 @@ class PaymentGatewayAdapter(Protocol):
     name: str
 
     async def create_order(
-        self, *, amount: Decimal, currency: str, receipt: str, notes: dict | None = None
+        self,
+        *,
+        amount: Decimal,
+        currency: str,
+        receipt: str,
+        notes: dict | None = None,
+        transfers: list[dict] | None = None,
     ) -> GatewayOrder: ...
 
     async def verify_payment(
         self, *, order_id: str, payment_id: str | None, signature: str | None, amount: Decimal, currency: str
     ) -> GatewayVerifyResult: ...
 
-    async def refund(self, *, payment_id: str, amount: Decimal) -> GatewayRefundResult: ...
+    async def refund(
+        self, *, payment_id: str, amount: Decimal, reverse_all: bool = False
+    ) -> GatewayRefundResult: ...
 
     async def handle_webhook(
         self, *, payload: dict, headers: dict, raw_body: bytes | None = None

@@ -14,7 +14,7 @@ import calendar
 import re
 from dataclasses import dataclass, field
 from datetime import date, timedelta
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_CEILING, ROUND_HALF_UP, Decimal
 from math import asin, cos, radians, sin, sqrt
 
 PAISE = Decimal("0.01")
@@ -129,11 +129,14 @@ def esi(spec: EsiInput) -> EsiResult:
     gross = D(spec.gross)
     if gross <= 0 or gross > D(spec.threshold):
         return EsiResult(ZERO, ZERO, False)
-    return EsiResult(
-        round_money(gross * _rate(spec.employee_rate), spec.rounding),
-        round_money(gross * _rate(spec.employer_rate), spec.rounding),
-        True,
-    )
+    # ESIC rounds each share up to the next higher rupee.
+    if spec.rounding == "PAISE":
+        employee = round_money(gross * _rate(spec.employee_rate), "PAISE")
+        employer = round_money(gross * _rate(spec.employer_rate), "PAISE")
+    else:
+        employee = D(gross * _rate(spec.employee_rate)).quantize(RUPEE, rounding=ROUND_CEILING)
+        employer = D(gross * _rate(spec.employer_rate)).quantize(RUPEE, rounding=ROUND_CEILING)
+    return EsiResult(employee, employer, True)
 
 
 @dataclass(frozen=True)
@@ -236,6 +239,47 @@ def slab_tax(taxable: Decimal, slabs: tuple[TaxSlab, ...] | list[TaxSlab]) -> De
     return tax
 
 
+SURCHARGE_BANDS = (
+    (Decimal("50000000"), Decimal("37")),
+    (Decimal("20000000"), Decimal("25")),
+    (Decimal("10000000"), Decimal("15")),
+    (Decimal("5000000"), Decimal("10")),
+)
+
+
+def income_tax(
+    taxable: Decimal,
+    slabs: tuple[TaxSlab, ...] | list[TaxSlab],
+    *,
+    regime: str = "NEW",
+    rebate_limit: Decimal = Decimal("1200000"),
+) -> Decimal:
+    """Slab tax after the 87A rebate (with new-regime marginal relief) and surcharge with marginal relief.
+
+    Cess is not included.
+    """
+    income = D(taxable)
+    if income <= 0:
+        return ZERO
+    limit = D(rebate_limit)
+    base = slab_tax(income, slabs)
+    if income <= limit:
+        return ZERO
+    if regime == "NEW" and base > income - limit:
+        # Marginal relief: tax cannot exceed the income above the rebate limit.
+        base = income - limit
+    cap = Decimal("25") if regime == "NEW" else Decimal("37")
+    for threshold, rate in SURCHARGE_BANDS:
+        if income > threshold:
+            rate = min(rate, cap)
+            with_surcharge = base * (1 + _rate(rate))
+            # Marginal relief: extra tax cannot exceed the income above the threshold.
+            at_threshold = income_tax(threshold, slabs, regime=regime, rebate_limit=limit)
+            relief_cap = at_threshold + (income - threshold)
+            return min(with_surcharge, relief_cap)
+    return base
+
+
 @dataclass(frozen=True)
 class TdsInput:
     regime: str = "NEW"  # NEW | OLD
@@ -306,13 +350,13 @@ def tds(spec: TdsInput) -> TdsResult:
     regime = "OLD" if spec.regime.upper() == "OLD" else "NEW"
     prior_gross = D(spec.prior_gross)
     prior_paid = D(spec.prior_tds)
-    span = 12
-    if prior_gross != 0 or prior_paid != 0:
-        span = int(spec.months_remaining or 12)
-        if span < 1:
-            span = 1
-        if span > 12:
-            span = 12
+    # Project only the months still to be paid this financial year; earlier
+    # months arrive as actual year-to-date gross and tax already deducted.
+    span = int(spec.months_remaining or 12)
+    if span < 1:
+        span = 1
+    if span > 12:
+        span = 12
     annual_gross = D(spec.monthly_taxable_earnings) * span + D(spec.one_time_taxable) + prior_gross
     std = D(spec.standard_deduction_old if regime == "OLD" else spec.standard_deduction_new)
     annual_basic = D(spec.monthly_basic) * span
@@ -328,21 +372,35 @@ def tds(spec: TdsInput) -> TdsResult:
             metro=spec.metro,
         )
         pf_annual = D(spec.monthly_employee_pf) * span
-        chapter_raw = pf_annual + D(spec.declared_80c) + D(spec.declared_80d) + D(spec.other_chapter_vi)
-        chapter = min(chapter_raw, D(spec.chapter_vi_cap))
+        # Section 80C (employee PF included) is capped; 80D and other Chapter VI-A sit outside that cap.
+        sec_80c = min(pf_annual + D(spec.declared_80c), D(spec.chapter_vi_cap))
+        chapter = sec_80c + max(D(spec.declared_80d), ZERO) + max(D(spec.other_chapter_vi), ZERO)
         pt_annual = D(spec.monthly_pt) * span
-    taxable = annual_gross - std - exempt_hra - chapter - pt_annual
-    if taxable < 0:
-        taxable = ZERO
     slabs = spec.old_slabs if regime == "OLD" else spec.new_slabs
-    tax = slab_tax(taxable, slabs)
     limit = D(spec.rebate_limit_old if regime == "OLD" else spec.rebate_limit_new)
-    rebate = taxable <= limit and tax > 0
-    if taxable <= limit:
-        tax = ZERO
+    deductions = std + exempt_hra + chapter + pt_annual
+
+    def _taxable(gross: Decimal) -> Decimal:
+        value = gross - deductions
+        return value if value > 0 else ZERO
+
+    def _tax(income: Decimal) -> Decimal:
+        return income_tax(income, slabs, regime=regime, rebate_limit=limit)
+
+    taxable = _taxable(annual_gross)
+    tax = _tax(taxable)
+    rebate = taxable <= limit and slab_tax(taxable, slabs) > 0
     cess = tax * _rate(spec.cess_rate)
     annual = tax + cess
-    remaining = annual - prior_paid
+    # Tax on one-time pay (arrears, bonus) is collected in the month it is paid.
+    one_time = D(spec.one_time_taxable)
+    one_time_tax = ZERO
+    if one_time > 0:
+        base_tax = _tax(_taxable(annual_gross - one_time))
+        one_time_tax = (tax - base_tax) * (1 + _rate(spec.cess_rate))
+        if one_time_tax < 0:
+            one_time_tax = ZERO
+    remaining = annual - one_time_tax - prior_paid
     if remaining < 0:
         remaining = ZERO
     return TdsResult(
@@ -356,7 +414,7 @@ def tds(spec: TdsInput) -> TdsResult:
         tax_before_cess=round_money(tax, spec.rounding),
         cess=round_money(cess, spec.rounding),
         annual_tax=round_money(annual, spec.rounding),
-        monthly_tds=round_money(remaining / span, spec.rounding),
+        monthly_tds=round_money(remaining / span + one_time_tax, spec.rounding),
         rebate_applied=rebate or (taxable <= limit),
     )
 
@@ -637,6 +695,45 @@ class PayContext:
     pan: str | None = None
     prior_gross: Decimal = ZERO
     prior_tds: Decimal = ZERO
+    # True when an earlier month of the same ESI contribution period was covered.
+    esi_continuing: bool = False
+    # Share of the month this period covers (period working days / month working days).
+    # Fixed monthly amounts are scaled by it when a run covers part of a month.
+    period_factor: Decimal = Decimal("1")
+
+
+def partial_period_factor(
+    start: date, end: date, weekly: list[WeeklyOff], holidays: list[Holiday], branch_name: str | None = None
+) -> Decimal:
+    """1 for a whole calendar month; otherwise period working days over the month's working days."""
+    month_start = start.replace(day=1)
+    next_month = date(start.year + (start.month == 12), start.month % 12 + 1, 1)
+    month_end = next_month - timedelta(days=1)
+    if start == month_start and end == month_end:
+        return Decimal("1")
+    month_days = len(working_days(month_start, month_end, weekly, holidays, branch_name))
+    if month_days == 0:
+        return Decimal("1")
+    period_days = len(working_days(max(start, month_start), min(end, month_end), weekly, holidays, branch_name))
+    return Decimal(period_days) / Decimal(month_days)
+
+
+def period_label(start: date, end: date) -> str:
+    month_start = start.replace(day=1)
+    next_month = date(start.year + (start.month == 12), start.month % 12 + 1, 1)
+    if start == month_start and end == next_month - timedelta(days=1):
+        return f"Payroll {start:%b %Y}"
+    if start.month == end.month and start.year == end.year:
+        return f"Payroll {start.day}-{end.day} {start:%b %Y} (part month)"
+    return f"Payroll {start:%d %b %Y} - {end:%d %b %Y} (part period)"
+
+
+def esi_contribution_period(day: date) -> tuple[date, date]:
+    """ESI contribution periods run April-September and October-March."""
+    if 4 <= day.month <= 9:
+        return date(day.year, 4, 1), date(day.year, 9, 30)
+    start_year = day.year if day.month >= 10 else day.year - 1
+    return date(start_year, 10, 1), date(start_year + 1, 3, 31)
 
 
 def compute_pay(ctx: PayContext) -> PayResult:
@@ -658,6 +755,14 @@ def compute_pay(ctx: PayContext) -> PayResult:
         if code in RESERVED_CODES:
             raise FormulaError(f"{code} is reserved for statutory lines")
         raw = component_amount(component, variables)
+        factor = D(ctx.period_factor)
+        if (
+            factor < 1
+            and component.prorate
+            and component.kind.upper() == "EARNING"
+            and component.calc_type.upper() == "FIXED"
+        ):
+            raw = raw * factor
         if raw < 0 and component.kind == "EARNING":
             raw = ZERO
         amount = round_money(raw, ctx.rounding)
@@ -684,14 +789,26 @@ def compute_pay(ctx: PayContext) -> PayResult:
     basic = variables.get("BASIC", ZERO)
     da = variables.get("DA", ZERO)
     hra = variables.get("HRA", ZERO)
+
+    # PF and ESI are due on wages actually earned, so loss of pay comes off first.
+    def _earned(code: str) -> Decimal:
+        amount = variables.get(code, ZERO)
+        if lop_amount <= 0 or workable <= 0 or code not in prorated_codes:
+            return amount
+        if ctx.lop_base == "GROSS":
+            return round_money(amount * paid / workable, ctx.rounding)
+        if code == "BASIC":
+            remaining = amount - lop_amount
+            return remaining if remaining > 0 else ZERO
+        return amount
     pf_spec = ctx.pf or PfInput(enrolled=False, basic=basic, da=da, rounding=ctx.rounding)
     # DA is included in PF wage only when the DA component is flagged pf_wage.
     da_for_pf = da if any(c.code.upper() == "DA" and c.pf_wage for c in ordered) else ZERO
     pf_result = provident_fund(
         PfInput(
             enrolled=pf_spec.enrolled,
-            basic=basic,
-            da=da_for_pf,
+            basic=_earned("BASIC"),
+            da=_earned("DA") if da_for_pf else ZERO,
             employee_rate=pf_spec.employee_rate,
             employer_rate=pf_spec.employer_rate,
             eps_rate=pf_spec.eps_rate,
@@ -705,15 +822,20 @@ def compute_pay(ctx: PayContext) -> PayResult:
             rounding=ctx.rounding,
         )
     )
-    esi_gross = sum(
-        (variables[c.code.upper()] for c in ordered if c.esi_wage and c.kind.upper() == "EARNING"),
+    # ESI wages: earned wage components plus wage arrears. Reimbursements and
+    # annual bonus are not wages under the ESI Act. Coverage follows the regular wage.
+    esi_regular = sum(
+        (_earned(c.code.upper()) for c in ordered if c.esi_wage and c.kind.upper() == "EARNING"),
         ZERO,
-    ) + D(ctx.arrears) + D(ctx.bonus) + D(ctx.reimbursements)
+    )
+    esi_gross = esi_regular + D(ctx.arrears)
+    # Once covered in a contribution period, ESI continues to its end even if pay rises.
+    esi_covered = ctx.esi_enrolled and (esi_regular <= D(ctx.esi_threshold) or ctx.esi_continuing)
     esi_result = esi(
         EsiInput(
-            enrolled=ctx.esi_enrolled,
+            enrolled=esi_covered,
             gross=esi_gross,
-            threshold=ctx.esi_threshold,
+            threshold=max(D(ctx.esi_threshold), esi_gross),
             employee_rate=ctx.esi_employee_rate,
             employer_rate=ctx.esi_employer_rate,
             as_of=ctx.period_end,
@@ -754,7 +876,7 @@ def compute_pay(ctx: PayContext) -> PayResult:
             rounding=ctx.rounding,
             prior_gross=ctx.prior_gross,
             prior_tds=ctx.prior_tds,
-            months_remaining=fy_months_remaining(ctx.period_end) if D(ctx.prior_gross) or D(ctx.prior_tds) else 12,
+            months_remaining=fy_months_remaining(ctx.period_end),
         )
     )
     if D(ctx.arrears) > 0:

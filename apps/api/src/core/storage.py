@@ -15,16 +15,19 @@ _MEDIA_ROOT = Path(__file__).resolve().parents[2] / "media"
 
 
 def put_object(*, key: str, data: bytes, content_type: str | None = None) -> str:
-    """Upload bytes and return the object key to persist."""
+    """Upload bytes and return the object key to persist. Scans first when virus scanning is switched on."""
     cleaned = key.lstrip("/")
     if not cleaned or ".." in cleaned.split("/"):
         raise ValueError("Invalid object key")
     settings = get_settings()
+    from src.core.virus_scan import scan_bytes
+
+    scan_bytes(data, name=cleaned)
     bucket = (settings.s3_bucket or "").strip()
     if bucket:
         import boto3
 
-        client = boto3.client("s3", region_name=settings.s3_region or None)
+        client = boto3.client("s3", region_name=settings.s3_region or settings.aws_region or None)
         client.put_object(
             Bucket=bucket,
             Key=cleaned,
@@ -62,6 +65,34 @@ def read_object(key: str) -> bytes:
     return path.read_bytes()
 
 
+def delete_object(key: str | None) -> bool:
+    """Delete a stored object. Missing objects are fine. Returns True if the call went through (never raises)."""
+    if not key:
+        return True
+    cleaned = key.lstrip("/")
+    if not cleaned or ".." in cleaned.split("/") or cleaned.startswith(("http://", "https://")):
+        return False
+    settings = get_settings()
+    bucket = (settings.s3_bucket or "").strip()
+    try:
+        if bucket:
+            import boto3
+
+            boto3.client("s3", region_name=settings.s3_region or settings.aws_region or None).delete_object(
+                Bucket=bucket, Key=cleaned
+            )
+        else:
+            path = _MEDIA_ROOT / cleaned
+            if path.is_file():
+                path.unlink()
+        return True
+    except Exception:  # noqa: BLE001 - cleanup must never break the request
+        import logging
+
+        logging.getLogger(__name__).warning("Could not delete object %s", cleaned, exc_info=True)
+        return False
+
+
 def public_url(key: str | None) -> str | None:
     """HTTPS URL when a bucket or public base is configured. Otherwise the key."""
     if not key:
@@ -74,6 +105,16 @@ def public_url(key: str | None) -> str | None:
         return f"{base.rstrip('/')}/{key}"
     bucket = (settings.s3_bucket or "").strip()
     if bucket:
-        region = settings.s3_region or "us-east-1"
+        region = settings.s3_region or settings.aws_region or "us-east-1"
         return f"https://{bucket}.s3.{region}.amazonaws.com/{key}"
     return key
+
+
+def school_logo_path(value: str | None) -> str | None:
+    """Browser-loadable path for a stored school logo key. Absolute URLs pass through."""
+    if not value or value.startswith(("http://", "https://", "/")):
+        return value
+    if value.startswith("school-logos/"):
+        stem = value.split("/", 1)[1].rsplit(".", 1)[0]
+        return f"/api/v1/public/school-logos/{stem}"
+    return public_url(value)

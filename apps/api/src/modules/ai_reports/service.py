@@ -155,8 +155,8 @@ class AiReportsService:
                 {
                     "school_id": str(school_id),
                     "student_id": str(student_id),
-                    "start": period_start.isoformat(),
-                    "end": period_end.isoformat(),
+                    "start": period_start,
+                    "end": period_end,
                 },
             )
         ).mappings().all()
@@ -172,16 +172,20 @@ class AiReportsService:
                     LEFT JOIN homework_submissions hs ON hs.homework_id = h.id
                                                      AND hs.student_id = :student_id
                     WHERE h.school_id = :school_id
-                      AND h.due_date BETWEEN :start AND :end
-                    ORDER BY h.due_date DESC
+                      AND h.due_at::date BETWEEN :start AND :end
+                      AND h.class_id IN (
+                          SELECT e.class_id FROM enrollments e
+                          WHERE e.student_id = :student_id AND e.status = 'ACTIVE'
+                      )
+                    ORDER BY h.due_at DESC
                     LIMIT 10
                     """
                 ),
                 {
                     "school_id": str(school_id),
                     "student_id": str(student_id),
-                    "start": period_start.isoformat(),
-                    "end": period_end.isoformat(),
+                    "start": period_start,
+                    "end": period_end,
                 },
             )
         ).mappings().all()
@@ -213,8 +217,8 @@ class AiReportsService:
                 {
                     "school_id": str(school_id),
                     "student_id": str(student_id),
-                    "start": period_start.isoformat(),
-                    "end": period_end.isoformat(),
+                    "start": period_start,
+                    "end": period_end,
                 },
             )
         ).mappings().all()
@@ -238,8 +242,8 @@ class AiReportsService:
                 {
                     "school_id": str(school_id),
                     "student_id": str(student_id),
-                    "start": period_start.isoformat(),
-                    "end": period_end.isoformat(),
+                    "start": period_start,
+                    "end": period_end,
                 },
             )
         ).mappings().all()
@@ -287,24 +291,21 @@ class AiReportsService:
     async def _notify_parent(
         self, school_id: UUID, parent_user_id: UUID, title: str
     ) -> None:
-        await self.db.execute(
-            text(
-                """
-                INSERT INTO notifications
-                    (id, school_id, user_id, title, body, type, priority, read, created_at)
-                VALUES
-                    (gen_random_uuid(), :school_id, :user_id, :title, :body,
-                     'AI_REPORT', 'normal', false, NOW())
-                """
-            ),
-            {
-                "school_id": str(school_id),
-                "user_id": str(parent_user_id),
-                "title": "New AI Report Ready",
-                "body": title,
-            },
-        )
-        await self.db.commit()
+        from src.db.models import Notification
+
+        # Savepoint: a failed notification must not abort the report's own transaction.
+        async with self.db.begin_nested():
+            self.db.add(
+                Notification(
+                    school_id=school_id,
+                    user_id=parent_user_id,
+                    title="New AI Report Ready",
+                    body=title,
+                    category="AI_REPORT",
+                    link_path="/parent/ai-reports",
+                )
+            )
+            await self.db.flush()
 
 
 # ──────────────────────────────────────────────────────────────────────────────

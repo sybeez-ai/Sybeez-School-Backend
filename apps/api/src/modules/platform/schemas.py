@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
 # --- Dashboard ---
@@ -48,7 +48,11 @@ class PlatformDashboard(BaseModel):
 class SchoolAdminCreate(BaseModel):
     full_name: str = Field(min_length=2, max_length=200)
     email: EmailStr
-    password: str = Field(min_length=8, description="Temporary password for school admin login")
+    password: str | None = Field(
+        default=None,
+        min_length=8,
+        description="Temporary password for school admin login; generated when omitted",
+    )
     phone: str | None = None
 
 
@@ -67,6 +71,8 @@ class SchoolCreate(BaseModel):
     currency: str = "INR"
     plan_code: str = Field(default="starter", min_length=2, max_length=64)
     admin: SchoolAdminCreate
+    # A school with the same (normalised) name already exists: the caller must confirm.
+    allow_duplicate_name: bool = False
 
 
 class SchoolUpdate(BaseModel):
@@ -102,6 +108,13 @@ class SchoolOut(BaseModel):
     timezone: str
     currency: str = "INR"
     logo_url: str | None = None
+
+    @field_validator("logo_url", mode="before")
+    @classmethod
+    def _logo_path(cls, value):
+        from src.core.storage import school_logo_path
+
+        return school_logo_path(value)
     plan_code: str | None = None
     subscription_status: str | None = None
     students_count: int = 0
@@ -139,7 +152,7 @@ class InvitationCreate(BaseModel):
 class InvitationOut(BaseModel):
     id: UUID
     school_id: UUID
-    email: EmailStr
+    email: str
     role: str
     status: str
     expires_at: datetime
@@ -149,11 +162,26 @@ class InvitationOut(BaseModel):
 
 
 class SchoolAdminResetPasswordRequest(BaseModel):
-    temporary_password: str = Field(min_length=8)
+    # Optional: the server generates a strong temporary password when omitted (preferred).
+    temporary_password: str | None = Field(default=None, min_length=8)
+
+
+class SchoolAdminLoginCreate(BaseModel):
+    full_name: str = Field(min_length=2, max_length=200)
+    email: EmailStr
+    password: str | None = Field(default=None, min_length=8)
+
+
+class SchoolAdminLoginOut(BaseModel):
+    user_id: UUID
+    admin_email: str
+    full_name: str
+    temporary_password: str
+    login_url: str = "/school-admin/login"
 
 
 class SchoolAdminResetPasswordOut(BaseModel):
-    admin_email: EmailStr
+    admin_email: str
     temporary_password: str
 
 
@@ -165,7 +193,7 @@ class SchoolAdminMfaRecoveryOut(BaseModel):
 class SchoolAdminDirectoryOut(BaseModel):
     id: UUID
     full_name: str
-    email: EmailStr
+    email: str  # output only: never 500 a directory listing over a stored address
     school_id: UUID
     school_name: str
     role: str
@@ -222,6 +250,18 @@ class PlatformEmployeeOut(BaseModel):
 # --- Plans ---
 
 
+class PlanPricing(BaseModel):
+    """Per-student pricing and AI token allocations (stored in the plan's entitlements["pricing"])."""
+
+    price_per_student: float = Field(0, ge=0)
+    ai_tokens_per_student: int = Field(0, ge=0)
+    ai_tokens_per_teacher: int = Field(0, ge=0)
+    ai_tokens_per_parent: int = Field(0, ge=0)
+    ai_tokens_per_school_admin: int = Field(0, ge=0)
+    erp_hrm_cost: float | None = Field(None, ge=0)
+    erp_payroll_cost: float | None = Field(None, ge=0)
+
+
 class PlanCreate(BaseModel):
     code: str = Field(min_length=2, max_length=64, pattern=r"^[a-z0-9_-]+$")
     name: str = Field(min_length=2, max_length=120)
@@ -234,6 +274,7 @@ class PlanCreate(BaseModel):
     max_storage_gb: int | None = None
     ai_monthly_tokens: int | None = None
     entitlements: dict[str, Any] = Field(default_factory=dict)
+    pricing: PlanPricing | None = None
     is_public: bool = True
     sort_order: int = 0
 
@@ -249,6 +290,7 @@ class PlanUpdate(BaseModel):
     max_storage_gb: int | None = None
     ai_monthly_tokens: int | None = None
     entitlements: dict[str, Any] | None = None
+    pricing: PlanPricing | None = None
     is_active: bool | None = None
     is_public: bool | None = None
     sort_order: int | None = None
@@ -267,6 +309,7 @@ class PlanOut(BaseModel):
     max_storage_gb: int | None = None
     ai_monthly_tokens: int | None = None
     entitlements: dict[str, Any] = Field(default_factory=dict)
+    pricing: PlanPricing = Field(default_factory=PlanPricing)
     is_active: bool
     is_public: bool
     sort_order: int
