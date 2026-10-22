@@ -20,6 +20,22 @@ from src.main import app
 from src.shared.enums import UserRole
 
 
+@pytest.fixture(autouse=True)
+async def _release_global_pool():
+    """Event logging writes through the app's pooled engine. Each test has its own event loop,
+    so drain pending log tasks and drop pooled connections before the loop closes; otherwise the
+    next test that uses AsyncSessionLocal gets a connection bound to a dead loop."""
+    yield
+    import asyncio
+
+    from src.core import event_log
+    from src.core.database import engine
+
+    if event_log._tasks:
+        await asyncio.gather(*list(event_log._tasks), return_exceptions=True)
+    await engine.dispose()
+
+
 @pytest.fixture
 async def db_session():
     engine = create_async_engine(get_settings().database_url, poolclass=NullPool)
