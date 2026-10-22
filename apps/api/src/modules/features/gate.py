@@ -11,7 +11,7 @@ from src.core.config import get_settings
 from src.core.constants import API_V1_PREFIX
 from src.core.database import get_db
 from src.core.exceptions import AppError, ForbiddenError
-from src.modules.features.catalog import FEATURES, PORTAL_FOR_ROLE, feature_for_path, is_exempt
+from src.modules.features.catalog import FEATURES, feature_for_path, is_exempt, portal_keys_for_role
 from src.modules.features.service import access_for
 from src.shared.enums import UserRole
 
@@ -42,7 +42,7 @@ async def feature_gate(
         return  # the route's own auth dependency raises the proper 401/403
     if user.role in PLATFORM_ROLES or user.school_id is None:
         return
-    keys = [k for k in (feature_for_path(path), PORTAL_FOR_ROLE.get(user.role.value)) if k]
+    keys = [k for k in (feature_for_path(path), *portal_keys_for_role(user.role.value)) if k]
     if not keys:
         return
     a = await access_for(db, user.school_id, keys, user.membership_id)

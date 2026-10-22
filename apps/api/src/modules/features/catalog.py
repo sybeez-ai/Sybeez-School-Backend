@@ -3,6 +3,8 @@
 ``prefixes`` are API paths under /api/v1. ``portal.*`` keys switch off a whole portal (every route used by its roles).
 """
 
+import re
+
 from src.shared.enums import UserRole
 
 FEATURES: dict[str, dict] = {
@@ -13,6 +15,7 @@ FEATURES: dict[str, dict] = {
     "portal.hrm": {"label": "HR portal", "portal": "hrm", "prefixes": []},
     "portal.finance": {"label": "Finance portal", "portal": "finance", "prefixes": []},
     "portal.staff": {"label": "Staff self-service portal", "portal": "staff", "prefixes": []},
+    "portal.payroll": {"label": "Payroll portal", "portal": "payroll", "prefixes": []},
     "online_tests": {"label": "Online tests", "portal": "all", "prefixes": ["online-tests", "online-test-attempts"]},
     "homework": {"label": "Homework and assignments", "portal": "all", "prefixes": ["homework", "assignments"]},
     "attendance": {"label": "Attendance", "portal": "all", "prefixes": ["attendance"]},
@@ -60,6 +63,40 @@ PORTAL_FOR_ROLE: dict[str, str] = {
     UserRole.AUDITOR.value: "portal.finance",
     UserRole.STAFF.value: "portal.staff",
 }
+
+# Payroll roles also sit behind the payroll portal switch (the HR switch still applies to them).
+EXTRA_PORTALS_FOR_ROLE: dict[str, tuple[str, ...]] = {
+    UserRole.PAYROLL_ADMIN.value: ("portal.payroll",),
+    UserRole.PAYROLL_APPROVER.value: ("portal.payroll",),
+}
+
+# Sidebar items per portal, switched per school from the platform Features page. They hide the
+# page in the web navigation (the web app owns the list); API access follows the feature keys above.
+NAV_PORTALS = ("student", "teacher", "parent", "school", "hrm", "payroll", "finance", "staff")
+_NAV_RE = re.compile(r"^nav\.(" + "|".join(NAV_PORTALS) + r")\.[a-z0-9][a-z0-9_-]{0,59}$")
+
+
+def is_nav_key(key: str) -> bool:
+    return bool(_NAV_RE.match(key))
+
+
+def is_known_key(key: str) -> bool:
+    return key in FEATURES or is_nav_key(key)
+
+
+def label_for(key: str) -> str:
+    if key in FEATURES:
+        return FEATURES[key]["label"]
+    if is_nav_key(key):
+        _, portal, slug = key.split(".", 2)
+        return f"{portal.title()} sidebar: {slug.replace('-', ' ').replace('_', ' ')}"
+    return key
+
+
+def portal_keys_for_role(role: str) -> list[str]:
+    keys = [PORTAL_FOR_ROLE[role]] if role in PORTAL_FOR_ROLE else []
+    return keys + list(EXTRA_PORTALS_FOR_ROLE.get(role, ()))
+
 
 # Never gated: sign-in, self profile, the feature map itself, platform and machine-to-machine routes.
 EXEMPT_PREFIXES = (

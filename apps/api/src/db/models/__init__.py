@@ -196,6 +196,7 @@ from src.db.models.alerts import (
 from src.db.models.admissions import AdmissionApplication, AdmissionDocument, AdmissionEnquiry, AdmissionStatusHistory
 from src.db.models.parent import Parent
 from src.db.models.platform_saas import PlatformAiSettings, PlatformAiUsageDaily, PlatformPlan, PlatformSettings
+from src.db.models.platform_notification_read import PlatformNotificationRead
 from src.db.models.platform_school_access import PlatformSchoolAccess
 from src.db.models.progress import PracticeAttempt, Progress, StudentProgress
 from src.db.models.question import Question
@@ -247,6 +248,7 @@ __all__ = [
     "Teacher",
     "Student",
     "Parent",
+    "PlatformNotificationRead",
     "PlatformSchoolAccess",
     "Enrollment",
     "StudentParent",

@@ -250,6 +250,18 @@ class PlatformEmployeeOut(BaseModel):
 # --- Plans ---
 
 
+class PlanPricing(BaseModel):
+    """Per-student pricing and AI token allocations (stored in the plan's entitlements["pricing"])."""
+
+    price_per_student: float = Field(0, ge=0)
+    ai_tokens_per_student: int = Field(0, ge=0)
+    ai_tokens_per_teacher: int = Field(0, ge=0)
+    ai_tokens_per_parent: int = Field(0, ge=0)
+    ai_tokens_per_school_admin: int = Field(0, ge=0)
+    erp_hrm_cost: float | None = Field(None, ge=0)
+    erp_payroll_cost: float | None = Field(None, ge=0)
+
+
 class PlanCreate(BaseModel):
     code: str = Field(min_length=2, max_length=64, pattern=r"^[a-z0-9_-]+$")
     name: str = Field(min_length=2, max_length=120)
@@ -262,6 +274,7 @@ class PlanCreate(BaseModel):
     max_storage_gb: int | None = None
     ai_monthly_tokens: int | None = None
     entitlements: dict[str, Any] = Field(default_factory=dict)
+    pricing: PlanPricing | None = None
     is_public: bool = True
     sort_order: int = 0
 
@@ -277,6 +290,7 @@ class PlanUpdate(BaseModel):
     max_storage_gb: int | None = None
     ai_monthly_tokens: int | None = None
     entitlements: dict[str, Any] | None = None
+    pricing: PlanPricing | None = None
     is_active: bool | None = None
     is_public: bool | None = None
     sort_order: int | None = None
@@ -295,6 +309,7 @@ class PlanOut(BaseModel):
     max_storage_gb: int | None = None
     ai_monthly_tokens: int | None = None
     entitlements: dict[str, Any] = Field(default_factory=dict)
+    pricing: PlanPricing = Field(default_factory=PlanPricing)
     is_active: bool
     is_public: bool
     sort_order: int

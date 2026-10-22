@@ -123,7 +123,7 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(Exception)
     async def unhandled_error_handler(request: Request, exc: Exception):
-        return internal_error_response(request)
+        return internal_error_response(request, exc)
 
     media_dir = Path(__file__).resolve().parent.parent / "media"
     media_dir.mkdir(parents=True, exist_ok=True)

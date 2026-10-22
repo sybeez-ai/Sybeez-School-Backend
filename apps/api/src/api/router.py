@@ -63,6 +63,8 @@ from src.modules.learning_paths.router import router as learning_paths_router
 from src.modules.teacher_tools.router import router as teacher_tools_router
 from src.modules.parents.router import router as parents_router
 from src.modules.personal_life.router import router as personal_life_router
+from src.modules.platform.console import billing_router as platform_billing_router
+from src.modules.platform.console import router as platform_console_router
 from src.modules.platform.router import router as platform_router
 from src.modules.progress.router import router as progress_router
 from src.modules.questions.router import router as questions_router
@@ -98,6 +100,8 @@ api_router.include_router(online_tests_router, prefix=API_V1_PREFIX, dependencie
 api_router.include_router(online_test_attempts_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
 api_router.include_router(access_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
 api_router.include_router(platform_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
+api_router.include_router(platform_console_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
+api_router.include_router(platform_billing_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
 api_router.include_router(schools_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
 api_router.include_router(school_logo_router, prefix=API_V1_PREFIX)
 api_router.include_router(users_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])

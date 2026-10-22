@@ -636,6 +636,7 @@ class PlatformService:
         if school is None:
             raise NotFoundError("School not found")
         await self._assert_school_access(actor, school)
+        await bind_tenant(self.db, school.id)
         admin_email, _, _ = await self._primary_admin(school_id)
         if not admin_email:
             raise NotFoundError("School admin not found")
@@ -730,6 +731,7 @@ class PlatformService:
         if school is None:
             raise NotFoundError("School not found")
         await self._assert_school_access(actor, school)
+        await bind_tenant(self.db, school.id)
         admin_email, _, _ = await self._primary_admin(school_id)
         if not admin_email:
             raise NotFoundError("School admin not found")
@@ -765,6 +767,7 @@ class PlatformService:
         if school is None:
             raise NotFoundError("School not found")
         await self._assert_school_access(actor, school)
+        await bind_tenant(self.db, school.id)
 
         content_type = (file.content_type or "").lower()
         ext_map = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}
