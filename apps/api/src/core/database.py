@@ -127,10 +127,13 @@ async def get_db(request: Request) -> AsyncGenerator[AsyncSession, None]:
                 detail = str(getattr(exc, "orig", exc)).splitlines()[0][:200]
                 logger.warning("RLS violation on %s %s: %s", request.method, request.url.path, detail)
                 try:
-                    from src.core.event_log import record_event_soon
+                    import asyncio
+
+                    from src.core.event_log import record_event
 
                     tenant = session.info.get("rls_tenant") or {}
-                    record_event_soon(
+                    # Awaited (bounded), not fire-and-forget: a background task can outlive the loop.
+                    await asyncio.wait_for(record_event(
                         "app.access_denied",
                         message=f"{request.method} {request.url.path} blocked by row-level security",
                         school_id=tenant.get("school_id") or None,
@@ -139,7 +142,7 @@ async def get_db(request: Request) -> AsyncGenerator[AsyncSession, None]:
                         resource_id=str(request.url.path)[:64],
                         details={"source": "api", "method": request.method, "path": str(request.url.path),
                                  "role": tenant.get("role") or None, "policy": detail, "status": 403},
-                    )
+                    ), timeout=3)
                 except Exception:  # noqa: BLE001
                     pass
                 raise ForbiddenError(
