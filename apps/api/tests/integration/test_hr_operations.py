@@ -174,6 +174,9 @@ async def test_hire_training_roster_assets_and_exit(api, hr_world):
         headers=admin.headers,
     )
     assert shift.status_code == 201, shift.text
+    shifts = await api.get(f"{OPS}/shifts", headers=admin.headers)
+    assert shifts.status_code == 200, shifts.text
+    assert [s["name"] for s in shifts.json()] == ["Morning"]
     roster = await api.post(
         f"{OPS}/roster",
         json={

@@ -288,6 +288,11 @@ async def my_training(user: Self, db: Db):
     return await _svc(db).my_training(_sid(user), user.id)
 
 
+@router.get("/shifts")
+async def list_shifts(user: Admin, db: Db):
+    return await _svc(db).list_shifts(_sid(user))
+
+
 @router.post("/shifts", status_code=201)
 async def create_shift(body: ShiftIn, user: Admin, db: Db):
     return await _svc(db).create_shift(_sid(user), user.id, body.model_dump())
