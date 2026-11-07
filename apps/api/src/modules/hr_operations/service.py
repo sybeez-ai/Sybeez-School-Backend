@@ -154,6 +154,7 @@ class HrOperations:
             "ATTRITION": self._attrition,
             "DEPARTMENT": self._department,
             "STATUTORY": self._statutory,
+            "OVERVIEW": self._overview,
         }
         if kind not in builders:
             raise AppError("Unknown report", status_code=422)
@@ -214,6 +215,26 @@ class HrOperations:
     async def _headcount(self, school_id: UUID, _start, _end):
         headers = ["employee_id", "name", "code", "staff_type", "department", "designation", "status", "joining_date"]
         return headers, [self._person(*row) for row in await self._names(school_id)]
+
+    async def _overview(self, school_id: UUID, start: date | None, end: date | None):
+        """One-page HR summary used by the HR overview download buttons."""
+        _, people = await self._headcount(school_id, None, None)
+        _, leaves = await self._leave(school_id, start, end)
+        _, exits = await self._attrition(school_id, start, end)
+        active = [row for row in people if str(row[6]).upper() == "ACTIVE"]
+        rows: list[list] = [
+            ["Total employees", len(people)],
+            ["Active employees", len(active)],
+            ["Leave requests in period", len(leaves)],
+            ["Exits in period", len(exits)],
+        ]
+        by_department: dict[str, int] = {}
+        for row in active:
+            key = str(row[4] or "Unassigned")
+            by_department[key] = by_department.get(key, 0) + 1
+        for name in sorted(by_department):
+            rows.append([f"Active in {name}", by_department[name]])
+        return ["metric", "value"], rows
 
     async def _department(self, school_id: UUID, _start, _end):
         headers, rows = await self._headcount(school_id, None, None)
