@@ -162,8 +162,21 @@ jobs:
           MIGRATE_ARN=$(aws ecs register-task-definition \
             --cli-input-json file://migrate-register.json \
             --query 'taskDefinition.taskDefinitionArn' --output text)
-          SUBNETS=$(printf '%s' "$AWS_BACKEND_SUBNETS" | tr -d ' ')
-          PUBLIC_IP=$(printf '%s' "${AWS_BACKEND_ASSIGN_PUBLIC_IP:-DISABLED}" | tr '[:lower:]' '[:upper:]')
+          # Prefer the live API service network (public subnets + public IP
+          # after NAT removal). Fall back to GitHub vars only if missing.
+          SVC_NET=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$API_SERVICE" \
+            --query 'services[0].networkConfiguration.awsvpcConfiguration' --output json)
+          if [ -n "$SVC_NET" ] && [ "$SVC_NET" != "null" ]; then
+            SUBNETS=$(printf '%s' "$SVC_NET" | jq -r '.subnets | join(",")')
+            SECURITY_GROUPS=$(printf '%s' "$SVC_NET" | jq -r '.securityGroups | join(",")')
+            PUBLIC_IP=$(printf '%s' "$SVC_NET" | jq -r '.assignPublicIp')
+            echo "Using live API service network: subnets=$SUBNETS assignPublicIp=$PUBLIC_IP"
+          else
+            SUBNETS=$(printf '%s' "$AWS_BACKEND_SUBNETS" | tr -d ' ')
+            SECURITY_GROUPS=$(printf '%s' "$AWS_BACKEND_SECURITY_GROUP" | tr -d ' ')
+            PUBLIC_IP=$(printf '%s' "${AWS_BACKEND_ASSIGN_PUBLIC_IP:-DISABLED}" | tr '[:lower:]' '[:upper:]')
+            echo "Service has no network config; using GitHub vars: subnets=$SUBNETS assignPublicIp=$PUBLIC_IP"
+          fi
           # Force alembic upgrade head. env.py restamps a legacy finance 0030
           # to 0027 before migrating, and raises (non-zero exit) if the stamp
           # matches neither chain. This task's DATABASE_URL is the master user.
@@ -173,7 +186,7 @@ jobs:
             --cluster "$ECS_CLUSTER" \
             --task-definition "$MIGRATE_ARN" \
             --launch-type FARGATE \
-            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$AWS_BACKEND_SECURITY_GROUP],assignPublicIp=$PUBLIC_IP}" \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SECURITY_GROUPS],assignPublicIp=$PUBLIC_IP}" \
             --overrides "$OVERRIDES" \
             --query 'tasks[0].taskArn' --output text)
           echo "Migration task: $TASK_ARN"
@@ -465,13 +478,22 @@ jobs:
           jq -n --arg name "$API_CONTAINER" --arg pw "$SUPERADMIN_INITIAL_PASSWORD" \
             '{containerOverrides:[{name:$name,command:["python","-m","src.modules.platform.provision_superadmin"],environment:[{name:"SUPERADMIN_INITIAL_PASSWORD",value:$pw}]}]}' \
             > provision-overrides.json
-          SUBNETS=$(printf '%s' "$AWS_BACKEND_SUBNETS" | tr -d ' ')
-          PUBLIC_IP=$(printf '%s' "${AWS_BACKEND_ASSIGN_PUBLIC_IP:-DISABLED}" | tr '[:lower:]' '[:upper:]')
+          SVC_NET=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$API_SERVICE" \
+            --query 'services[0].networkConfiguration.awsvpcConfiguration' --output json)
+          if [ -n "$SVC_NET" ] && [ "$SVC_NET" != "null" ]; then
+            SUBNETS=$(printf '%s' "$SVC_NET" | jq -r '.subnets | join(",")')
+            SECURITY_GROUPS=$(printf '%s' "$SVC_NET" | jq -r '.securityGroups | join(",")')
+            PUBLIC_IP=$(printf '%s' "$SVC_NET" | jq -r '.assignPublicIp')
+          else
+            SUBNETS=$(printf '%s' "$AWS_BACKEND_SUBNETS" | tr -d ' ')
+            SECURITY_GROUPS=$(printf '%s' "$AWS_BACKEND_SECURITY_GROUP" | tr -d ' ')
+            PUBLIC_IP=$(printf '%s' "${AWS_BACKEND_ASSIGN_PUBLIC_IP:-DISABLED}" | tr '[:lower:]' '[:upper:]')
+          fi
           TASK_ARN=$(aws ecs run-task \
             --cluster "$ECS_CLUSTER" \
             --task-definition "$TASK_DEF" \
             --launch-type FARGATE \
-            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$AWS_BACKEND_SECURITY_GROUP],assignPublicIp=$PUBLIC_IP}" \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SECURITY_GROUPS],assignPublicIp=$PUBLIC_IP}" \
             --overrides file://provision-overrides.json \
             --query 'tasks[0].taskArn' --output text)
           rm -f provision-overrides.json
