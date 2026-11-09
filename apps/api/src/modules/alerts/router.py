@@ -355,7 +355,15 @@ async def submit_templates(
         for item in items
         if item.active
     ]
+    from src.modules.alerts.credentials import WHATSAPP_ON_HOLD, WHATSAPP_SENDING_ON_HOLD
+
     settings = get_settings()
+    # Setup is on hold: show the payloads, do not post them to Meta.
+    if WHATSAPP_SENDING_ON_HOLD and not dry_run:
+        dry_run = True
+        held = True
+    else:
+        held = False
     result = submit_message_templates(
         payloads,
         access_token=settings.whatsapp_cloud_access_token,
@@ -363,6 +371,8 @@ async def submit_templates(
         post_json=default_post_json,
         dry_run=dry_run,
     )
+    if held:
+        result = {**result, "status": WHATSAPP_ON_HOLD, "submitted": []}
     await record_audit(
         db,
         school_id,

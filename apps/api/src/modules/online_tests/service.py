@@ -19,6 +19,7 @@ import statistics
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
+from pydantic import ValidationError
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -140,20 +141,35 @@ class OnlineTestService:
 
     # ── school settings ──────────────────────────────────────
 
-    async def school_settings(self, school_id: UUID) -> OnlineTestSchoolSettings:
-        row = (
+    async def _find_school_settings(self, school_id: UUID) -> OnlineTestSchoolSettings | None:
+        return (
             await self.db.execute(
-                select(OnlineTestSchoolSettings).where(OnlineTestSchoolSettings.school_id == school_id)
+                select(OnlineTestSchoolSettings).where(OnlineTestSchoolSettings.school_id == school_id).limit(1)
             )
-        ).scalar_one_or_none()
+        ).scalars().first()
+
+    async def school_settings(self, school_id: UUID) -> OnlineTestSchoolSettings:
+        row = await self._find_school_settings(school_id)
         if row:
             return row
+        row = OnlineTestSchoolSettings(
+            school_id=school_id, enabled=True, ai_monthly_cap=200, default_max_violations=3
+        )
+        created = True
         async with service_scope(self.db, school_id):
-            row = OnlineTestSchoolSettings(
-                school_id=school_id, enabled=True, ai_monthly_cap=200, default_max_violations=3
-            )
-            self.db.add(row)
-            await self.db.flush()
+            try:
+                async with self.db.begin_nested():
+                    self.db.add(row)
+                    await self.db.flush()
+            except IntegrityError:
+                # The tests page loads the list and the config together.
+                self.db.expunge(row)
+                created = False
+        if not created:
+            existing = await self._find_school_settings(school_id)
+            if existing is None:
+                raise ConflictError("Online test settings could not be saved")
+            return existing
         return row
 
     async def assert_enabled(self, school_id: UUID) -> OnlineTestSchoolSettings:
@@ -271,7 +287,12 @@ class OnlineTestService:
 
     @staticmethod
     def _settings(test: OnlineTest) -> S.OnlineTestSettings:
-        return S.OnlineTestSettings(**(test.settings or {}))
+        raw = test.settings if isinstance(test.settings, dict) else {}
+        try:
+            return S.OnlineTestSettings.model_validate(raw)
+        except ValidationError:
+            # One old or partial settings blob must not fail the whole list.
+            return S.OnlineTestSettings()
 
     @staticmethod
     def _effective(test: OnlineTest, now: datetime) -> str:
@@ -318,6 +339,80 @@ class OnlineTestService:
                 out[tid]["sub"] += n
             if review == "PENDING":
                 out[tid]["flag"] += n
+
+    async def _tests_out(
+        self, tests: list[OnlineTest], now: datetime, counts: dict[UUID, dict]
+    ) -> list[S.OnlineTestOut]:
+        if not tests:
+            return []
+        teacher_ids = {t.teacher_id for t in tests if t.teacher_id}
+        teachers = (
+            {
+                row.id: row
+                for row in (
+                    await self.db.execute(select(Teacher).where(Teacher.id.in_(teacher_ids)))
+                ).scalars()
+            }
+            if teacher_ids
+            else {}
+        )
+        user_ids = {row.user_id for row in teachers.values() if row.user_id}
+        names = (
+            {
+                uid: name
+                for uid, name in (
+                    await self.db.execute(select(User.id, User.full_name).where(User.id.in_(user_ids)))
+                ).all()
+            }
+            if user_ids
+            else {}
+        )
+        class_ids = {t.class_id for t in tests}
+        subject_ids = {t.subject_id for t in tests}
+        classes = {
+            row.id: row
+            for row in (await self.db.execute(select(ClassRoom).where(ClassRoom.id.in_(class_ids)))).scalars()
+        }
+        subjects = {
+            row.id: row
+            for row in (await self.db.execute(select(Subject).where(Subject.id.in_(subject_ids)))).scalars()
+        }
+        empty = {"q": 0, "total": 0, "sub": 0, "flag": 0}
+        listed: list[S.OnlineTestOut] = []
+        for test in tests:
+            c = counts.get(test.id) or empty
+            teacher = teachers.get(test.teacher_id) if test.teacher_id else None
+            classroom = classes.get(test.class_id)
+            subject = subjects.get(test.subject_id)
+            listed.append(
+                S.OnlineTestOut(
+                    id=test.id,
+                    school_id=test.school_id,
+                    class_id=test.class_id,
+                    class_name=classroom.name if classroom else None,
+                    subject_id=test.subject_id,
+                    subject_name=subject.name if subject else None,
+                    teacher_id=test.teacher_id,
+                    teacher_name=names.get(teacher.user_id) if teacher else None,
+                    title=test.title,
+                    instructions=test.instructions,
+                    status=test.status,
+                    effective_status=self._effective(test, now),
+                    duration_minutes=test.duration_minutes,
+                    opens_at=test.opens_at,
+                    closes_at=test.closes_at,
+                    total_points=test.total_points,
+                    question_count=c["q"],
+                    settings=self._settings(test),
+                    published_at=test.published_at,
+                    results_released_at=test.results_released_at,
+                    attempts_total=c["total"],
+                    attempts_submitted=c["sub"],
+                    attempts_flagged=c["flag"],
+                    created_at=test.created_at,
+                )
+            )
+        return listed
 
     async def _test_out(self, test: OnlineTest, now: datetime, counts: dict | None = None) -> S.OnlineTestOut:
         c = counts or (await self._counts([test.id]))[test.id]
@@ -456,7 +551,7 @@ class OnlineTestService:
         tests = list((await self.db.execute(stmt.order_by(OnlineTest.created_at.desc()).limit(300))).scalars())
         counts = await self._counts([t.id for t in tests])
         now = await self._now()
-        return [await self._test_out(t, now, counts[t.id]) for t in tests]
+        return await self._tests_out(tests, now, counts)
 
     async def get_test(self, user: CurrentUser, test_id: UUID) -> S.OnlineTestDetailOut:
         test = await self._manage_test(user, test_id, write=False)

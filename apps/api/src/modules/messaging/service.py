@@ -20,6 +20,9 @@ class MessagingService:
         self.db = db
 
     async def send(self, user: CurrentUser, school_id: UUID, data: MessageCreate) -> Message:
+        from src.modules.communication.parent_chat import reject_parent_chat
+
+        reject_parent_chat(user.role)
         if data.recipient_id == user.id:
             raise ForbiddenError("Choose a different recipient")
         if not await same_school_user(self.db, data.recipient_id):

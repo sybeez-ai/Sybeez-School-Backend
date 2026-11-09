@@ -10,11 +10,13 @@ from decimal import Decimal
 from uuid import UUID, uuid4
 
 from sqlalchemy import and_, func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from src.core.config import get_settings
 from src.core.exceptions import AppError, ConflictError, ForbiddenError, NotFoundError
+from src.modules.fees.dates import ist_today
 from src.db.models import (
     Enrollment,
     FeeAdjustment,
@@ -128,10 +130,13 @@ class FeeService:
         await bind_tenant(self.db, school_id)
         return await allocate_series_number(self.db, school_id, seq_type, prefix)
 
+    async def _find_settings(self, school_id: UUID) -> FeeSettings | None:
+        return (
+            await self.db.execute(select(FeeSettings).where(FeeSettings.school_id == school_id).limit(1))
+        ).scalars().first()
+
     async def get_or_create_settings(self, school_id: UUID) -> FeeSettings:
-        row = (
-            await self.db.execute(select(FeeSettings).where(FeeSettings.school_id == school_id))
-        ).scalar_one_or_none()
+        row = await self._find_settings(school_id)
         if row:
             return row
         row = FeeSettings(id=uuid4(), school_id=school_id)
@@ -145,8 +150,18 @@ class FeeService:
             if key_id and key_secret:
                 row.gateway_provider = "razorpay"
                 row.gateway_public_key = key_id
-        self.db.add(row)
-        await self.db.flush()
+        try:
+            async with self.db.begin_nested():
+                self.db.add(row)
+                await self.db.flush()
+        except IntegrityError:
+            # The finance page loads two dashboards at once. Both may try to
+            # create the school's single settings row; the loser must read the winner.
+            self.db.expunge(row)
+            existing = await self._find_settings(school_id)
+            if existing is None:
+                raise
+            return existing
         return row
 
     # ── categories ────────────────────────────────────────────
@@ -1322,11 +1337,23 @@ class FeeService:
             (
                 money(i.balance_amount)
                 for i in invoices
-                if money(i.balance_amount) > 0 and i.due_date < date.today()
+                if money(i.balance_amount) > 0 and i.due_date < ist_today()
             ),
             money(0),
         )
-        today = date.today()
+        today = ist_today()
+        stamp = func.coalesce(Payment.paid_at, Payment.created_at)
+        today_collection = money(
+            (
+                await self.db.execute(
+                    select(func.coalesce(func.sum(Payment.amount), 0)).where(
+                        Payment.school_id == school_id,
+                        Payment.status == PaymentStatus.SUCCESS.value,
+                        func.date(func.timezone("Asia/Kolkata", stamp)) == today,
+                    )
+                )
+            ).scalar_one()
+        )
         pays = (
             await self.db.execute(
                 select(Payment)
@@ -1338,16 +1365,16 @@ class FeeService:
                 .limit(10)
             )
         ).scalars().all()
-        today_collection = money(0)
         recent: list[PaymentOut] = []
         for p in pays:
-            if p.paid_at and p.paid_at.date() == today:
-                today_collection += money(p.amount)
             receipt = (
                 await self.db.execute(
-                    select(FeeReceipt).where(FeeReceipt.payment_id == p.id)
+                    select(FeeReceipt)
+                    .where(FeeReceipt.payment_id == p.id)
+                    .order_by(FeeReceipt.issued_at.desc())
+                    .limit(1)
                 )
-            ).scalar_one_or_none()
+            ).scalars().first()
             recent.append(
                 PaymentOut(
                     id=p.id,

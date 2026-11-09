@@ -6,7 +6,7 @@ from datetime import date
 from uuid import UUID
 
 from fastapi import UploadFile
-from sqlalchemy import and_, func, or_, select, text, update
+from sqlalchemy import func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import CurrentUser
@@ -166,24 +166,7 @@ class StudentService:
                 )
             )
 
-        needs_enrollment = bool(
-            academic_year_id or grade_id or class_id or actor_role == UserRole.TEACHER
-        )
-        if needs_enrollment:
-            base = base.join(
-                Enrollment,
-                and_(
-                    Enrollment.student_id == Student.id,
-                    Enrollment.status == EnrollmentStatus.ACTIVE.value,
-                ),
-            )
-            if academic_year_id:
-                base = base.where(Enrollment.academic_year_id == academic_year_id)
-            if grade_id:
-                base = base.where(Enrollment.grade_id == grade_id)
-            if class_id:
-                base = base.where(Enrollment.class_id == class_id)
-
+        class_filter = None
         if actor_role == UserRole.TEACHER and actor_user_id:
             teacher = (
                 await self.db.execute(
@@ -200,13 +183,33 @@ class StudentService:
             class_teacher_sections = select(ClassRoom.id).where(
                 ClassRoom.school_id == school_id, ClassRoom.class_teacher_id == teacher.id
             )
-            base = base.where(
-                or_(
-                    Enrollment.class_id.in_(assigned),
-                    Enrollment.class_id.in_(class_teacher_sections),
-                )
+            class_filter = or_(
+                Enrollment.class_id.in_(assigned),
+                Enrollment.class_id.in_(class_teacher_sections),
             )
-        elif user is not None:
+
+        # EXISTS keeps one row per student. A JOIN on enrollments duplicated
+        # students who have two active rows, so "load every page until total"
+        # (cards & certificates) never finished.
+        needs_enrollment = bool(
+            academic_year_id or grade_id or class_id or class_filter is not None or actor_role == UserRole.TEACHER
+        )
+        if needs_enrollment:
+            filters = [
+                Enrollment.student_id == Student.id,
+                Enrollment.school_id == school_id,
+                Enrollment.status == EnrollmentStatus.ACTIVE.value,
+            ]
+            if academic_year_id:
+                filters.append(Enrollment.academic_year_id == academic_year_id)
+            if grade_id:
+                filters.append(Enrollment.grade_id == grade_id)
+            if class_id:
+                filters.append(Enrollment.class_id == class_id)
+            if class_filter is not None:
+                filters.append(class_filter)
+            base = base.where(select(Enrollment.id).where(*filters).exists())
+        if not (actor_role == UserRole.TEACHER and actor_user_id) and user is not None:
             base = restrict_students(base, user, school_id)
 
         count_q = select(func.count()).select_from(base.order_by(None).subquery())
@@ -223,7 +226,7 @@ class StudentService:
         rows = list(
             (await self.db.execute(base.offset(offset).limit(page_size))).scalars().unique().all()
         )
-        items = [await self._to_out(s, include_history=False) for s in rows]
+        items = await self._outs_for_list(rows)
         return StudentPage(items=items, total=total, page=page, page_size=page_size)
 
     async def get(self, school_id: UUID, student_id: UUID, user: CurrentUser | None = None) -> StudentOut:
@@ -831,6 +834,161 @@ class StudentService:
             if year or grade or row.section:
                 return s
         return None
+
+    async def _outs_for_list(self, students: list[Student]) -> list[StudentOut]:
+        """Same shape as ``_to_out(..., include_history=False)``, in a handful of queries."""
+        if not students:
+            return []
+        ids = [s.id for s in students]
+        user_ids = {s.user_id for s in students}
+        users = {
+            row.id: row
+            for row in (await self.db.execute(select(User).where(User.id.in_(user_ids)))).scalars().all()
+        }
+        enrollments = (
+            await self.db.execute(
+                select(Enrollment)
+                .where(
+                    Enrollment.student_id.in_(ids),
+                    Enrollment.status == EnrollmentStatus.ACTIVE.value,
+                )
+                .order_by(Enrollment.created_at.desc())
+            )
+        ).scalars().all()
+        active: dict[UUID, Enrollment] = {}
+        for enr in enrollments:
+            active.setdefault(enr.student_id, enr)
+        class_ids = {e.class_id for e in active.values()}
+        grade_ids = {e.grade_id for e in active.values() if e.grade_id}
+        year_ids = {e.academic_year_id for e in active.values()}
+        classes = (
+            {
+                row.id: row
+                for row in (
+                    await self.db.execute(select(ClassRoom).where(ClassRoom.id.in_(class_ids)))
+                ).scalars().all()
+            }
+            if class_ids
+            else {}
+        )
+        grades = (
+            {
+                row.id: row
+                for row in (await self.db.execute(select(Grade).where(Grade.id.in_(grade_ids)))).scalars().all()
+            }
+            if grade_ids
+            else {}
+        )
+        years = (
+            {
+                row.id: row
+                for row in (
+                    await self.db.execute(select(AcademicYear).where(AcademicYear.id.in_(year_ids)))
+                ).scalars().all()
+            }
+            if year_ids
+            else {}
+        )
+        links = (
+            await self.db.execute(select(StudentParent).where(StudentParent.student_id.in_(ids)))
+        ).scalars().all()
+        parent_ids = {link.parent_id for link in links}
+        parents = (
+            {
+                row.id: row
+                for row in (await self.db.execute(select(Parent).where(Parent.id.in_(parent_ids)))).scalars().all()
+            }
+            if parent_ids
+            else {}
+        )
+        extra_user_ids = {p.user_id for p in parents.values() if p.user_id and p.user_id not in users}
+        if extra_user_ids:
+            for row in (await self.db.execute(select(User).where(User.id.in_(extra_user_ids)))).scalars().all():
+                users[row.id] = row
+        links_by: dict[UUID, list] = {}
+        for link in links:
+            links_by.setdefault(link.student_id, []).append(link)
+
+        out: list[StudentOut] = []
+        for student in students:
+            user = users.get(student.user_id)
+            enrollment = active.get(student.id)
+            class_id = class_name = section = grade_id = grade_name = None
+            academic_year_id = academic_year_name = roll_number = enrollment_id = None
+            if enrollment:
+                enrollment_id = enrollment.id
+                class_id = enrollment.class_id
+                academic_year_id = enrollment.academic_year_id
+                grade_id = enrollment.grade_id
+                roll_number = enrollment.roll_number
+                classroom = classes.get(enrollment.class_id)
+                if classroom:
+                    class_name = classroom.name
+                    section = classroom.section
+                if enrollment.grade_id:
+                    grade = grades.get(enrollment.grade_id)
+                    grade_name = grade.name if grade else None
+                year = years.get(enrollment.academic_year_id)
+                academic_year_name = year.name if year else None
+            parent_briefs: list[StudentParentBrief] = []
+            for link in links_by.get(student.id, []):
+                parent = parents.get(link.parent_id)
+                if not parent:
+                    continue
+                puser = users.get(parent.user_id)
+                parent_briefs.append(
+                    StudentParentBrief(
+                        id=parent.id,
+                        user_id=parent.user_id,
+                        full_name=puser.full_name if puser else None,
+                        email=puser.email if puser else None,
+                        relationship=link.relation_type,
+                        phone=parent.phone,
+                        is_primary=bool(link.is_primary),
+                    )
+                )
+            out.append(
+                StudentOut(
+                    id=student.id,
+                    school_id=student.school_id,
+                    user_id=student.user_id,
+                    student_code=student.student_code,
+                    admission_no=student.admission_no,
+                    first_name=user.first_name if user else None,
+                    middle_name=user.middle_name if user else None,
+                    last_name=user.last_name if user else None,
+                    full_name=user.full_name if user else None,
+                    email=user.email if user else None,
+                    date_of_birth=student.date_of_birth,
+                    gender=student.gender,
+                    blood_group=student.blood_group,
+                    nationality=student.nationality,
+                    phone=student.phone or (user.phone if user else None),
+                    address_line1=student.address_line1,
+                    address_line2=student.address_line2,
+                    city=student.city,
+                    state=student.state,
+                    postal_code=student.postal_code,
+                    country=student.country,
+                    admission_date=student.admission_date,
+                    photo_url=student.photo_url or (user.avatar_url if user else None),
+                    status=student.status,
+                    is_active=bool(user.is_active) if user else True,
+                    created_at=student.created_at,
+                    class_id=class_id,
+                    class_name=class_name,
+                    section=section,
+                    grade_id=grade_id,
+                    grade_name=grade_name,
+                    academic_year_id=academic_year_id,
+                    academic_year_name=academic_year_name,
+                    roll_number=roll_number,
+                    enrollment_id=enrollment_id,
+                    parents=parent_briefs,
+                    enrollments=[],
+                )
+            )
+        return out
 
     async def _to_out(self, student: Student, *, include_history: bool) -> StudentOut:
         user = await self.db.get(User, student.user_id)

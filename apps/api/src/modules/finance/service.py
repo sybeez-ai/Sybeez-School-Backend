@@ -41,6 +41,7 @@ from src.db.models.finance import (
     StudentFeeProfile,
 )
 from src.modules.fees.calculations import invoice_status_after_payment, money
+from src.modules.fees.dates import ist_today, paid_on
 from src.modules.fees.crediting import assert_distinct_checker
 from src.modules.fees.ledger import ensure_ledger_backfill, post_ledger_entry
 from src.modules.fees.numbering import indian_financial_year
@@ -1554,9 +1555,10 @@ class FinanceService:
 
     async def dashboard(self) -> DashboardOut:
         settings = await self.fees.get_or_create_settings(self.school_id)
-        today = date.today()
+        today = ist_today()
         start = today - timedelta(days=13)
-        day_expr = func.date(func.timezone("Asia/Kolkata", Payment.paid_at))
+        stamp = func.coalesce(Payment.paid_at, Payment.created_at)
+        day_expr = func.date(func.timezone("Asia/Kolkata", stamp))
         q = select(Payment).where(
             Payment.school_id == self.school_id,
             Payment.status == PaymentStatus.SUCCESS.value,
@@ -1568,7 +1570,7 @@ class FinanceService:
         today_total = money(0)
         trend_map: dict[date, Decimal] = {start + timedelta(days=i): money(0) for i in range(14)}
         for payment in payments:
-            paid_day = payment.paid_at.date() if payment.paid_at else payment.created_at.date()
+            paid_day = paid_on(payment.paid_at or payment.created_at)
             if paid_day in trend_map:
                 trend_map[paid_day] = money(trend_map[paid_day] + payment.amount)
             if paid_day == today:
@@ -1613,7 +1615,7 @@ class FinanceService:
         )
 
     async def report_defaulters(self) -> list[dict]:
-        today = date.today()
+        today = ist_today()
         rows = (
             await self.db.execute(
                 select(FeeInvoice).where(
@@ -1798,12 +1800,14 @@ class FinanceService:
             if account and account.school_id == self.school_id:
                 profile = (
                     await self.db.execute(
-                        select(StudentFeeProfile).where(
+                        select(StudentFeeProfile)
+                        .where(
                             StudentFeeProfile.school_id == self.school_id,
                             StudentFeeProfile.student_id == account.student_id,
                         )
+                        .limit(1)
                     )
-                ).scalar_one_or_none()
+                ).scalars().first()
                 if profile:
                     category = profile.category
             buckets[category] = money(buckets.get(category, 0) + payment.amount)
