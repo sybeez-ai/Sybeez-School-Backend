@@ -2,12 +2,22 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from src.core.exceptions import ConflictError, ForbiddenError, NotFoundError
-from src.db.models import AcademicYear, Enrollment, Grade, Student, Subject, Syllabus, SyllabusTopic
+from src.db.models import (
+    AcademicYear,
+    Enrollment,
+    Grade,
+    Parent,
+    Student,
+    StudentParent,
+    Subject,
+    Syllabus,
+    SyllabusTopic,
+)
 from src.modules.syllabus.schemas import (
     SyllabusCreate,
     SyllabusOut,
@@ -48,15 +58,14 @@ class SyllabusService:
         return await self._to_out(row, include_topics=True)
 
     async def list(self, school_id: UUID) -> list[SyllabusOut]:
-        result = await self.db.execute(
-            select(Syllabus)
-            .where(Syllabus.school_id == school_id)
-            .order_by(Syllabus.created_at.desc())
-        )
-        out: list[SyllabusOut] = []
-        for row in result.scalars().all():
-            out.append(await self._to_out(row, include_topics=False))
-        return out
+        rows = (
+            await self.db.execute(
+                select(Syllabus)
+                .where(Syllabus.school_id == school_id)
+                .order_by(Syllabus.created_at.desc())
+            )
+        ).scalars().all()
+        return await self._outs(list(rows), include_topics=False)
 
     async def list_for_student(self, school_id: UUID, user_id: UUID) -> list[SyllabusOut]:
         st = (
@@ -89,10 +98,53 @@ class SyllabusService:
             )
             .order_by(Syllabus.created_at.desc())
         )
-        out: list[SyllabusOut] = []
-        for row in result.scalars().all():
-            out.append(await self._to_out(row, include_topics=False))
-        return out
+        return await self._outs(list(result.scalars().all()), include_topics=False)
+
+    async def list_for_parent(self, school_id: UUID, user_id: UUID) -> list[SyllabusOut]:
+        parent = (
+            await self.db.execute(
+                select(Parent).where(Parent.school_id == school_id, Parent.user_id == user_id)
+            )
+        ).scalar_one_or_none()
+        if not parent:
+            raise ForbiddenError("Parent profile required")
+        child_ids = (
+            await self.db.execute(
+                select(StudentParent.student_id).where(
+                    StudentParent.school_id == school_id, StudentParent.parent_id == parent.id
+                )
+            )
+        ).scalars().all()
+        if not child_ids:
+            return []
+        placements = (
+            await self.db.execute(
+                select(Enrollment.academic_year_id, Enrollment.grade_id)
+                .where(
+                    Enrollment.school_id == school_id,
+                    Enrollment.student_id.in_(list(child_ids)),
+                    Enrollment.status == EnrollmentStatus.ACTIVE.value,
+                )
+                .distinct()
+            )
+        ).all()
+        if not placements:
+            return []
+        clauses = [
+            (Syllabus.academic_year_id == year_id) & (Syllabus.grade_id == grade_id)
+            for year_id, grade_id in placements
+            if grade_id is not None
+        ]
+        if not clauses:
+            return []
+        rows = (
+            await self.db.execute(
+                select(Syllabus)
+                .where(Syllabus.school_id == school_id, or_(*clauses))
+                .order_by(Syllabus.created_at.desc())
+            )
+        ).scalars().all()
+        return await self._outs(list(rows), include_topics=False)
 
     async def get(self, school_id: UUID, syllabus_id: UUID) -> SyllabusOut:
         row = await self._get(school_id, syllabus_id)
@@ -102,6 +154,8 @@ class SyllabusService:
         self, school_id: UUID, syllabus_id: UUID, data: SyllabusTopicCreate
     ) -> SyllabusTopicOut:
         syllabus = await self._get(school_id, syllabus_id)
+        if data.parent_topic_id is not None:
+            await self._assert_topic_parent(syllabus.id, data.parent_topic_id)
         order = data.order_index
         if order is None:
             count = len(
@@ -153,6 +207,108 @@ class SyllabusService:
             )
             for t in result.scalars().all()
         ]
+
+    async def _assert_topic_parent(self, syllabus_id: UUID, parent_topic_id: UUID) -> None:
+        """The parent topic must be in this syllabus, and the chain must not loop."""
+        seen: set[UUID] = set()
+        current_id: UUID | None = parent_topic_id
+        while current_id is not None:
+            if current_id in seen:
+                raise ConflictError("This topic would loop back on itself")
+            seen.add(current_id)
+            if len(seen) > 50:
+                raise ConflictError("This topic is nested too deeply")
+            row = (
+                await self.db.execute(
+                    select(SyllabusTopic).where(
+                        SyllabusTopic.id == current_id, SyllabusTopic.syllabus_id == syllabus_id
+                    )
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                raise NotFoundError("Parent topic not found")
+            current_id = row.parent_topic_id
+
+    async def _outs(self, rows: list[Syllabus], *, include_topics: bool) -> list[SyllabusOut]:
+        if not rows:
+            return []
+        ids = [row.id for row in rows]
+        years = {
+            row.id: row
+            for row in (
+                await self.db.execute(
+                    select(AcademicYear).where(AcademicYear.id.in_({r.academic_year_id for r in rows}))
+                )
+            ).scalars().all()
+        }
+        grades = {
+            row.id: row
+            for row in (
+                await self.db.execute(select(Grade).where(Grade.id.in_({r.grade_id for r in rows})))
+            ).scalars().all()
+        }
+        subjects = {
+            row.id: row
+            for row in (
+                await self.db.execute(select(Subject).where(Subject.id.in_({r.subject_id for r in rows})))
+            ).scalars().all()
+        }
+        counts = {
+            sid: n
+            for sid, n in (
+                await self.db.execute(
+                    select(SyllabusTopic.syllabus_id, func.count())
+                    .where(SyllabusTopic.syllabus_id.in_(ids))
+                    .group_by(SyllabusTopic.syllabus_id)
+                )
+            ).all()
+        }
+        topics_by: dict[UUID, list[SyllabusTopic]] = {}
+        if include_topics:
+            for topic in (
+                await self.db.execute(
+                    select(SyllabusTopic)
+                    .where(SyllabusTopic.syllabus_id.in_(ids))
+                    .order_by(SyllabusTopic.order_index, SyllabusTopic.created_at)
+                )
+            ).scalars().all():
+                topics_by.setdefault(topic.syllabus_id, []).append(topic)
+        out: list[SyllabusOut] = []
+        for row in rows:
+            year = years.get(row.academic_year_id)
+            grade = grades.get(row.grade_id)
+            subject = subjects.get(row.subject_id)
+            topics = topics_by.get(row.id, [])
+            out.append(
+                SyllabusOut(
+                    id=row.id,
+                    school_id=row.school_id,
+                    academic_year_id=row.academic_year_id,
+                    grade_id=row.grade_id,
+                    subject_id=row.subject_id,
+                    title=row.title,
+                    description=row.description,
+                    created_at=row.created_at,
+                    academic_year_name=year.name if year else None,
+                    grade_name=grade.name if grade else None,
+                    subject_name=subject.name if subject else None,
+                    subject_code=subject.code if subject else None,
+                    topic_count=int(counts.get(row.id, 0)),
+                    topics=[
+                        SyllabusTopicOut(
+                            id=t.id,
+                            syllabus_id=t.syllabus_id,
+                            parent_topic_id=t.parent_topic_id,
+                            name=t.name,
+                            description=t.description,
+                            order_index=t.order_index,
+                            created_at=t.created_at,
+                        )
+                        for t in topics
+                    ],
+                )
+            )
+        return out
 
     async def _get(self, school_id: UUID, syllabus_id: UUID) -> Syllabus:
         row = (

@@ -42,6 +42,7 @@ from src.modules.finance.schemas import (
     ConcessionRequestIn,
     ConcessionRuleIn,
     ConcessionRulePatch,
+    ApprovalDecisionIn,
     ApprovalOut,
     AuditRow,
     BranchOut,
@@ -507,6 +508,17 @@ async def report_cancelled_receipts(
 async def list_approvals(svc: Annotated[FinanceService, Depends(_svc)], status: str | None = None):
     assert_finance(svc.role, "reports.read")
     return await svc.list_approvals(status)
+
+
+@router.post("/approvals/{approval_id}/decision", response_model=ApprovalOut)
+async def decide_approval(
+    approval_id: UUID,
+    body: ApprovalDecisionIn,
+    svc: Annotated[FinanceService, Depends(_svc)],
+):
+    """Compatibility for the books client, using the same guarded decision flow."""
+    assert_finance(svc.role, "approve")
+    return await svc.decide_approval(approval_id, body.status.upper() == "APPROVED", body.note)
 
 
 @router.post("/approvals/{approval_id}/approve", response_model=ApprovalOut)

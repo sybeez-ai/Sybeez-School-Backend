@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -167,6 +168,12 @@ class ConcessionOut(BaseModel):
 
 class DecisionIn(BaseModel):
     note: str | None = None
+
+
+class ApprovalDecisionIn(DecisionIn):
+    """Legacy books client contract; only terminal decisions are accepted."""
+
+    status: Literal["approved", "rejected", "APPROVED", "REJECTED"]
 
 
 class DueLine(BaseModel):

@@ -282,8 +282,8 @@ def test_missing_credentials_stay_mock_with_admin_status():
             "whatsapp_verify_token": "verify",
         }
     )
-    assert provider_status(ready)["whatsapp_status"] == "configured"
-    assert effective_whatsapp_provider(ready) == "meta_cloud"
+    assert provider_status(ready)["whatsapp_status"] == "WhatsApp setup is on hold"
+    assert effective_whatsapp_provider(ready) == "mock"
 
 
 def test_template_submit_skips_meta_when_unconfigured():
@@ -340,7 +340,7 @@ def test_worker_downgrades_unconfigured_provider_to_mock():
             access_token="token",
             phone_number_id="phone",
         )
-        == "meta_cloud"
+        == "mock"
     )
 
 
@@ -361,7 +361,7 @@ def test_settings_read_whatsapp_from_env(monkeypatch):
     assert settings.whatsapp_business_account_id == "waba-from-env"
     assert settings.whatsapp_app_secret == "secret-from-env"
     assert settings.whatsapp_verify_token == "verify-from-env"
-    assert provider_status(settings)["whatsapp_status"] == "configured"
+    assert provider_status(settings)["whatsapp_status"] == "WhatsApp setup is on hold"
     get_settings.cache_clear()
 
 

@@ -5,6 +5,7 @@ and see no rows in the database either. Files are never exposed by URL: they str
 access check, and every upload, download and delete is audited.
 """
 
+from datetime import datetime
 from typing import Annotated
 from uuid import UUID, uuid4
 
@@ -17,7 +18,7 @@ from src.api.dependencies import CurrentUser, require_roles
 from src.core import storage
 from src.core.database import get_db
 from src.core.exceptions import ForbiddenError, NotFoundError, ValidationError
-from src.db.models import FamilyDocument, Parent, Student, StudentParent
+from src.db.models import FamilyDocument, Parent, Student, StudentParent, User
 from src.modules.access.audit import write_audit, write_scoped_audit
 from src.shared.enums import UserRole
 
@@ -34,17 +35,20 @@ _SIGS = ((b"%PDF-", "application/pdf"), (b"\x89PNG\r\n\x1a\n", "image/png"), (b"
 class DocOut(BaseModel):
     id: UUID
     student_id: UUID
+    student_name: str | None = None
     doc_type: str
     title: str
     academic_year: str | None
     file_name: str
     mime_type: str
     file_size: int
+    created_at: datetime
 
 
-def _out(d: FamilyDocument) -> DocOut:
-    return DocOut(id=d.id, student_id=d.student_id, doc_type=d.doc_type, title=d.title, academic_year=d.academic_year,
-                  file_name=d.file_name, mime_type=d.mime_type, file_size=d.file_size)
+def _out(d: FamilyDocument, student_name: str | None = None) -> DocOut:
+    return DocOut(id=d.id, student_id=d.student_id, student_name=student_name, doc_type=d.doc_type, title=d.title,
+                  academic_year=d.academic_year, file_name=d.file_name, mime_type=d.mime_type, file_size=d.file_size,
+                  created_at=d.created_at)
 
 
 def _sid(user: CurrentUser) -> UUID:
@@ -87,7 +91,18 @@ async def list_documents(db: DB, user: Family, student_id: UUID | None = None):
     if fam is not None:
         q = q.where(FamilyDocument.student_id.in_(fam))
     rows = (await db.execute(q.order_by(FamilyDocument.created_at.desc()).limit(200))).scalars().all()
-    return [_out(r) for r in rows]  # RLS limits parents and students to their own family's rows
+    names: dict[UUID, str | None] = {}
+    student_ids = {r.student_id for r in rows}
+    if student_ids:
+        named = (
+            await db.execute(
+                select(Student.id, User.full_name)
+                .join(User, User.id == Student.user_id)
+                .where(Student.id.in_(student_ids), Student.school_id == _sid(user))
+            )
+        ).all()
+        names = {sid: name for sid, name in named}
+    return [_out(r, names.get(r.student_id)) for r in rows]  # RLS limits parents and students to their own family
 
 
 @router.post("", status_code=201, response_model=DocOut)

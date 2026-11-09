@@ -43,7 +43,8 @@ async def homework_health():
 @router.get("/mine", response_model=list[HomeworkOut])
 async def my_homework(
     db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.STUDENT))],
+    # Teachers get their own assigned homework (list_for_actor scopes by teacher).
+    user: Annotated[CurrentUser, Depends(require_roles(UserRole.STUDENT, UserRole.TEACHER))],
     subject_id: UUID | None = Query(None),
     status: str | None = Query(None, description="PENDING|SUBMITTED|OVERDUE|GRADED"),
     homework_type: str | None = Query(None),

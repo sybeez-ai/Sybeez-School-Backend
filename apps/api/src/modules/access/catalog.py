@@ -189,7 +189,7 @@ _PARENT = frozenset(
         "timetable.read",
         "announcements.read",
         "messages.read",
-        "messages.write",
+        # messages.write stays off: parent chat is WhatsApp only, and WhatsApp setup is on hold.
         "progress.read",
         "achievements.read",
         "notifications.read",

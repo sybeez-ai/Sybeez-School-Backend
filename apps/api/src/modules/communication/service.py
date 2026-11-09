@@ -915,6 +915,17 @@ class CommunicationService:
     async def send_message(
         self, school_id: UUID, user_id: UUID, conversation_id: UUID, data: MessageCreate
     ) -> MessageOut:
+        from src.modules.communication.parent_chat import reject_parent_chat
+
+        parent = (
+            await self.db.execute(
+                select(Parent.id)
+                .where(Parent.school_id == school_id, Parent.user_id == user_id)
+                .limit(1)
+            )
+        ).scalars().first()
+        if parent is not None:
+            reject_parent_chat(UserRole.PARENT)
         await self._assert_participant(school_id, user_id, conversation_id)
         msg = ConversationMessage(
             school_id=school_id,
@@ -989,6 +1000,10 @@ class CommunicationService:
     ) -> None:
         if sender_user_id == recipient_user_id:
             raise AppError("Cannot message yourself", status_code=422)
+
+        from src.modules.communication.parent_chat import reject_parent_chat
+
+        reject_parent_chat(sender_role)
 
         if sender_role == UserRole.PARENT.value:
             parent = (

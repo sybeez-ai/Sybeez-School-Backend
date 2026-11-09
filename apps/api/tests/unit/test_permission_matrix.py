@@ -108,8 +108,9 @@ def test_parent_reads_children_and_cannot_submit_or_mark():
         "assignments.read",
         "exams.read",
         "results.read",
-        "messages.write",
+        "messages.read",
     } <= granted
+    assert "messages.write" not in granted
     assert granted.isdisjoint(
         {
             "homework.submit",

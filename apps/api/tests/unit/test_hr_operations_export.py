@@ -30,3 +30,22 @@ def test_csv_and_xlsx_and_pdf_round_trip_headers():
 
     pdf = to_pdf("Headcount", headers, rows)
     assert pdf.startswith(b"%PDF")
+
+
+async def test_overview_report_kind_summarises_people():
+    """HR overview downloads used kind=overview, which returned 422."""
+    from src.modules.hr_operations.service import HrOperations
+
+    svc = object.__new__(HrOperations)
+
+    async def headcount(*_):
+        return [], [["1", "Ada", "", "TEACHING", "Maths", "", "ACTIVE", ""], ["2", "Bo", "", "TEACHING", "", "", "EXITED", ""]]
+
+    async def empty(*_):
+        return [], [["x"]]
+
+    svc._headcount, svc._leave, svc._attrition = headcount, empty, empty
+    headers, rows = await svc._overview(None, None, None)
+    assert headers == ["metric", "value"]
+    assert ["Total employees", 2] in rows and ["Active employees", 1] in rows
+    assert ["Active in Maths", 1] in rows
