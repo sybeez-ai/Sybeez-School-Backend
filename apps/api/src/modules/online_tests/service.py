@@ -141,35 +141,21 @@ class OnlineTestService:
 
     # ── school settings ──────────────────────────────────────
 
-    async def _find_school_settings(self, school_id: UUID) -> OnlineTestSchoolSettings | None:
-        return (
-            await self.db.execute(
-                select(OnlineTestSchoolSettings).where(OnlineTestSchoolSettings.school_id == school_id).limit(1)
-            )
-        ).scalars().first()
-
     async def school_settings(self, school_id: UUID) -> OnlineTestSchoolSettings:
-        row = await self._find_school_settings(school_id)
+        row = (
+            await self.db.execute(
+                select(OnlineTestSchoolSettings).where(OnlineTestSchoolSettings.school_id == school_id)
+            )
+        ).scalar_one_or_none()
         if row:
             return row
-        row = OnlineTestSchoolSettings(
-            school_id=school_id, enabled=True, ai_monthly_cap=200, default_max_violations=3
-        )
-        created = True
+        # Insert under the short RLS bypass. A savepoint here drops that bypass and the insert is rejected.
         async with service_scope(self.db, school_id):
-            try:
-                async with self.db.begin_nested():
-                    self.db.add(row)
-                    await self.db.flush()
-            except IntegrityError:
-                # The tests page loads the list and the config together.
-                self.db.expunge(row)
-                created = False
-        if not created:
-            existing = await self._find_school_settings(school_id)
-            if existing is None:
-                raise ConflictError("Online test settings could not be saved")
-            return existing
+            row = OnlineTestSchoolSettings(
+                school_id=school_id, enabled=True, ai_monthly_cap=200, default_max_violations=3
+            )
+            self.db.add(row)
+            await self.db.flush()
         return row
 
     async def assert_enabled(self, school_id: UUID) -> OnlineTestSchoolSettings:

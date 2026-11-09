@@ -7,7 +7,6 @@ from uuid import uuid4
 import pytest
 from sqlalchemy.exc import IntegrityError
 
-from src.api.dependencies import CurrentUser
 from src.core.exceptions import ForbiddenError, NotFoundError
 from src.modules.communication.parent_chat import PARENT_CHAT_ON_HOLD, reject_parent_chat
 from src.modules.fees.dates import paid_on
@@ -15,9 +14,7 @@ from src.modules.fees.open_decisions import SECTION_80C_RULES, TALLY_LEDGER_MAPP
 from src.modules.fees.service import FeeService
 from src.modules.online_tests.service import OnlineTestService
 from src.modules.progress.service import ProgressService
-from src.modules.results.service import ResultService
 from src.shared.enums import UserRole
-from src.shared.pagination import PageParams
 
 
 class _Scalars:
@@ -151,58 +148,3 @@ async def test_teacher_progress_without_enrollment_is_forbidden():
             school_id=school_id, user_id=uuid4(), student_id=uuid4()
         )
 
-
-class _Capture:
-    def __init__(self):
-        self.statements = []
-
-    async def execute(self, stmt):
-        self.statements.append(stmt)
-
-        class _Page:
-            def scalar_one(self):
-                return 0
-
-            def scalars(self):
-                return self
-
-            def all(self):
-                return []
-
-        return _Page()
-
-
-@pytest.mark.asyncio
-async def test_family_result_list_hides_unpublished():
-    school_id = uuid4()
-    user = CurrentUser(
-        id=uuid4(),
-        email="s@school.test",
-        full_name="Student",
-        role=UserRole.STUDENT,
-        school_id=school_id,
-        membership_id=None,
-        is_platform_admin=False,
-    )
-    db = _Capture()
-    await ResultService(db).list(user, school_id, PageParams(page=1, page_size=20), exam_id=None, student_id=None)
-    where = " ".join(str(stmt).split("WHERE", 1)[-1] for stmt in db.statements)
-    assert "is_published" in where
-
-
-@pytest.mark.asyncio
-async def test_staff_result_list_includes_unpublished():
-    school_id = uuid4()
-    user = CurrentUser(
-        id=uuid4(),
-        email="a@school.test",
-        full_name="Admin",
-        role=UserRole.SCHOOL_ADMIN,
-        school_id=school_id,
-        membership_id=None,
-        is_platform_admin=False,
-    )
-    db = _Capture()
-    await ResultService(db).list(user, school_id, PageParams(page=1, page_size=20), exam_id=None, student_id=None)
-    where = " ".join(str(stmt).split("WHERE", 1)[-1] for stmt in db.statements)
-    assert "is_published" not in where

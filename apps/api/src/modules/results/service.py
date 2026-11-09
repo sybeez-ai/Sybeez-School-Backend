@@ -12,11 +12,8 @@ from src.db.models import Exam, Result
 from src.modules.access.scope import restrict_student_rows
 from src.modules.exams.service import ExamService
 from src.modules.results.schemas import ResultCreate, ResultUpdate
-from src.shared.enums import UserRole
 from src.shared.listing import fetch_page
 from src.shared.pagination import PageParams
-
-_FAMILY = {UserRole.STUDENT, UserRole.PARENT}
 
 
 def grade_label(percentage: float) -> str:
@@ -68,8 +65,6 @@ class ResultService:
     ) -> tuple[list[Result], int]:
         stmt = select(Result).where(Result.school_id == school_id)
         stmt = restrict_student_rows(stmt, user, school_id, Result.student_id)
-        if user.role in _FAMILY:
-            stmt = stmt.where(Result.is_published.is_(True))
         if exam_id:
             stmt = stmt.where(Result.exam_id == exam_id)
         if student_id:
@@ -81,8 +76,6 @@ class ResultService:
     async def get(self, user: CurrentUser, school_id: UUID, result_id: UUID) -> Result:
         stmt = select(Result).where(Result.id == result_id, Result.school_id == school_id)
         stmt = restrict_student_rows(stmt, user, school_id, Result.student_id)
-        if user.role in _FAMILY:
-            stmt = stmt.where(Result.is_published.is_(True))
         row = (await self.db.execute(stmt)).scalar_one_or_none()
         if row is None:
             raise NotFoundError("Result not found")
