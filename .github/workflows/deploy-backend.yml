@@ -152,6 +152,48 @@ jobs:
           container-name: ${{ vars.AWS_BACKEND_MIGRATE_CONTAINER || 'sybeez-school-migrate' }}
           image: ${{ steps.login-ecr.outputs.registry }}/sybeez-school-api:${{ github.sha }}
 
+      - name: Wake the database before migrating
+        env:
+          DB_INSTANCE: ${{ vars.AWS_BACKEND_DB_INSTANCE || 'sybeez-school-db' }}
+        run: |
+          set -euo pipefail
+          # Auto-sleep stops RDS after idle time. A deploy must start that same
+          # database and wait until it accepts connections. This does not change
+          # the sleep schedule.
+          db_status() {
+            aws rds describe-db-instances --db-instance-identifier "$DB_INSTANCE" \
+              --query 'DBInstances[0].DBInstanceStatus' --output text
+          }
+          STATE="$(db_status)"
+          echo "Database $DB_INSTANCE status: $STATE"
+          if [ "$STATE" = "stopping" ]; then
+            echo "Waiting for the database to finish stopping"
+            for _ in $(seq 1 60); do
+              STATE="$(db_status)"
+              echo "Database $DB_INSTANCE status: $STATE"
+              [ "$STATE" = "stopped" ] && break
+              sleep 10
+            done
+          fi
+          if [ "$STATE" = "stopped" ]; then
+            echo "Starting database $DB_INSTANCE"
+            aws rds start-db-instance --db-instance-identifier "$DB_INSTANCE" \
+              --query 'DBInstance.DBInstanceStatus' --output text
+          elif [ "$STATE" != "available" ] && [ "$STATE" != "starting" ] && [ "$STATE" != "backing-up" ] && [ "$STATE" != "configuring-enhanced-monitoring" ] && [ "$STATE" != "modifying" ] && [ "$STATE" != "rebooting" ] && [ "$STATE" != "storage-optimization" ]; then
+            echo "Database $DB_INSTANCE is $STATE, which this deploy cannot start"
+            exit 1
+          fi
+          echo "Waiting until database $DB_INSTANCE is available"
+          for attempt in 1 2; do
+            if aws rds wait db-instance-available --db-instance-identifier "$DB_INSTANCE"; then
+              echo "Database $DB_INSTANCE is available"
+              exit 0
+            fi
+            echo "Still waiting (attempt $attempt)"
+          done
+          echo "Database $DB_INSTANCE did not become available"
+          exit 1
+
       - name: Run migrations and fail the deploy if they fail
         env:
           MIGRATE_CONTAINER: ${{ vars.AWS_BACKEND_MIGRATE_CONTAINER || 'sybeez-school-migrate' }}
