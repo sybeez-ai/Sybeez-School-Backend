@@ -36,10 +36,9 @@ from src.modules.alerts.schemas import (
     TemplateUpdate,
 )
 from src.modules.alerts.submit import default_post_json, submit_message_templates, template_payload
-from src.modules.alerts.service import enable_rls_bypass, record_audit, resend_delivery
+from src.modules.alerts.service import record_audit, resend_delivery
 from src.modules.alerts.webhooks import (
     loads_json,
-    parse_meta_webhook,
     verify_challenge,
     verify_meta_signature,
 )
@@ -135,22 +134,17 @@ async def meta_verify(
 
 @public
 @webhook_router.post("/whatsapp/meta")
-async def meta_webhook(request: Request, db: Db):
+async def meta_webhook(request: Request):
+    """Verify the signature, queue the body, and return 200 before any school data is read."""
     raw = await request.body()
     settings = get_settings()
     signature = request.headers.get("x-hub-signature-256")
     if not verify_meta_signature(raw, signature, settings.whatsapp_app_secret):
         raise UnauthorizedError("Invalid WhatsApp signature")
-    await enable_rls_bypass(db)
-    payload = loads_json(raw)
-    from src.modules.alerts.service import apply_provider_status, store_inbound
+    loads_json(raw)
+    from src.core.jobs import enqueue_job
 
-    statuses, inbound = parse_meta_webhook(payload)
-    for item in statuses:
-        await apply_provider_status(db, item, channel="WHATSAPP")
-    raw_text = raw.decode("utf-8", errors="replace")
-    for item in inbound:
-        await store_inbound(db, item, channel="WHATSAPP", raw=raw_text)
+    await enqueue_job("whatsapp_assistant", {"body": raw.decode("utf-8")})
     return {"ok": True}
 
 

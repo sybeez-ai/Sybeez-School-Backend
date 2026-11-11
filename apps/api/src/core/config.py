@@ -122,6 +122,14 @@ class Settings(BaseSettings):
     whatsapp_app_secret: str = Field(default="", validation_alias=AliasChoices("WHATSAPP_APP_SECRET"))
     whatsapp_verify_token: str = Field(default="", validation_alias=AliasChoices("WHATSAPP_VERIFY_TOKEN"))
     whatsapp_rate_limit_per_minute: int = 60
+    # Assistant replies. Off unless this is explicitly true. A secrets file cannot turn it on.
+    whatsapp_sending_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("WHATSAPP_SENDING_ENABLED"),
+    )
+    whatsapp_assistant_provider: str = "ai_service"  # ai_service | local
+    whatsapp_assistant_rate_limit_per_minute: int = 30
+    whatsapp_assistant_monthly_cap: int = 2000
 
     # Object storage. Empty bucket keeps files on local disk outside production.
     # Set the bucket name from the environment or from Secrets Manager. Never commit a key.

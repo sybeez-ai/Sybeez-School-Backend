@@ -95,10 +95,13 @@ from src.modules.devices.router import router as devices_router
 from src.modules.ai_teacher.internal_router import router as ai_teacher_internal_router
 from src.modules.ai_teacher.router import router as ai_teacher_router
 from src.modules.daily_lessons.router import router as daily_lessons_router
+from src.modules.whatsapp_assistant.router import internal_router as whatsapp_internal_router
+from src.modules.whatsapp_assistant.router import router as whatsapp_assistant_router
 
 api_router = APIRouter()
 api_router.include_router(health_router)
 api_router.include_router(internal_router)
+api_router.include_router(whatsapp_internal_router)
 api_router.include_router(ai_teacher_internal_router)
 api_router.include_router(ai_gateway_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
 api_router.include_router(auth_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
@@ -154,6 +157,7 @@ api_router.include_router(notifications_router, prefix=API_V1_PREFIX, dependenci
 api_router.include_router(communication_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
 api_router.include_router(alerts_admin_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
 api_router.include_router(alerts_webhook_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
+api_router.include_router(whatsapp_assistant_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
 api_router.include_router(admissions_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
 api_router.include_router(hr_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
 api_router.include_router(employees_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])

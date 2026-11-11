@@ -195,6 +195,14 @@ from src.db.models.alerts import (
     AlertMessageTemplate,
     SchoolAlertSettings,
 )
+from src.db.models.whatsapp_assistant import (
+    WhatsAppAssistantSettings,
+    WhatsAppLink,
+    WhatsAppLinkCode,
+    WhatsAppMessage,
+    WhatsAppSession,
+    WhatsAppUsage,
+)
 from src.db.models.admissions import AdmissionApplication, AdmissionDocument, AdmissionEnquiry, AdmissionStatusHistory
 from src.db.models.parent import Parent
 from src.db.models.platform_saas import PlatformAiSettings, PlatformAiUsageDaily, PlatformPlan, PlatformSettings
@@ -428,4 +436,10 @@ __all__ = [
     "PlatformStaffPortal",
     "PlatformStaffPermission",
     "PlatformStaffInvitation",
+    "WhatsAppAssistantSettings",
+    "WhatsAppLink",
+    "WhatsAppLinkCode",
+    "WhatsAppMessage",
+    "WhatsAppSession",
+    "WhatsAppUsage",
 ]
