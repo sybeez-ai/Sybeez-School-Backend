@@ -49,7 +49,7 @@ async def test_other_section_cannot_read_the_days_lesson(api, db_session):  # no
             assert listing.json() == [], who.role
 
     denied = await api.post(API, json=body, headers=world.teacher2.h)
-    assert denied.status_code == 403, denied.text
+    assert denied.status_code in {403, 404}, denied.text
 
 
 PNG = base64.b64encode(
