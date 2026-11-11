@@ -26,6 +26,7 @@ class SettingsUpdate(ReasonBody):
     esi_wage_ceiling: Decimal | None = None
     rounding_mode: str | None = None
     lop_base: str | None = None
+    unmarked_attendance_policy: str | None = None
     pay_date_rule: str | None = None
     pay_day: int | None = Field(default=None, ge=1, le=31)
     auto_publish: bool | None = None

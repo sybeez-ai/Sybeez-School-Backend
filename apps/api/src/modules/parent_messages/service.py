@@ -599,7 +599,11 @@ class ParentMessageService:
         if not src.published:
             return {"queued": 0}
         settings_row = await self.db.get(SchoolAlertSettings, school_id)
-        if not (settings_row and settings_row.whatsapp_enabled):
+        if not (
+            settings_row
+            and settings_row.whatsapp_enabled
+            and settings_row.parent_whatsapp_cloud_enabled
+        ):
             return {"queued": 0, "reason": "whatsapp_off"}
         ids = await self._recipient_user_ids(school_id, src)
         if not ids:

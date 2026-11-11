@@ -126,22 +126,18 @@ class MockProvider:
         return f"mock_{tail}"
 
 
-# TODO(silver): same hold as apps/api/src/modules/alerts/credentials.py WHATSAPP_SENDING_ON_HOLD.
-# Parent WhatsApp setup is not finished. Do not post to Meta until Silver clears this.
-WHATSAPP_SENDING_ON_HOLD = True
-
-
 def resolve_outbound_provider(
     channel: str,
     provider: str | None,
     *,
     access_token: str = "",
     phone_number_id: str = "",
+    parent_cloud_enabled: bool = False,
 ) -> str:
-    """Use mock when Meta credentials are blank, or while sending is on hold. Does not raise."""
+    """Use mock unless parent WhatsApp is switched on and a phone number id exists."""
     key = (provider or "mock").strip().lower() or "mock"
     if channel == "WHATSAPP" and key in {"meta", "meta_cloud", "whatsapp_cloud"}:
-        if WHATSAPP_SENDING_ON_HOLD or not (access_token or "").strip() or not (phone_number_id or "").strip():
+        if not parent_cloud_enabled or not (access_token or "").strip() or not (phone_number_id or "").strip():
             return "mock"
         return "meta_cloud"
     return key

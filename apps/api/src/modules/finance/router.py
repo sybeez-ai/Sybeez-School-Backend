@@ -638,3 +638,14 @@ async def finance_route_reconciliation(svc: Annotated[FinanceService, Depends(_s
     return await RouteReportService(svc.db).reconciliation(
         svc.school_id, allow_platform_settlement=bool(settings.allow_platform_settlement)
     )
+
+
+@router.get("/reports/razorpay-route")
+async def razorpay_route_report(svc: Annotated[FinanceService, Depends(_svc)]):
+    """Same reconciliation as the fee desk. No live payout is created by reading it."""
+    assert_finance(svc.role, "reports.read")
+    settings = await FeeService(svc.db).get_or_create_settings(svc.school_id)
+    rows = await RouteReportService(svc.db).reconciliation(
+        svc.school_id, allow_platform_settlement=bool(settings.allow_platform_settlement)
+    )
+    return {"mode": "test", "payouts": "off", "rows": rows}

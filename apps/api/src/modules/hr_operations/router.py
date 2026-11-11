@@ -203,6 +203,11 @@ async def decide_probation(probation_id: UUID, body: ProbationDecision, user: Ad
     return await _svc(db).decide_probation(_sid(user), user.id, probation_id, body.model_dump())
 
 
+@router.get("/appraisals/cycles")
+async def list_cycles(user: Admin, db: Db):
+    return await _svc(db).list_cycles(_sid(user))
+
+
 @router.post("/appraisal-cycles", status_code=201)
 async def create_cycle(body: CycleIn, user: Admin, db: Db):
     return await _svc(db).create_cycle(_sid(user), user.id, body.model_dump())
@@ -243,6 +248,11 @@ async def finalise_appraisal(appraisal_id: UUID, body: ReviewIn, user: Admin, db
     return await _svc(db).finalise(_sid(user), user.id, appraisal_id, body.model_dump())
 
 
+@router.get("/recruitment/openings")
+async def list_openings(user: Admin, db: Db):
+    return await _svc(db).list_openings(_sid(user))
+
+
 @router.post("/openings", status_code=201)
 async def create_opening(body: OpeningIn, user: Admin, db: Db):
     return await _svc(db).create_opening(_sid(user), user.id, body.model_dump())
@@ -271,6 +281,21 @@ async def accept_offer(offer_id: UUID, user: Admin, db: Db):
 @router.post("/applications/{application_id}/hire")
 async def hire(application_id: UUID, body: HireIn, user: Admin, db: Db):
     return await _svc(db).hire(_sid(user), user.id, application_id, body.model_dump())
+
+
+@router.get("/training/programs")
+async def list_programs(user: Admin, db: Db):
+    return await _svc(db).list_programs(_sid(user))
+
+
+@router.get("/training/enrolments")
+async def list_enrolments(user: Admin, db: Db):
+    return await _svc(db).list_enrolments(_sid(user))
+
+
+@router.get("/training/certifications")
+async def list_certifications(user: Admin, db: Db):
+    return await _svc(db).list_certifications(_sid(user))
 
 
 @router.post("/training-programs", status_code=201)
@@ -308,6 +333,11 @@ async def my_roster(user: Self, db: Db, date_from: date | None = None, date_to: 
     return await _svc(db).list_roster(_sid(user), user_id=user.id, date_from=date_from, date_to=date_to)
 
 
+@router.get("/overtime")
+async def overtime_alias(user: Admin, db: Db, date_from: date | None = None, date_to: date | None = None):
+    return await _svc(db).overtime(_sid(user), date_from, date_to)
+
+
 @router.get("/roster/overtime")
 async def overtime(user: Admin, db: Db, date_from: date | None = None, date_to: date | None = None):
     return await _svc(db).overtime(_sid(user), date_from, date_to)
@@ -316,6 +346,11 @@ async def overtime(user: Admin, db: Db, date_from: date | None = None, date_to: 
 @router.get("/roster")
 async def list_roster(user: Admin, db: Db, date_from: date | None = None, date_to: date | None = None):
     return await _svc(db).list_roster(_sid(user), date_from=date_from, date_to=date_to)
+
+
+@router.get("/assets")
+async def list_assets(user: Admin, db: Db):
+    return await _svc(db).list_assets(_sid(user))
 
 
 @router.post("/assets", status_code=201)
@@ -336,6 +371,11 @@ async def return_asset(issue_id: UUID, body: ReturnIn, user: Admin, db: Db):
 @router.get("/assets/me")
 async def my_assets(user: Self, db: Db):
     return await _svc(db).my_assets(_sid(user), user.id)
+
+
+@router.get("/exits")
+async def list_exits(user: Admin, db: Db):
+    return await _svc(db).list_exits(_sid(user))
 
 
 @router.post("/exits", status_code=201)

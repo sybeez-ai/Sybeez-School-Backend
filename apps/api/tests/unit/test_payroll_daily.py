@@ -83,7 +83,9 @@ def test_lop_audit_names_the_source():
     assert sources["2026-10-01"] == "ABSENT"
     assert sources["2026-10-02"] == "HALF_DAY"
     assert sources["2026-10-03"] == "UNPAID_LEAVE"
-    assert sources["2026-10-06"] == "UNMARKED_WORKING_DAY"
+    assert sources["2026-10-06"] == "UNMARKED_NOT_DEDUCTED"
+    deducted = lop_audit(marks, days, deduct_unmarked=True)
+    assert {row["date"]: row["source"] for row in deducted}["2026-10-06"] == "UNMARKED_WORKING_DAY"
     assert "2026-10-04" not in sources
     assert "2026-10-05" not in sources
 

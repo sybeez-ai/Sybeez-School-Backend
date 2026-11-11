@@ -24,9 +24,11 @@ from src.modules.employees.router import router as employees_router
 from src.modules.enrollments.router import router as enrollments_router
 from src.modules.exams.router import router as exams_router
 from src.modules.fee_profile.router import router as fee_profile_router
+from src.modules.fees.payments_alias import router as payments_alias_router
 from src.modules.fees.router import router as fees_router
 from src.modules.finance.desk_router import desk as finance_desk_router
 from src.modules.finance.expenses import router as finance_expenses_router
+from src.modules.finance.books import router as finance_books_router
 from src.modules.finance.router import router as finance_router
 from src.modules.grades.router import router as grades_router
 from src.modules.features.gate import feature_gate
@@ -125,8 +127,10 @@ api_router.include_router(assignments_router, prefix=API_V1_PREFIX, dependencies
 api_router.include_router(attendance_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
 api_router.include_router(exams_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
 api_router.include_router(fees_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
+api_router.include_router(payments_alias_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
 api_router.include_router(fee_profile_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
 api_router.include_router(finance_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
+api_router.include_router(finance_books_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
 api_router.include_router(finance_expenses_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
 api_router.include_router(finance_desk_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
 api_router.include_router(school_admin_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])

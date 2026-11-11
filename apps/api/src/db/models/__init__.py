@@ -4,6 +4,7 @@ from src.db.models.attendance import Attendance, AttendanceAuditLog, AttendanceS
 from src.db.models.attendance_digest_log import AttendanceDigestLog
 from src.db.models.audit_log import AuditLog, SecurityEvent
 from src.db.models.bookstore import BookstoreItem, BookstoreOrder, BookstoreWishlist
+from src.db.models import books as _books  # noqa: F401  (registers books + ops tables)
 from src.db.models.leave_request import LeaveRequest
 from src.db.models.class_ import ClassRoom
 from src.db.models.communication import (

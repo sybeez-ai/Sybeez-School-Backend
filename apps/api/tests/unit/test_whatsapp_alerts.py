@@ -266,9 +266,10 @@ def test_missing_credentials_stay_mock_with_admin_status():
         whatsapp_verify_token="",
     )
     status = provider_status(blank)
-    assert status["whatsapp_status"] == WHATSAPP_NOT_CONFIGURED
-    assert whatsapp_admin_status(blank) == "WhatsApp not configured"
+    assert status["whatsapp_status"] == "WhatsApp parent messaging is off"
     assert effective_whatsapp_provider(blank) == "mock"
+    turned_on = SimpleNamespace(**blank.__dict__, whatsapp_parent_cloud_enabled=True)
+    assert whatsapp_admin_status(turned_on) == WHATSAPP_NOT_CONFIGURED
     assert "WHATSAPP_ACCESS_TOKEN" in status["whatsapp_missing"]
     assert "WHATSAPP_BUSINESS_ACCOUNT_ID" in status["whatsapp_missing"]
 
@@ -282,8 +283,11 @@ def test_missing_credentials_stay_mock_with_admin_status():
             "whatsapp_verify_token": "verify",
         }
     )
-    assert provider_status(ready)["whatsapp_status"] == "WhatsApp setup is on hold"
+    assert provider_status(ready)["whatsapp_status"] == "WhatsApp parent messaging is off"
     assert effective_whatsapp_provider(ready) == "mock"
+    ready_on = SimpleNamespace(**ready.__dict__, whatsapp_parent_cloud_enabled=True)
+    assert provider_status(ready_on)["whatsapp_status"] == "configured"
+    assert effective_whatsapp_provider(ready_on) == "meta_cloud"
 
 
 def test_template_submit_skips_meta_when_unconfigured():
@@ -361,7 +365,7 @@ def test_settings_read_whatsapp_from_env(monkeypatch):
     assert settings.whatsapp_business_account_id == "waba-from-env"
     assert settings.whatsapp_app_secret == "secret-from-env"
     assert settings.whatsapp_verify_token == "verify-from-env"
-    assert provider_status(settings)["whatsapp_status"] == "WhatsApp setup is on hold"
+    assert provider_status(settings)["whatsapp_status"] == "WhatsApp parent messaging is off"
     get_settings.cache_clear()
 
 

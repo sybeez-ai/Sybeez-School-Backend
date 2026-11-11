@@ -531,12 +531,15 @@ class DayMark:
     paid_leave: bool = False
 
 
-def lop_days(marks: list[DayMark], workable: list[date]) -> Decimal:
-    return sum((Decimal(row["lop_days"]) for row in lop_audit(marks, workable)), ZERO)
+def lop_days(marks: list[DayMark], workable: list[date], *, deduct_unmarked: bool = False) -> Decimal:
+    return sum((Decimal(row["lop_days"]) for row in lop_audit(marks, workable, deduct_unmarked=deduct_unmarked)), ZERO)
 
 
-def lop_audit(marks: list[DayMark], workable: list[date]) -> list[dict]:
-    """One row per loss-of-pay day, naming where the deduction came from."""
+def lop_audit(marks: list[DayMark], workable: list[date], *, deduct_unmarked: bool = False) -> list[dict]:
+    """One row per loss-of-pay day, naming where the deduction came from.
+
+    Unmarked days are listed but not deducted unless deduct_unmarked is set.
+    """
     by_day = {mark.day: mark for mark in marks}
     rows: list[dict] = []
     for day in workable:
@@ -546,6 +549,17 @@ def lop_audit(marks: list[DayMark], workable: list[date]) -> list[dict]:
         if status == "PRESENT" or (status == "LEAVE" and paid_leave):
             continue
         if mark is None or status == "UNMARKED":
+            if not deduct_unmarked:
+                rows.append(
+                    {
+                        "date": day.isoformat(),
+                        "status": "UNMARKED",
+                        "source": "UNMARKED_NOT_DEDUCTED",
+                        "lop_days": "0",
+                        "flagged": True,
+                    }
+                )
+                continue
             source, lost = "UNMARKED_WORKING_DAY", "1"
         elif status == "HALF_DAY":
             source, lost = "HALF_DAY", "0.5"
@@ -685,6 +699,7 @@ class PayContext:
     declared_80d: Decimal = ZERO
     other_chapter_vi: Decimal = ZERO
     lop_base: str = "BASIC"  # BASIC | GROSS
+    deduct_unmarked: bool = False
     rounding: str = "NEAREST_RUPEE"
     arrears: Decimal = ZERO
     reimbursements: Decimal = ZERO
@@ -739,7 +754,7 @@ def esi_contribution_period(day: date) -> tuple[date, date]:
 def compute_pay(ctx: PayContext) -> PayResult:
     days = working_days(ctx.period_start, ctx.period_end, ctx.weekly, ctx.holidays, ctx.branch_name)
     workable = Decimal(len(days))
-    lost = lop_days(ctx.marks, days) if days else ZERO
+    lost = lop_days(ctx.marks, days, deduct_unmarked=ctx.deduct_unmarked) if days else ZERO
     if lost > workable:
         lost = workable
     paid = workable - lost
@@ -934,7 +949,7 @@ def compute_pay(ctx: PayContext) -> PayResult:
         pt=pt_amount,
         tds=tax,
         form16=form16_lines(tax, employee_name=ctx.employee_name, pan=ctx.pan, financial_year=fy),
-        lop_detail=lop_audit(ctx.marks, days),
+        lop_detail=lop_audit(ctx.marks, days, deduct_unmarked=ctx.deduct_unmarked),
     )
 
 

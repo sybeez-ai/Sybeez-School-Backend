@@ -11,10 +11,8 @@ from typing import Any
 
 WHATSAPP_NOT_CONFIGURED = "WhatsApp not configured"
 CONFIGURED = "configured"
-# TODO(silver): Meta verification, number migration, and template approval are unfinished.
-# Keep this True until Silver says parent WhatsApp may send. Nothing is posted to Meta while it is set.
-WHATSAPP_SENDING_ON_HOLD = True
-WHATSAPP_ON_HOLD = "WhatsApp setup is on hold"
+# Process flag. Stays false until Silver enables parent WhatsApp and sets the phone number id.
+WHATSAPP_OFF = "WhatsApp parent messaging is off"
 
 WHATSAPP_FIELDS = (
     ("whatsapp_cloud_access_token", "WHATSAPP_ACCESS_TOKEN"),
@@ -45,11 +43,15 @@ def whatsapp_templates_ready(settings: Any) -> bool:
     return all(_value(settings, field) for field in WHATSAPP_TEMPLATE_FIELDS)
 
 
+def parent_cloud_enabled(settings: Any) -> bool:
+    return bool(getattr(settings, "whatsapp_parent_cloud_enabled", False))
+
+
 def whatsapp_admin_status(settings: Any) -> str:
+    if not parent_cloud_enabled(settings):
+        return WHATSAPP_OFF
     if missing_names(settings, WHATSAPP_FIELDS):
         return WHATSAPP_NOT_CONFIGURED
-    if WHATSAPP_SENDING_ON_HOLD:
-        return WHATSAPP_ON_HOLD
     return CONFIGURED
 
 
@@ -57,7 +59,7 @@ def effective_whatsapp_provider(settings: Any) -> str:
     provider = str(getattr(settings, "whatsapp_provider", "") or "mock").strip().lower() or "mock"
     if provider in {"meta", "whatsapp_cloud"}:
         provider = "meta_cloud"
-    if provider == "meta_cloud" and (WHATSAPP_SENDING_ON_HOLD or not whatsapp_send_ready(settings)):
+    if provider == "meta_cloud" and (not parent_cloud_enabled(settings) or not whatsapp_send_ready(settings)):
         return "mock"
     return provider
 
