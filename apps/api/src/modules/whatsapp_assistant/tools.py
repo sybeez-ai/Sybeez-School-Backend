@@ -29,6 +29,7 @@ from src.db.models import (
 from src.db.models.daily_lesson import DailyLesson
 from src.db.models.exam import Exam
 from src.modules.whatsapp_assistant.scope import ToolQuery
+from src.shared.enums import HomeworkStatus
 
 _VISIBLE_PAY = ("PUBLISHED", "PAID")
 
@@ -47,13 +48,30 @@ def attendance_statement(query: ToolQuery):
 
 
 def homework_statement(query: ToolQuery):
-    stmt = select(Homework.title, Homework.due_at, ClassRoom.name.label("class_name")).join(
-        ClassRoom, ClassRoom.id == Homework.class_id
-    )
-    stmt = stmt.where(Homework.school_id == query.school_id, Homework.status == "PUBLISHED")
+    stmt = select(
+        Homework.title,
+        Homework.due_at,
+        Homework.status,
+        ClassRoom.name.label("class_name"),
+    ).join(ClassRoom, ClassRoom.id == Homework.class_id)
+    stmt = stmt.where(Homework.school_id == query.school_id)
+    if _published_homework_only(query):
+        stmt = stmt.where(Homework.status == HomeworkStatus.PUBLISHED.value)
     if query.class_ids is not None:
         stmt = stmt.where(Homework.class_id.in_(query.class_ids))
     return stmt.order_by(Homework.due_at.desc().nullslast()).limit(10)
+
+
+def _published_homework_only(query: ToolQuery) -> bool:
+    """Parents and students only ever see published homework, even if a caller turns the flag off."""
+    return query.published_only or query.role in {"PARENT", "STUDENT"}
+
+
+def _visible_homework(rows, query: ToolQuery):
+    if not _published_homework_only(query):
+        return rows
+    published = HomeworkStatus.PUBLISHED.value
+    return [row for row in rows if getattr(row, "status", None) == published]
 
 
 def timetable_statement(query: ToolQuery):
@@ -195,7 +213,7 @@ async def run_tool(db: AsyncSession, query: ToolQuery, arguments: dict | None = 
         rows = (await db.execute(attendance_statement(query))).all()
         return {"text": _lines(rows, lambda row: f"{row.attended_on}: {row.status}")}
     if query.tool == "homework":
-        rows = (await db.execute(homework_statement(query))).all()
+        rows = _visible_homework((await db.execute(homework_statement(query))).all(), query)
         return {
             "text": _lines(
                 rows,

@@ -6,22 +6,33 @@ import hashlib
 import hmac
 import json
 import uuid
+from dataclasses import replace
 
 import pytest
 from sqlalchemy.dialects import postgresql
 
 from src.core.config import Settings, get_settings
+from src.db.models.whatsapp_assistant import WhatsAppMessage, WhatsAppSession, WhatsAppUsage
+from src.modules.alerts.webhooks import InboundUpdate
 from src.modules.whatsapp_assistant.conversation import (
     ChildChoice,
     SessionState,
     UNKNOWN_REPLY,
     decide_turn,
 )
-from src.modules.whatsapp_assistant.identity import PhoneHit, hash_link_code, link_code_matches, matching_profiles, to_e164
+from src.modules.whatsapp_assistant.identity import (
+    PhoneHit,
+    ProfileChoice,
+    hash_link_code,
+    link_code_matches,
+    matching_profiles,
+    to_e164,
+)
 from src.modules.whatsapp_assistant.planner import ToolCall, _calls_from_message, allowed_tools, local_plan, plan_tools
 from src.modules.whatsapp_assistant.scope import DataScope, build_tool_query, transcript_school
 from src.modules.whatsapp_assistant.sender import deliver, sending_decision, text_payload
-from src.modules.whatsapp_assistant.tools import attendance_statement
+from src.modules.whatsapp_assistant.service import WhatsAppAssistant
+from src.modules.whatsapp_assistant.tools import attendance_statement, homework_statement, run_tool
 
 SCHOOL_A = uuid.uuid4()
 SCHOOL_B = uuid.uuid4()
@@ -434,4 +445,168 @@ async def test_webhook_verifies_signature_and_queues_without_sending(monkeypatch
     assert queued[0][1]["body"] == body.decode()
     challenge = await meta_verify(hub_mode="subscribe", hub_verify_token="test-verify", hub_challenge="12345")
     assert challenge.body == b"12345"
+    get_settings.cache_clear()
+
+
+class _MemoryDb:
+    """Records objects the assistant stores. Selects come back empty, which is a new month."""
+
+    def __init__(self):
+        self.added: list = []
+
+    def add(self, obj) -> None:
+        self.added.append(obj)
+
+    async def execute(self, _statement):
+        return _EmptyResult()
+
+    async def get(self, _model, _key):
+        return None
+
+    async def flush(self) -> None:
+        return None
+
+
+class _EmptyResult:
+    def scalar_one_or_none(self):
+        return None
+
+    def first(self):
+        return None
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return []
+
+
+def _statement_values(statement) -> tuple[str, list]:
+    compiled = statement.compile(dialect=postgresql.dialect())
+    values: list = []
+    for value in compiled.params.values():
+        if isinstance(value, (list, tuple, set, frozenset)):
+            values.extend(value)
+        else:
+            values.append(value)
+    return str(compiled), values
+
+
+def test_parent_homework_query_excludes_drafts():
+    query = build_tool_query("homework", _parent_scope(), {})
+    assert query.denied is None
+    assert query.role == "PARENT"
+    assert query.published_only is True
+    sql, values = _statement_values(homework_statement(query))
+    assert "homework.status" in sql
+    assert "PUBLISHED" in values
+    assert "DRAFT" not in values
+    assert "DRAFT" not in sql
+    forced = homework_statement(replace(query, published_only=False))
+    forced_sql, forced_values = _statement_values(forced)
+    assert "PUBLISHED" in forced_values
+    assert "DRAFT" not in forced_sql
+
+
+class _HomeworkRow:
+    def __init__(self, title: str, status: str, class_name: str = "5A"):
+        self.title = title
+        self.status = status
+        self.class_name = class_name
+        self.due_at = None
+
+
+class _HomeworkDb:
+    def __init__(self, rows):
+        self.rows = rows
+
+    async def execute(self, _statement):
+        return self
+
+    def all(self):
+        return self.rows
+
+
+@pytest.mark.asyncio
+async def test_fallback_planner_parent_reply_omits_draft_homework():
+    """The AI planner's ValueError path still answers from the homework tool, and that reply stays published-only."""
+
+    async def post(_url, _headers, _body):
+        raise ValueError("ai service request failed")
+
+    calls = await plan_tools(
+        [{"role": "user", "content": "what homework do I have"}],
+        "AI assistant",
+        include_leave=False,
+        provider="ai_service",
+        ai_service_url="http://ai.invalid",
+        ai_service_token="test-token",
+        post=post,
+    )
+    assert calls == [ToolCall("homework", {})]
+    query = replace(build_tool_query(calls[0].name, _parent_scope(), calls[0].arguments), published_only=False)
+    sql, values = _statement_values(homework_statement(query))
+    assert "PUBLISHED" in values
+    assert "DRAFT" not in sql
+    reply = await run_tool(
+        _HomeworkDb(
+            [
+                _HomeworkRow("Fractions worksheet", "PUBLISHED"),
+                _HomeworkRow("Secret draft quiz", "DRAFT"),
+                _HomeworkRow("Closed chapter test", "CLOSED"),
+            ]
+        ),
+        query,
+    )
+    assert "Fractions worksheet" in reply["text"]
+    assert "Secret draft quiz" not in reply["text"]
+    assert "Closed chapter test" not in reply["text"]
+
+
+@pytest.mark.asyncio
+async def test_first_message_of_the_month_from_a_known_parent_is_stored(monkeypatch):
+    """A matched parent has a school, so the month's usage row is created on this message."""
+    monkeypatch.setenv("WHATSAPP_SENDING_ENABLED", "false")
+    get_settings.cache_clear()
+    parent = ProfileChoice(PARENT, SCHOOL_A, "PARENT", "Priya — Parent — Green Valley")
+    child = ChildChoice(CHILD, "Aarav — 5A")
+    db = _MemoryDb()
+    assistant = WhatsAppAssistant(db)
+
+    async def profiles(_phone):
+        return [parent]
+
+    async def children(_user_id, _school_id):
+        return [child]
+
+    async def opted_out(_phone):
+        return False
+
+    monkeypatch.setattr(assistant, "_profiles", profiles)
+    monkeypatch.setattr(assistant, "_children", children)
+    monkeypatch.setattr(assistant, "_opted_out", opted_out)
+
+    await assistant.handle_inbound(
+        InboundUpdate(provider_message_id="wamid.first-of-month", from_phone="919000000000", body="hello", opt_out=False)
+    )
+
+    usage = [row for row in db.added if isinstance(row, WhatsAppUsage)]
+    assert len(usage) == 1
+    assert usage[0].school_id == SCHOOL_A
+    assert usage[0].year_month
+    assert usage[0].inbound_count == 1
+    assert usage[0].generated_count == 1
+    assert usage[0].sent_count == 0
+    assert usage[0].suppressed_count == 1
+    sessions = [row for row in db.added if isinstance(row, WhatsAppSession)]
+    assert len(sessions) == 1
+    assert sessions[0].school_id == SCHOOL_A
+    assert sessions[0].user_id == PARENT
+    assert sessions[0].role == "PARENT"
+    messages = [row for row in db.added if isinstance(row, WhatsAppMessage)]
+    assert [row.direction for row in messages] == ["in", "out"]
+    assert messages[0].body == "hello"
+    assert messages[0].user_id == PARENT
+    assert messages[1].school_id == SCHOOL_A
+    assert messages[1].body
     get_settings.cache_clear()
