@@ -8,7 +8,7 @@ from typing import Annotated
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,6 +16,7 @@ from src.core.exceptions import AppError, NotFoundError
 from src.db.models.books import (
     BookAsset,
     BookBankAccount,
+    BookBankLine,
     BookPurchase,
     BookVendor,
     JournalEntry,
@@ -97,6 +98,28 @@ class BankIn(BaseModel):
     account_last4: str | None = Field(default=None, max_length=4)
     ifsc: str | None = None
     opening_balance: Decimal = Decimal("0")
+
+
+class BankLineIn(BaseModel):
+    bank_account_id: UUID
+    line_date: date
+    description: str = Field(min_length=1, max_length=500)
+    debit: Decimal = Field(default=Decimal("0"), ge=0)
+    credit: Decimal = Field(default=Decimal("0"), ge=0)
+    reference: str | None = Field(default=None, max_length=64)
+    balance: Decimal | None = None
+
+    @model_validator(mode="after")
+    def one_side(self):
+        if self.debit > 0 and self.credit > 0:
+            raise ValueError("A statement line cannot be both a debit and a credit")
+        if self.debit == 0 and self.credit == 0:
+            raise ValueError("A statement line needs a debit or a credit")
+        return self
+
+
+class BooksSettingsIn(BaseModel):
+    financial_year_start_month: int = Field(ge=1, le=12)
 
 
 class TaxIn(BaseModel):
@@ -301,6 +324,32 @@ class Books:
     async def banks(self) -> list[dict]:
         return await self._list(BookBankAccount, BookBankAccount.name)
 
+    async def bank_lines(self, bank_account_id: UUID | None) -> list[dict]:
+        stmt = select(BookBankLine).where(BookBankLine.school_id == self.school_id)
+        if bank_account_id is not None:
+            stmt = stmt.where(BookBankLine.bank_account_id == bank_account_id)
+        rows = (await self.db.execute(stmt.order_by(BookBankLine.line_date.desc()).limit(300))).scalars().all()
+        return [_row(row) for row in rows]
+
+    async def add_bank_line(self, data: BankLineIn) -> dict:
+        account = await self.db.get(BookBankAccount, data.bank_account_id)
+        if account is None or account.school_id != self.school_id:
+            raise NotFoundError("Bank account not found")
+        row = BookBankLine(
+            id=uuid4(),
+            school_id=self.school_id,
+            bank_account_id=account.id,
+            line_date=data.line_date,
+            description=data.description.strip(),
+            debit=_money(data.debit),
+            credit=_money(data.credit),
+            reference=(data.reference or "").strip() or None,
+            balance=_money(data.balance) if data.balance is not None else None,
+        )
+        self.db.add(row)
+        await self.db.flush()
+        return _row(row)
+
     async def add_bank(self, data: BankIn) -> dict:
         row = BookBankAccount(
             id=uuid4(), school_id=self.school_id, name=data.name.strip(), bank_name=data.bank_name.strip(),
@@ -438,6 +487,51 @@ async def list_banks(svc: Annotated[FinanceService, Depends(_svc)]):
 async def create_bank(body: BankIn, svc: Annotated[FinanceService, Depends(_svc)]):
     assert_finance(svc.role, "expense.approve")
     return await _books(svc).add_bank(body)
+
+
+@router.get("/bank-lines")
+async def list_bank_lines(
+    svc: Annotated[FinanceService, Depends(_svc)],
+    bank_account_id: UUID | None = None,
+):
+    assert_finance(svc.role, "ledger.read")
+    return await _books(svc).bank_lines(bank_account_id)
+
+
+@router.post("/bank-lines", status_code=201)
+async def create_bank_line(body: BankLineIn, svc: Annotated[FinanceService, Depends(_svc)]):
+    assert_finance(svc.role, "expense.approve")
+    return await _books(svc).add_bank_line(body)
+
+
+@router.get("/settings")
+async def books_settings(svc: Annotated[FinanceService, Depends(_svc)]):
+    """Default ledger accounts and the school financial year. The year is the fee setting."""
+    assert_finance(svc.role, "ledger.read")
+    from src.modules.fees.exports import fee_books_view, financial_year_label
+    from src.modules.fees.service import FeeService
+
+    fee = await FeeService(svc.db).get_or_create_settings(svc.school_id)
+    view = fee_books_view(fee)
+    years = await svc.list_years()
+    return {
+        "financial_year_start_month": view["financial_year_start_month"],
+        "financial_year": financial_year_label(date.today(), view["financial_year_start_month"]),
+        "default_accounts": [{"code": code, "name": name, "kind": kind} for code, name, kind in DEFAULT_ACCOUNTS],
+        "years": [year.model_dump(mode="json") for year in years],
+    }
+
+
+@router.patch("/settings")
+async def update_books_settings(body: BooksSettingsIn, svc: Annotated[FinanceService, Depends(_svc)]):
+    assert_finance(svc.role, "expense.approve")
+    from src.modules.fees.schemas import FeeSettingsUpdate
+    from src.modules.fees.service import FeeService
+
+    await FeeService(svc.db).update_settings(
+        svc.school_id, FeeSettingsUpdate(financial_year_start_month=body.financial_year_start_month)
+    )
+    return await books_settings(svc)
 
 
 @router.get("/tax-items")

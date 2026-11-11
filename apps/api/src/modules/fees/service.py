@@ -1406,10 +1406,18 @@ class FeeService:
             recent_payments=recent,
         )
 
+    def _settings_out(self, row) -> FeeSettingsOut:
+        from src.modules.fees.exports import fee_books_view
+
+        out = FeeSettingsOut.model_validate(row)
+        for key, value in fee_books_view(row).items():
+            setattr(out, key, value)
+        return out
+
     async def get_settings(self, school_id: UUID) -> FeeSettingsOut:
         s = await self.get_or_create_settings(school_id)
         await self.db.commit()
-        return FeeSettingsOut.model_validate(s)
+        return self._settings_out(s)
 
     async def update_settings(
         self, school_id: UUID, data: FeeSettingsUpdate
@@ -1422,13 +1430,20 @@ class FeeService:
             "gateway_provider",
             "gateway_mode",
             "gateway_public_key",
+            "tally_ledger_map",
+            "section_80c_template",
+            "section_80c_signatory",
+            "section_80c_heads",
+            "financial_year_start_month",
         ):
+            if field not in data.model_fields_set:
+                continue
             val = getattr(data, field)
             if val is not None:
                 setattr(s, field, val)
         await self.db.commit()
         await self.db.refresh(s)
-        return FeeSettingsOut.model_validate(s)
+        return self._settings_out(s)
 
     async def list_late_rules(self, school_id: UUID) -> list[LateFeeRuleOut]:
         rows = (

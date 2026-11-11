@@ -5,14 +5,20 @@ from decimal import Decimal
 
 import pytest
 
+from pydantic import ValidationError
+
 from src.modules.fees.exports import (
     DEFAULT_80C,
+    DEFAULT_TALLY_MAP,
+    fee_books_view,
     financial_year_label,
     ledger_name,
     render_80c,
     tally_envelope,
     tally_voucher_xml,
 )
+from src.modules.fees.schemas import FeeSettingsUpdate
+from src.modules.finance.books import BankLineIn, router as books_router
 from src.modules.fees.gateways.razorpay import RazorpayGateway
 from src.modules.finance.books import balanced
 from src.modules.payroll.calc import DayMark, lop_audit
@@ -40,6 +46,44 @@ def test_tally_default_ledgers_and_xml():
     assert "<LEDGERNAME>Cash</LEDGERNAME>" in xml
     assert "<LEDGERNAME>Tuition Fees</LEDGERNAME>" in xml
     assert "100.00" in xml
+
+
+def test_fee_settings_accept_books_fields_and_blank_uses_defaults():
+    body = FeeSettingsUpdate(
+        tally_ledger_map={"tuition": "School Fees"},
+        section_80c_template="Paid {amount}.",
+        section_80c_signatory=" Head ",
+        section_80c_heads=["tuition", "TUITION"],
+        financial_year_start_month=4,
+    )
+    assert body.tally_ledger_map == {"TUITION": "School Fees"}
+    assert body.section_80c_signatory == "Head"
+    assert body.section_80c_heads == ["TUITION"]
+    with pytest.raises(ValidationError):
+        FeeSettingsUpdate(financial_year_start_month=13)
+    with pytest.raises(ValidationError):
+        FeeSettingsUpdate(section_80c_signatory="  ")
+    with pytest.raises(ValidationError):
+        FeeSettingsUpdate(section_80c_heads=[])
+    shown = fee_books_view(type("S", (), {})())
+    assert shown["tally_ledger_map"]["TUITION"] == DEFAULT_TALLY_MAP["TUITION"]
+    assert "80C" in shown["section_80c_template"]
+    assert shown["section_80c_heads"] == ["TUITION"]
+    assert shown["financial_year_start_month"] == 4
+
+
+def test_bank_lines_and_books_settings_routes_exist():
+    paths = {route.path for route in books_router.routes}
+    assert "/finance/bank-lines" in paths
+    assert "/finance/settings" in paths
+    with pytest.raises(ValidationError):
+        BankLineIn(
+            bank_account_id="00000000-0000-0000-0000-000000000001",
+            line_date=date(2026, 4, 2),
+            description="Fee",
+            debit=Decimal("10"),
+            credit=Decimal("10"),
+        )
 
 
 def test_indian_financial_year_and_80c_wording():
