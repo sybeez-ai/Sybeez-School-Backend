@@ -389,7 +389,12 @@ async def test_ai_service_tool_call_is_filtered_and_failures_use_the_local_plan(
     assert fallback == [ToolCall("homework", {})]
 
 
-def test_webhook_verifies_signature_and_queues_without_sending(client, monkeypatch):
+@pytest.mark.asyncio
+async def test_webhook_verifies_signature_and_queues_without_sending(monkeypatch):
+    """Call the handlers directly so the suite's event loop is not closed by TestClient."""
+    from src.core.exceptions import UnauthorizedError
+    from src.modules.alerts.router import meta_verify, meta_webhook
+
     queued = []
 
     async def fake_enqueue(job_type, payload):
@@ -402,21 +407,31 @@ def test_webhook_verifies_signature_and_queues_without_sending(client, monkeypat
     monkeypatch.setattr("src.core.jobs.enqueue_job", fake_enqueue)
     body = json.dumps({"object": "whatsapp_business_account", "entry": []}).encode()
     good = "sha256=" + hmac.new(b"test-app-secret", body, hashlib.sha256).hexdigest()
-    rejected = client.post("/api/v1/webhooks/whatsapp/meta", content=body, headers={"X-Hub-Signature-256": "sha256=deadbeef"})
-    assert rejected.status_code == 401
+
+    async def receive():
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    def make_request(signature: str):
+        from starlette.requests import Request
+
+        return Request(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/api/v1/webhooks/whatsapp/meta",
+                "headers": [(b"x-hub-signature-256", signature.encode())],
+                "query_string": b"",
+            },
+            receive,
+        )
+
+    with pytest.raises(UnauthorizedError):
+        await meta_webhook(make_request("sha256=deadbeef"))
     assert queued == []
-    accepted = client.post(
-        "/api/v1/webhooks/whatsapp/meta",
-        content=body,
-        headers={"X-Hub-Signature-256": good, "Content-Type": "application/json"},
-    )
-    assert accepted.status_code == 200
+    accepted = await meta_webhook(make_request(good))
+    assert accepted == {"ok": True}
     assert queued[0][0] == "whatsapp_assistant"
     assert queued[0][1]["body"] == body.decode()
-    challenge = client.get(
-        "/api/v1/webhooks/whatsapp/meta",
-        params={"hub.mode": "subscribe", "hub.verify_token": "test-verify", "hub.challenge": "12345"},
-    )
-    assert challenge.status_code == 200
-    assert challenge.text == "12345"
+    challenge = await meta_verify(hub_mode="subscribe", hub_verify_token="test-verify", hub_challenge="12345")
+    assert challenge.body == b"12345"
     get_settings.cache_clear()
