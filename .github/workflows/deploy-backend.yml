@@ -296,7 +296,10 @@ jobs:
               echo "Container $container is not in $task_def"
               exit 1
             fi
-            if [ "$current" -lt "$minimum" ]; then
+            # Budget is one task per service. Auto-sleep may set this to 0;
+            # a deploy puts it back to exactly one, including when an older
+            # deploy had raised the API to 2.
+            if [ "$current" != "$minimum" ]; then
               aws ecs update-service --cluster "$ECS_CLUSTER" --service "$service" \
                 --desired-count "$minimum" >/dev/null
             fi
@@ -306,7 +309,7 @@ jobs:
               read -r running pending desired <<<"$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$service" \
                 --query 'services[0].[runningCount,pendingCount,desiredCount]' --output text)"
               echo "$service running=$running pending=$pending desired=$desired"
-              if [ "$running" -ge "$minimum" ] && [ "$pending" = "0" ]; then
+              if [ "$running" = "$minimum" ] && [ "$pending" = "0" ] && [ "$desired" = "$minimum" ]; then
                 set +e
                 aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$service"
                 stable=$?
@@ -379,9 +382,12 @@ jobs:
             after=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$service" \
               --query 'services[0].desiredCount' --output text)
             echo "$service desiredCount=$after"
-            test "$after" -ge "$minimum"
+            aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$service" \
+              --query 'services[0].{desired:desiredCount,running:runningCount,pending:pendingCount,launchType:launchType,capacity:capacityProviderStrategy}' \
+              --output json
+            test "$after" = "$minimum"
           }
-          ensure "$API_SERVICE" 2 "$API_CONTAINER"
+          ensure "$API_SERVICE" 1 "$API_CONTAINER"
           ensure "$WORKER_SERVICE" 1 "$WORKER_CONTAINER"
 
       - name: Provision the platform super admin
