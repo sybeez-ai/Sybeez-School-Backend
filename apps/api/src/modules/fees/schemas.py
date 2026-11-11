@@ -2,7 +2,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class FeeCategoryCreate(BaseModel):
@@ -384,6 +384,11 @@ class FeeSettingsOut(BaseModel):
     bank_ifsc: str | None = None
     beneficiary_name: str | None = None
     legal_business_name: str | None = None
+    tally_ledger_map: dict[str, str] = {}
+    section_80c_template: str = ""
+    section_80c_signatory: str = "Principal"
+    section_80c_heads: list[str] = ["TUITION"]
+    financial_year_start_month: int = 4
 
 
 class FeeSettingsUpdate(BaseModel):
@@ -393,6 +398,64 @@ class FeeSettingsUpdate(BaseModel):
     gateway_provider: str | None = None
     gateway_mode: str | None = None
     gateway_public_key: str | None = None
+    tally_ledger_map: dict[str, str] | None = None
+    section_80c_template: str | None = Field(default=None, max_length=8000)
+    section_80c_signatory: str | None = Field(default=None, max_length=160)
+    section_80c_heads: list[str] | None = None
+    financial_year_start_month: int | None = Field(default=None, ge=1, le=12)
+
+    @field_validator("tally_ledger_map")
+    @classmethod
+    def _ledger_map(cls, value: dict[str, str] | None) -> dict[str, str] | None:
+        if value is None:
+            return None
+        if len(value) > 40:
+            raise ValueError("At most 40 ledger names")
+        cleaned: dict[str, str] = {}
+        for key, name in value.items():
+            code = str(key).strip().upper()
+            ledger = str(name).strip()
+            if not code or len(code) > 32 or not code.replace("_", "").isalnum():
+                raise ValueError("Ledger codes are short names like TUITION")
+            if not ledger or len(ledger) > 120:
+                raise ValueError("Each ledger name must be 1 to 120 characters")
+            cleaned[code] = ledger
+        return cleaned
+
+    @field_validator("section_80c_signatory")
+    @classmethod
+    def _signatory(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        if not text:
+            raise ValueError("The signatory name cannot be blank")
+        return text
+
+    @field_validator("section_80c_heads")
+    @classmethod
+    def _heads(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        if len(value) > 40:
+            raise ValueError("At most 40 fee heads")
+        cleaned: list[str] = []
+        for item in value:
+            code = str(item).strip().upper()
+            if not code or len(code) > 32 or not code.replace("_", "").isalnum():
+                raise ValueError("Fee heads are short names like TUITION")
+            if code not in cleaned:
+                cleaned.append(code)
+        if not cleaned:
+            raise ValueError("Choose at least one fee head for the 80C certificate")
+        return cleaned
+
+    @field_validator("section_80c_template")
+    @classmethod
+    def _wording(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip()
 
 
 class LateFeeRuleIn(BaseModel):

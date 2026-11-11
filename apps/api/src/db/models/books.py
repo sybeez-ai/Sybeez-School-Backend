@@ -92,6 +92,21 @@ class BookBankAccount(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     active: Mapped[bool] = mapped_column(nullable=False, default=True)
 
 
+class BookBankLine(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """One line from a bank statement, always tied to one school bank account."""
+
+    __tablename__ = "book_bank_lines"
+
+    school_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True)
+    bank_account_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("book_bank_accounts.id", ondelete="CASCADE"), nullable=False, index=True)
+    line_date: Mapped[date] = mapped_column(Date, nullable=False)
+    description: Mapped[str] = mapped_column(String(500), nullable=False)
+    debit: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=Decimal("0"))
+    credit: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=Decimal("0"))
+    reference: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    balance: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
+
+
 class TaxItem(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "tax_items"
     __table_args__ = (UniqueConstraint("school_id", "code", name="uq_tax_items_code"),)

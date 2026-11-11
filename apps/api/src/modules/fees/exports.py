@@ -49,6 +49,25 @@ def financial_year_label(day: date, start_month: int = 4) -> str:
     return f"{start_year}-{str(start_year + 1)[-2:]}"
 
 
+def fee_books_view(settings) -> dict:
+    """What the fee settings screen should show. Blank columns use the built-in defaults."""
+    stored = getattr(settings, "tally_ledger_map", None) or {}
+    cleaned = {str(key).upper(): str(value) for key, value in stored.items() if value}
+    template = (getattr(settings, "section_80c_template", None) or "").strip()
+    signatory = (getattr(settings, "section_80c_signatory", None) or "").strip() or "Principal"
+    heads = [str(head).strip().upper() for head in (getattr(settings, "section_80c_heads", None) or []) if str(head).strip()]
+    month = int(getattr(settings, "financial_year_start_month", None) or 4)
+    if not 1 <= month <= 12:
+        month = 4
+    return {
+        "tally_ledger_map": {**DEFAULT_TALLY_MAP, **cleaned},
+        "section_80c_template": template or DEFAULT_80C,
+        "section_80c_signatory": signatory,
+        "section_80c_heads": heads or ["TUITION"],
+        "financial_year_start_month": month,
+    }
+
+
 def ledger_name(mapping: dict | None, code: str) -> str:
     table = {**DEFAULT_TALLY_MAP, **{str(k).upper(): str(v) for k, v in (mapping or {}).items() if v}}
     key = (code or "OTHER").upper()
