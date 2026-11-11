@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import json
 import uuid
+from dataclasses import replace
 
 import pytest
 from sqlalchemy.dialects import postgresql
@@ -31,7 +32,7 @@ from src.modules.whatsapp_assistant.planner import ToolCall, _calls_from_message
 from src.modules.whatsapp_assistant.scope import DataScope, build_tool_query, transcript_school
 from src.modules.whatsapp_assistant.sender import deliver, sending_decision, text_payload
 from src.modules.whatsapp_assistant.service import WhatsAppAssistant
-from src.modules.whatsapp_assistant.tools import attendance_statement, homework_statement
+from src.modules.whatsapp_assistant.tools import attendance_statement, homework_statement, run_tool
 
 SCHOOL_A = uuid.uuid4()
 SCHOOL_B = uuid.uuid4()
@@ -495,11 +496,71 @@ def test_parent_homework_query_excludes_drafts():
     query = build_tool_query("homework", _parent_scope(), {})
     assert query.denied is None
     assert query.role == "PARENT"
+    assert query.published_only is True
     sql, values = _statement_values(homework_statement(query))
     assert "homework.status" in sql
     assert "PUBLISHED" in values
     assert "DRAFT" not in values
     assert "DRAFT" not in sql
+    forced = homework_statement(replace(query, published_only=False))
+    forced_sql, forced_values = _statement_values(forced)
+    assert "PUBLISHED" in forced_values
+    assert "DRAFT" not in forced_sql
+
+
+class _HomeworkRow:
+    def __init__(self, title: str, status: str, class_name: str = "5A"):
+        self.title = title
+        self.status = status
+        self.class_name = class_name
+        self.due_at = None
+
+
+class _HomeworkDb:
+    def __init__(self, rows):
+        self.rows = rows
+
+    async def execute(self, _statement):
+        return self
+
+    def all(self):
+        return self.rows
+
+
+@pytest.mark.asyncio
+async def test_fallback_planner_parent_reply_omits_draft_homework():
+    """The AI planner's ValueError path still answers from the homework tool, and that reply stays published-only."""
+
+    async def post(_url, _headers, _body):
+        raise ValueError("ai service request failed")
+
+    calls = await plan_tools(
+        [{"role": "user", "content": "what homework do I have"}],
+        "AI assistant",
+        include_leave=False,
+        provider="ai_service",
+        ai_service_url="http://ai.invalid",
+        ai_service_token="test-token",
+        post=post,
+    )
+    assert calls == [ToolCall("homework", {})]
+    query = replace(build_tool_query(calls[0].name, _parent_scope(), calls[0].arguments), published_only=False)
+    sql, values = _statement_values(homework_statement(query))
+    assert "PUBLISHED" in values
+    assert "DRAFT" not in sql
+    reply = await run_tool(
+        _HomeworkDb(
+            [
+                _HomeworkRow("Fractions worksheet", "PUBLISHED"),
+                _HomeworkRow("Secret draft quiz", "DRAFT"),
+                _HomeworkRow("Closed chapter test", "CLOSED"),
+            ]
+        ),
+        query,
+    )
+    assert "Fractions worksheet" in reply["text"]
+    assert "Secret draft quiz" not in reply["text"]
+    assert "Closed chapter test" not in reply["text"]
 
 
 @pytest.mark.asyncio
