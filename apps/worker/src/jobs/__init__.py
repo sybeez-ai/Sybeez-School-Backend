@@ -8,6 +8,7 @@ from src.jobs import (
     notifications,
     payroll,
     progress,
+    whatsapp_assistant,
 )
 
 HANDLERS = {
@@ -20,4 +21,5 @@ HANDLERS = {
     "ai_tasks": ai_tasks.handle,
     "payroll_generate": payroll.handle,
     "fee_reminders": fee_reminders.handle,
+    "whatsapp_assistant": whatsapp_assistant.handle,
 }
