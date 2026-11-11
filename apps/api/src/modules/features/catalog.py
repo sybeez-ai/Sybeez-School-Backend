@@ -32,7 +32,7 @@ FEATURES: dict[str, dict] = {
         "prefixes": ["communication", "announcements", "messaging", "parent-messages"],
     },
     "alerts": {"label": "WhatsApp and SMS alerts", "portal": "school", "prefixes": ["alerts"]},
-    "ai_assistant": {"label": "AI assistant and AI tools", "portal": "all", "prefixes": ["ai", "ai-reports", "teacher-tools", "intelligence"]},
+    "ai_assistant": {"label": "AI assistant and AI tools", "portal": "all", "prefixes": ["ai", "ai-reports", "teacher-tools", "intelligence", "ai-teacher", "daily-lessons"]},
     "reading_buddy": {"label": "Reading buddy", "portal": "student", "prefixes": ["reading-buddy"]},
     "learning_paths": {
         "label": "Learning paths and progress",

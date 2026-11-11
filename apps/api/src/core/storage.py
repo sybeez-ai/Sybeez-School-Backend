@@ -93,6 +93,25 @@ def delete_object(key: str | None) -> bool:
         return False
 
 
+def signed_get_url(key: str, *, expires_seconds: int = 300) -> str | None:
+    """Short-lived private URL. Nothing is made public. None when there is no bucket."""
+    cleaned = key.lstrip("/")
+    if not cleaned or ".." in cleaned.split("/"):
+        raise ValueError("Invalid object key")
+    settings = get_settings()
+    bucket = (settings.s3_bucket or "").strip()
+    if not bucket:
+        return None
+    import boto3
+
+    client = boto3.client("s3", region_name=settings.s3_region or settings.aws_region or None)
+    return client.generate_presigned_url(
+        "get_object",
+        Params={"Bucket": bucket, "Key": cleaned},
+        ExpiresIn=max(30, min(expires_seconds, 900)),
+    )
+
+
 def public_url(key: str | None) -> str | None:
     """HTTPS URL when a bucket or public base is configured. Otherwise the key."""
     if not key:
