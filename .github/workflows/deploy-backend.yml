@@ -154,44 +154,26 @@ jobs:
 
       - name: Wake the database before migrating
         env:
-          DB_INSTANCE: ${{ vars.AWS_BACKEND_DB_INSTANCE || 'sybeez-school-db' }}
+          SCHOOL_URL: ${{ vars.AWS_BACKEND_SCHOOL_URL || 'https://school.sybeez.ai' }}
+          READY_URL: ${{ vars.AWS_BACKEND_READY_URL || 'https://api.school.sybeez.ai/ready' }}
         run: |
           set -euo pipefail
-          # Auto-sleep stops RDS after idle time. A deploy must start that same
-          # database and wait until it accepts connections. This does not change
-          # the sleep schedule.
-          db_status() {
-            aws rds describe-db-instances --db-instance-identifier "$DB_INSTANCE" \
-              --query 'DBInstances[0].DBInstanceStatus' --output text
-          }
-          STATE="$(db_status)"
-          echo "Database $DB_INSTANCE status: $STATE"
-          if [ "$STATE" = "stopping" ]; then
-            echo "Waiting for the database to finish stopping"
-            for _ in $(seq 1 60); do
-              STATE="$(db_status)"
-              echo "Database $DB_INSTANCE status: $STATE"
-              [ "$STATE" = "stopped" ] && break
-              sleep 10
-            done
-          fi
-          if [ "$STATE" = "stopped" ]; then
-            echo "Starting database $DB_INSTANCE"
-            aws rds start-db-instance --db-instance-identifier "$DB_INSTANCE" \
-              --query 'DBInstance.DBInstanceStatus' --output text
-          elif [ "$STATE" != "available" ] && [ "$STATE" != "starting" ] && [ "$STATE" != "backing-up" ] && [ "$STATE" != "configuring-enhanced-monitoring" ] && [ "$STATE" != "modifying" ] && [ "$STATE" != "rebooting" ] && [ "$STATE" != "storage-optimization" ]; then
-            echo "Database $DB_INSTANCE is $STATE, which this deploy cannot start"
-            exit 1
-          fi
-          echo "Waiting until database $DB_INSTANCE is available"
-          for attempt in 1 2; do
-            if aws rds wait db-instance-available --db-instance-identifier "$DB_INSTANCE"; then
-              echo "Database $DB_INSTANCE is available"
+          # Auto-sleep stops the database after idle time. A visit to the school
+          # site is what starts it again. The deploy role cannot call RDS
+          # directly, so this does the same visit and waits until the API
+          # reports the database is up. The sleep schedule is unchanged.
+          echo "Waking the school by visiting it, then waiting for the API"
+          for attempt in $(seq 1 40); do
+            curl -fsS -o /dev/null --max-time 25 "$SCHOOL_URL/" || true
+            code="$(curl -sS -o /tmp/ready.json -w '%{http_code}' --max-time 25 "$READY_URL" || echo err)"
+            if [ "$code" = "200" ] && python3 -c 'import json; d=json.load(open("/tmp/ready.json")); raise SystemExit(0 if d.get("dependencies",{}).get("database",{}).get("ok") is True else 1)'; then
+              echo "API reports the database is up"
               exit 0
             fi
-            echo "Still waiting (attempt $attempt)"
+            echo "Not ready yet (http $code), attempt $attempt"
+            sleep 20
           done
-          echo "Database $DB_INSTANCE did not become available"
+          echo "The school did not wake before the migration"
           exit 1
 
       - name: Run migrations and fail the deploy if they fail
