@@ -685,7 +685,17 @@ class WhatsAppAssistant:
             )
         ).scalar_one_or_none()
         if row is None:
-            row = WhatsAppUsage(school_id=school_id, year_month=period)
+            # Python column defaults are applied at flush, not when the object is built.
+            # Leaving the counters as None makes the increments below raise TypeError,
+            # and the savepoint then drops the session and the transcript.
+            row = WhatsAppUsage(
+                school_id=school_id,
+                year_month=period,
+                inbound_count=0,
+                generated_count=0,
+                sent_count=0,
+                suppressed_count=0,
+            )
             self.db.add(row)
         row.inbound_count += inbound
         row.generated_count += generated
