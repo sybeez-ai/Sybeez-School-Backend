@@ -92,9 +92,14 @@ from src.modules.timetable.router import router as timetable_router
 from src.modules.users.router import router as users_router
 from src.modules.devices.router import router as devices_router
 
+from src.modules.ai_teacher.internal_router import router as ai_teacher_internal_router
+from src.modules.ai_teacher.router import router as ai_teacher_router
+from src.modules.daily_lessons.router import router as daily_lessons_router
+
 api_router = APIRouter()
 api_router.include_router(health_router)
 api_router.include_router(internal_router)
+api_router.include_router(ai_teacher_internal_router)
 api_router.include_router(ai_gateway_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
 api_router.include_router(auth_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
 api_router.include_router(devices_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
@@ -178,6 +183,8 @@ api_router.include_router(school_ops_router, prefix=API_V1_PREFIX, dependencies=
 api_router.include_router(teacher_tools_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
 api_router.include_router(learning_paths_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
 api_router.include_router(family_documents_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
+api_router.include_router(daily_lessons_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
+api_router.include_router(ai_teacher_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
 api_router.include_router(content_library_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
 api_router.include_router(exam_prep_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
 api_router.include_router(features_me_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
