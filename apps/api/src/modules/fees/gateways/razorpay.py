@@ -14,7 +14,6 @@ from uuid import uuid4
 import httpx
 
 from src.core.exceptions import AppError
-from src.core.config import get_settings
 from src.modules.fees.calculations import money
 from src.modules.fees.gateways.base import GatewayOrder, GatewayRefundResult, GatewayVerifyResult
 from src.modules.fees.gateways.razorpay_route import RazorpayRouteClient
@@ -48,6 +47,11 @@ class RazorpayGateway:
         self.key_secret = self.key_secret or razorpay_env("RAZORPAY_KEY_SECRET")
         return RazorpayRouteClient(self.key_id, self.key_secret, transport=self._transport)
 
+    def _refuse_live_keys(self) -> None:
+        key = (self.key_id or razorpay_env("RAZORPAY_KEY_ID") or "")
+        if key.startswith("rzp_live_"):
+            raise AppError("Live Razorpay keys are not allowed. Use test mode only.", status_code=422)
+
     async def create_order(
         self,
         *,
@@ -57,18 +61,16 @@ class RazorpayGateway:
         notes: dict | None = None,
         transfers: list[dict] | None = None,
     ) -> GatewayOrder:
-        settings = get_settings()
+        self._refuse_live_keys()
         string_notes = _string_notes(notes)
         if not self.key_id or not self.key_secret:
-            # Development convenience only — never allow stub orders in production.
-            if (settings.app_env or "").lower() == "production":
-                raise AppError("Razorpay credentials not configured", status_code=500)
+            # No keys: a local test order. It never calls Razorpay and never pays anyone out.
             return GatewayOrder(
-                order_id=f"order_stub_{uuid4().hex[:12]}",
+                order_id=f"order_test_{uuid4().hex[:12]}",
                 amount=money(amount),
                 currency=currency,
                 provider=self.name,
-                meta={"receipt": receipt, "mode": "stub", "transfers": transfers or [], **string_notes},
+                meta={"receipt": receipt, "mode": "test", "transfers": [], **string_notes},
             )
 
         payload: dict = {
@@ -116,8 +118,10 @@ class RazorpayGateway:
             ).hexdigest()
             ok = hmac.compare_digest(expected, signature)
         else:
-            # Stub mode: accept only stub orders with stub signature
-            ok = order_id.startswith("order_stub_") and signature == "stub_ok"
+            ok = (
+                (order_id.startswith("order_test_") and signature == "test_ok")
+                or (order_id.startswith("order_stub_") and signature == "stub_ok")
+            )
         return GatewayVerifyResult(
             success=ok,
             order_id=order_id,
@@ -130,11 +134,8 @@ class RazorpayGateway:
     async def refund(
         self, *, payment_id: str, amount: Decimal, reverse_all: bool = False
     ) -> GatewayRefundResult:
-        settings = get_settings()
+        self._refuse_live_keys()
         if not self.key_id or not self.key_secret:
-            # Development convenience only — never allow stub refunds in production.
-            if (settings.app_env or "").lower() == "production":
-                raise AppError("Razorpay credentials not configured", status_code=500)
             return GatewayRefundResult(
                 success=True,
                 refund_id=f"rfnd_stub_{uuid4().hex[:8]}",

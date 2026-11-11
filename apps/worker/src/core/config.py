@@ -46,6 +46,7 @@ class Settings(BaseSettings):
 
 
     whatsapp_provider: str = "mock"  # mock | meta_cloud | gupshup | twilio
+    whatsapp_parent_cloud_enabled: bool = False
     whatsapp_cloud_access_token: str = Field(
         default="",
         validation_alias=AliasChoices("WHATSAPP_ACCESS_TOKEN", "WHATSAPP_CLOUD_ACCESS_TOKEN"),

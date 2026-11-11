@@ -9,7 +9,6 @@ from src.core.config import get_settings
 from src.core.redis import get_redis
 from src.jobs.rate_limit import allow_provider_send
 from src.jobs.whatsapp_providers import (
-    WHATSAPP_SENDING_ON_HOLD,
     DeliveryRejected,
     OutboundMessage,
     get_whatsapp_provider,
@@ -91,8 +90,8 @@ def _post_result(
 
 def _send_whatsapp_meta(to: str, body: str) -> str:
     """Free-text sender. Callers must already be inside the 24-hour service window."""
-    if WHATSAPP_SENDING_ON_HOLD:
-        raise DeliveryRejected("WhatsApp setup is on hold", error_code="whatsapp_on_hold")
+    if not get_settings().whatsapp_parent_cloud_enabled:
+        raise DeliveryRejected("WhatsApp parent messaging is off", error_code="whatsapp_on_hold")
     s = get_settings()
     if not s.whatsapp_cloud_access_token or not s.whatsapp_cloud_phone_number_id:
         raise DeliveryRejected("WhatsApp not configured", error_code="missing_credentials")
@@ -224,6 +223,7 @@ def _effective_provider(channel: str, provider: str) -> str:
         provider,
         access_token=settings.whatsapp_cloud_access_token,
         phone_number_id=settings.whatsapp_cloud_phone_number_id,
+        parent_cloud_enabled=bool(getattr(settings, "whatsapp_parent_cloud_enabled", False)),
     )
     if resolved == "mock" and provider not in {"", "mock"}:
         if channel == "WHATSAPP":

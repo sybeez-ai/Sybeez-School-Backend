@@ -35,6 +35,8 @@ class SchoolAlertSettings(Base, TimestampMixin):
         UUID(as_uuid=True), ForeignKey("schools.id", ondelete="CASCADE"), primary_key=True
     )
     whatsapp_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Separate from whatsapp_enabled. Stays off until Silver turns parent Cloud API sending on.
+    parent_whatsapp_cloud_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     sms_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     quiet_hours_start: Mapped[time] = mapped_column(Time, nullable=False)
     quiet_hours_end: Mapped[time] = mapped_column(Time, nullable=False)

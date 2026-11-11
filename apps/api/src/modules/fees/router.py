@@ -1,4 +1,5 @@
 from datetime import date
+from decimal import Decimal
 import json
 from typing import Annotated
 from uuid import UUID
@@ -785,3 +786,88 @@ async def route_reconciliation(
     return await RouteReportService(db).reconciliation(
         _sid(user), allow_platform_settlement=bool(settings.allow_platform_settlement)
     )
+
+
+class RouteIn(BaseModel):
+    code: str = Field(min_length=1, max_length=32)
+    name: str = Field(min_length=2, max_length=160)
+    fee_amount: Decimal = Field(default=Decimal("0"), ge=0)
+    vehicle_no: str | None = None
+    stops: list[str] = Field(default_factory=list)
+
+
+@router.get("/fees/transport/routes")
+async def list_transport_routes(
+    db: Annotated[AsyncSession, Depends(scoped_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(*FINANCE_VIEW))],
+):
+    from sqlalchemy import select
+
+    from src.db.models.books import TransportRoute
+
+    rows = (
+        await db.execute(
+            select(TransportRoute).where(TransportRoute.school_id == _sid(user)).order_by(TransportRoute.name)
+        )
+    ).scalars().all()
+    return [
+        {
+            "id": str(r.id),
+            "code": r.code,
+            "name": r.name,
+            "fee_amount": str(r.fee_amount),
+            "vehicle_no": r.vehicle_no,
+            "stops": r.stops or [],
+            "active": r.active,
+        }
+        for r in rows
+    ]
+
+
+@router.post("/fees/transport/routes", status_code=201)
+async def create_transport_route(
+    body: RouteIn,
+    db: Annotated[AsyncSession, Depends(scoped_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(*FINANCE_SETUP))],
+):
+    from uuid import uuid4
+
+    from src.db.models.books import TransportRoute
+
+    row = TransportRoute(
+        id=uuid4(),
+        school_id=_sid(user),
+        code=body.code.strip().upper(),
+        name=body.name.strip(),
+        fee_amount=body.fee_amount,
+        vehicle_no=body.vehicle_no,
+        stops=body.stops,
+        active=True,
+    )
+    db.add(row)
+    await db.flush()
+    return {"id": str(row.id), "code": row.code, "name": row.name, "fee_amount": str(row.fee_amount)}
+
+
+@router.get("/fees/exports/tally")
+async def export_tally(
+    db: Annotated[AsyncSession, Depends(scoped_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(*FINANCE_VIEW))],
+):
+    from src.modules.fees.exports import build_tally_xml
+
+    xml = await build_tally_xml(db, _sid(user))
+    return Response(content=xml, media_type="application/xml", headers={"Content-Disposition": 'attachment; filename="tally-fees.xml"'})
+
+
+@router.get("/fees/certificates/80c")
+async def certificate_80c(
+    db: Annotated[AsyncSession, Depends(scoped_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(*FINANCE_VIEW))],
+    student_id: UUID,
+):
+    from src.db.models.school import School
+    from src.modules.fees.exports import build_80c
+
+    school = await db.get(School, _sid(user))
+    return await build_80c(db, _sid(user), student_id, school.name if school else "School")

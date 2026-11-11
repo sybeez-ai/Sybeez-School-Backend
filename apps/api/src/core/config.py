@@ -105,6 +105,8 @@ class Settings(BaseSettings):
     # does not call Meta. Secrets may also arrive from Secrets Manager.
 
     whatsapp_provider: str = "mock"  # mock | meta_cloud | gupshup | twilio
+    # Off until Silver turns parent WhatsApp on and supplies the phone number id.
+    whatsapp_parent_cloud_enabled: bool = False
     whatsapp_cloud_access_token: str = Field(
         default="",
         validation_alias=AliasChoices("WHATSAPP_ACCESS_TOKEN", "WHATSAPP_CLOUD_ACCESS_TOKEN"),

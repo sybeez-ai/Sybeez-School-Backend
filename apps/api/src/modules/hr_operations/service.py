@@ -390,6 +390,14 @@ class HrOperations:
 
     # ── appraisals ─────────────────────────────────────────────────────────
 
+    async def list_cycles(self, school_id: UUID) -> list[dict]:
+        rows = (
+            await self.db.execute(
+                select(HrAppraisalCycle).where(HrAppraisalCycle.school_id == school_id).order_by(HrAppraisalCycle.period_start.desc())
+            )
+        ).scalars().all()
+        return [dump(r) for r in rows]
+
     async def create_cycle(self, school_id: UUID, actor: UUID, data: dict) -> dict:
         if data["period_end"] < data["period_start"]:
             raise AppError("Cycle end cannot be before the start", status_code=422)
@@ -535,6 +543,14 @@ class HrOperations:
         return row
 
     # ── recruitment ────────────────────────────────────────────────────────
+
+    async def list_openings(self, school_id: UUID) -> list[dict]:
+        rows = (
+            await self.db.execute(
+                select(HrJobOpening).where(HrJobOpening.school_id == school_id).order_by(HrJobOpening.created_at.desc())
+            )
+        ).scalars().all()
+        return [dump(r) for r in rows]
 
     async def create_opening(self, school_id: UUID, actor: UUID, data: dict) -> dict:
         row = HrJobOpening(
@@ -682,6 +698,32 @@ class HrOperations:
 
     # ── training ───────────────────────────────────────────────────────────
 
+    async def list_programs(self, school_id: UUID) -> list[dict]:
+        rows = (
+            await self.db.execute(
+                select(HrTrainingProgram).where(HrTrainingProgram.school_id == school_id).order_by(HrTrainingProgram.title)
+            )
+        ).scalars().all()
+        return [dump(r) for r in rows]
+
+    async def list_enrolments(self, school_id: UUID) -> list[dict]:
+        rows = (
+            await self.db.execute(
+                select(HrTrainingRecord).where(HrTrainingRecord.school_id == school_id).order_by(HrTrainingRecord.created_at.desc())
+            )
+        ).scalars().all()
+        return [dump(r) for r in rows]
+
+    async def list_certifications(self, school_id: UUID) -> list[dict]:
+        rows = (
+            await self.db.execute(
+                select(HrTrainingRecord).where(
+                    HrTrainingRecord.school_id == school_id, HrTrainingRecord.certificate_no.is_not(None)
+                )
+            )
+        ).scalars().all()
+        return [dump(r) for r in rows]
+
     async def create_program(self, school_id: UUID, actor: UUID, data: dict) -> dict:
         row = HrTrainingProgram(
             id=uuid4(),
@@ -801,6 +843,12 @@ class HrOperations:
 
     # ── assets ─────────────────────────────────────────────────────────────
 
+    async def list_assets(self, school_id: UUID) -> list[dict]:
+        rows = (
+            await self.db.execute(select(HrAsset).where(HrAsset.school_id == school_id).order_by(HrAsset.name))
+        ).scalars().all()
+        return [dump(r) for r in rows]
+
     async def create_asset(self, school_id: UUID, actor: UUID, data: dict) -> dict:
         row = HrAsset(
             id=uuid4(),
@@ -872,6 +920,14 @@ class HrOperations:
         return [dump(row) for row in rows]
 
     # ── exit settlement ────────────────────────────────────────────────────
+
+    async def list_exits(self, school_id: UUID) -> list[dict]:
+        rows = (
+            await self.db.execute(
+                select(HrExitCase).where(HrExitCase.school_id == school_id).order_by(HrExitCase.created_at.desc())
+            )
+        ).scalars().all()
+        return [dump(r) for r in rows]
 
     async def draft_exit(self, school_id: UUID, actor: UUID, data: dict) -> dict:
         employee = await self._employee(school_id, data["employee_id"])

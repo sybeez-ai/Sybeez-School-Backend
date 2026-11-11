@@ -1248,6 +1248,7 @@ class PayrollService(PayrollFlow):
             declared_80d=declaration.section_80d if declaration else _ZERO,
             other_chapter_vi=declaration.other_chapter_vi if declaration else _ZERO,
             lop_base=settings.lop_base,
+            deduct_unmarked=getattr(settings, "unmarked_attendance_policy", "DO_NOT_DEDUCT") == "DEDUCT",
             rounding=settings.rounding_mode,
             arrears=sum((a.amount for a in arrears), _ZERO),
             reimbursements=sum((r.amount for r in reims), _ZERO),
@@ -2272,6 +2273,7 @@ def _apply_settings(row: PayrollSchoolSettings, data: dict) -> None:
         "esi_wage_ceiling",
         "rounding_mode",
         "lop_base",
+        "unmarked_attendance_policy",
         "pay_date_rule",
         "pay_day",
         "auto_publish",
@@ -2312,6 +2314,8 @@ def _apply_settings(row: PayrollSchoolSettings, data: dict) -> None:
         raise AppError("Rounding must be NEAREST_RUPEE or PAISE", status_code=422)
     if data.get("lop_base") and data["lop_base"].upper() not in {"BASIC", "GROSS"}:
         raise AppError("LOP base must be BASIC or GROSS", status_code=422)
+    if data.get("unmarked_attendance_policy") and data["unmarked_attendance_policy"].upper() not in {"DO_NOT_DEDUCT", "DEDUCT"}:
+        raise AppError("Unmarked attendance must be DO_NOT_DEDUCT or DEDUCT", status_code=422)
     if data.get("pay_date_rule") and data["pay_date_rule"].upper() not in {"LAST_WORKING_DAY", "FIXED_DAY"}:
         raise AppError("Pay date rule must be LAST_WORKING_DAY or FIXED_DAY", status_code=422)
     for key, value in data.items():

@@ -17,7 +17,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -404,6 +404,11 @@ class FeeSettings(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     bank_ifsc: Mapped[str | None] = mapped_column(String(16), nullable=True)
     beneficiary_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
     legal_business_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    tally_ledger_map: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    section_80c_template: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    section_80c_signatory: Mapped[str] = mapped_column(String(160), nullable=False, default="Principal")
+    financial_year_start_month: Mapped[int] = mapped_column(Integer, nullable=False, default=4)
+    section_80c_heads: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
 
 
 class FeeSequence(Base, UUIDPrimaryKeyMixin, TimestampMixin):
