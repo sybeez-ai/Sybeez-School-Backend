@@ -175,6 +175,7 @@ async def plan_tools(
     ai_service_url: str,
     ai_service_token: str,
     post=None,
+    access_token: str | None = None,
 ) -> list[ToolCall]:
     """Ask the AI service which tool to call. A failure falls back to the local keyword plan."""
     text = str(messages[-1].get("content") or "") if messages else ""
@@ -189,6 +190,7 @@ async def plan_tools(
             ai_service_url=ai_service_url,
             ai_service_token=ai_service_token,
             post=post,
+            access_token=access_token,
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("whatsapp assistant planner unavailable: %s", type(exc).__name__)
@@ -205,6 +207,7 @@ async def phrase_reply(
     ai_service_url: str,
     ai_service_token: str,
     post=None,
+    access_token: str | None = None,
 ) -> str:
     """Ask the AI service to word the summary. The summary stays the answer when the service is down."""
     if (provider or "local").strip().lower() != "ai_service":
@@ -228,6 +231,7 @@ async def phrase_reply(
             ai_service_url=ai_service_url,
             ai_service_token=ai_service_token,
             post=post,
+            access_token=access_token,
             tools=False,
         )
     except Exception as exc:  # noqa: BLE001
@@ -235,6 +239,36 @@ async def phrase_reply(
         return summary
     text = str(message.get("content") or message.get("message") or "").strip()
     return text or summary
+
+
+def _chat_messages(messages: list[dict]) -> list[dict]:
+    """The AI service step endpoint accepts user, assistant, and tool turns only."""
+    allowed = {"user", "assistant", "tool"}
+    cleaned = []
+    for message in messages:
+        role = str(message.get("role") or "")
+        if role not in allowed:
+            continue
+        content = message.get("content")
+        item = {"role": role, "content": (content if isinstance(content, str) else str(content or ""))[:6000]}
+        if role == "tool":
+            item["tool_call_id"] = str(message.get("tool_call_id") or "")[:64]
+        cleaned.append(item)
+    return cleaned[-12:] or [{"role": "user", "content": "hello"}]
+
+
+def _declarations(*, include_leave: bool) -> list[dict]:
+    declared = []
+    for spec in tool_specs(include_leave=include_leave):
+        function = spec.get("function") or {}
+        declared.append(
+            {
+                "name": function.get("name"),
+                "description": function.get("description"),
+                "parameters": function.get("parameters") or {"type": "object", "properties": {}},
+            }
+        )
+    return declared
 
 
 async def _ai_service(
@@ -245,18 +279,37 @@ async def _ai_service(
     ai_service_url: str,
     ai_service_token: str,
     post=None,
+    access_token: str | None = None,
     tools: bool = True,
 ) -> dict:
-    url = f"{ai_service_url.rstrip('/')}/api/v1/ai/chat"
-    body = {
-        "messages": [{"role": "system", "content": _system(persona)}, *messages[-12:]],
-        "persona": persona,
-    }
-    if tools:
-        body["tools"] = tool_specs(include_leave=include_leave)
+    """Call the AI service with the body it actually accepts.
+
+    /api/v1/ai/chat needs {"message": "..."}. Tool choice is /api/v1/ai/voice/agent/step.
+    Both require the signed-in user's access token. An internal token is not a session,
+    and sending {"messages": ...} to /chat is what raised ValueError.
+    """
+    base = ai_service_url.rstrip("/")
     headers = {"Content-Type": "application/json"}
-    if ai_service_token:
-        headers["X-Internal-Token"] = ai_service_token
+    if access_token:
+        headers["Authorization"] = f"Bearer {access_token}"
+    elif not ai_service_token and post is None:
+        raise ValueError("ai service request failed")
+    if tools:
+        url = f"{base}/api/v1/ai/voice/agent/step"
+        body = {
+            "messages": _chat_messages(messages),
+            "tools": _declarations(include_leave=include_leave),
+            "portal": "student" if persona == "AI teacher" else "school",
+            "page": "whatsapp",
+        }
+    else:
+        url = f"{base}/api/v1/ai/chat"
+        text = ""
+        for message in reversed(messages):
+            if message.get("role") == "user":
+                text = str(message.get("content") or "")
+                break
+        body = {"message": text[:4000] or "hello"}
     if post is not None:
         data = await post(url, headers, body)
     else:
@@ -265,9 +318,15 @@ async def _ai_service(
         if response.status_code >= 400:
             raise ValueError("ai service request failed")
         data = response.json()
-    if isinstance(data, dict) and data.get("choices"):
-        return (data.get("choices") or [{}])[0].get("message") or {}
-    return data if isinstance(data, dict) else {}
+    if not isinstance(data, dict):
+        return {}
+    if tools:
+        message = data.get("message")
+        return message if isinstance(message, dict) else data
+    reply = data.get("reply") or data.get("content") or data.get("message")
+    if isinstance(reply, str):
+        return {"content": reply}
+    return data if data.get("content") else {}
 
 
 def _system(persona: str) -> str:

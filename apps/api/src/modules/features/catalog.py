@@ -44,7 +44,7 @@ FEATURES: dict[str, dict] = {
     "content_library": {"label": "Content library (board-tagged notes and question banks)", "portal": "all", "prefixes": ["content-library"]},
     "documents": {"label": "Document library", "portal": "all", "prefixes": ["documents"]},
     "analytics": {"label": "Analytics and reports", "portal": "school", "prefixes": ["analytics", "reports"]},
-    "principal_ops": {"label": "Principal tools (cover and reports)", "portal": "school", "prefixes": ["ops"]},
+    "principal_ops": {"label": "Principal tools (cover and reports)", "portal": "school", "prefixes": ["ops", "school-ops"]},
     "bookstore": {"label": "Bookstore", "portal": "all", "prefixes": ["bookstore"]},
     "personal_life": {"label": "Diary, notes and personal goals", "portal": "all", "prefixes": ["diary", "notes", "personal-life"]},
 }

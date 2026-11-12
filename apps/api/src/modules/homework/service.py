@@ -467,7 +467,7 @@ class HomeworkService:
             enr = await self._active_enrollment(school_id, student.id)
             if not enr or enr.class_id != row.class_id:
                 raise ForbiddenError("Homework is not for your section")
-            if row.status == HomeworkStatus.DRAFT.value:
+            if row.status != HomeworkStatus.PUBLISHED.value:
                 raise NotFoundError("Homework not found")
             my_sub = await self.repo.get_submission(
                 school_id=school_id, homework_id=row.id, student_id=student.id

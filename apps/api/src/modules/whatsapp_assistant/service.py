@@ -169,6 +169,11 @@ class WhatsAppAssistant:
             history = history[:-1]
         messages = history + [{"role": "user", "content": decision.text or original}]
         settings = get_settings()
+        from src.core.security import create_access_token
+
+        access_token = create_access_token(
+            subject=profile.user_id, role=profile.role, school_id=profile.school_id
+        )
         calls = await plan_tools(
             messages,
             persona,
@@ -176,6 +181,7 @@ class WhatsAppAssistant:
             provider=settings.whatsapp_assistant_provider,
             ai_service_url=settings.ai_service_url,
             ai_service_token=settings.ai_service_token,
+            access_token=access_token,
         )
         await bind_tenant(self.db, profile.school_id, user_id=profile.user_id, role=profile.role)
         outcomes = []
@@ -215,6 +221,7 @@ class WhatsAppAssistant:
             persona=persona,
             ai_service_url=settings.ai_service_url,
             ai_service_token=settings.ai_service_token,
+            access_token=access_token,
         )
         trace = [{"tool": item.get("tool"), "ok": "error" not in item} for item in outcomes]
         return text, persona, trace

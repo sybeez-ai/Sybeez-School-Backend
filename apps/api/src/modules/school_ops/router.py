@@ -13,7 +13,7 @@ from src.core.database import get_db
 from src.modules.school_ops.service import SchoolOpsService
 from src.shared.enums import UserRole
 
-router = APIRouter(prefix="/ops", tags=["school-ops"])
+router = APIRouter(tags=["school-ops"])
 DB = Annotated[AsyncSession, Depends(get_db)]
 Admin = Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))]
 
