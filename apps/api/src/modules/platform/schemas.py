@@ -128,6 +128,16 @@ class SchoolOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class SchoolCommercialUpdate(BaseModel):
+    plan_code: str | None = Field(default=None, min_length=2, max_length=64)
+    price_per_student: float | None = Field(default=None, ge=0)
+    discount_percent: float | None = Field(default=None, ge=0, le=100)
+    discount_amount: float | None = Field(default=None, ge=0)
+    discount_reason: str | None = Field(default=None, max_length=500)
+    renewal_at: datetime | None = None
+    starts_at: datetime | None = None
+
+
 class SchoolDetailOut(SchoolOut):
     parents_count: int = 0
     admins_count: int = 0
@@ -135,6 +145,7 @@ class SchoolDetailOut(SchoolOut):
     onboarding: dict[str, bool] = Field(default_factory=dict)
     usage: dict[str, Any] = Field(default_factory=dict)
     subscription: dict[str, Any] | None = None
+    commercial: dict[str, Any] | None = None
 
 
 class SchoolLifecycleRequest(BaseModel):

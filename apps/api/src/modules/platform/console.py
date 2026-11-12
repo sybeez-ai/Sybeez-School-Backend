@@ -645,8 +645,11 @@ class TrialOut(BaseModel):
 
 
 class TrialIn(BaseModel):
-    trial_days: int | None = Field(default=None, ge=1, le=3650, description="Total trial length from the start date")
-    extend_days: int | None = Field(default=None, ge=1, le=3650, description="Add days to the current end")
+    trial_days: int | None = Field(default=None, ge=1, le=3650, description="Start or reset a trial lasting this many days")
+    until: date | None = Field(default=None, description="Start or reset a trial that ends on this date")
+    extend_days: int | None = Field(default=None, ge=1, le=3650, description="Add days to the trial, or to the renewal if the plan is paid")
+    extend_renewal_days: int | None = Field(default=None, ge=1, le=3650, description="Add days to the plan renewal date")
+    renewal_until: date | None = Field(default=None, description="Set the plan renewal date")
     mark_paid: bool | None = Field(default=None, description="Record that the school has paid (no gateway yet)")
 
 
@@ -671,9 +674,13 @@ async def _latest_sub(db: AsyncSession, school_id: UUID) -> Subscription | None:
 async def trial_for(db: AsyncSession, school: School) -> TrialOut:
     sub = await _latest_sub(db, school.id)
     start = school.created_at
-    if sub is not None and sub.status == SubscriptionStatus.TRIAL.value and sub.starts_at:
+    if sub is not None and sub.trial_started_at:
+        start = sub.trial_started_at
+    elif sub is not None and sub.status == SubscriptionStatus.TRIAL.value and sub.starts_at:
         start = min(start, sub.starts_at) if start else sub.starts_at
-    if sub is not None and sub.status == SubscriptionStatus.TRIAL.value and sub.ends_at:
+    if sub is not None and sub.trial_ends_at:
+        ends = sub.trial_ends_at
+    elif sub is not None and sub.status == SubscriptionStatus.TRIAL.value and sub.ends_at:
         ends = sub.ends_at
     else:
         ends = start + timedelta(days=await _default_trial_days(db))
@@ -712,42 +719,100 @@ async def set_school_trial(
     await bind_tenant(db, school.id)
     before = await trial_for(db, school)
     sub = await _latest_sub(db, school.id)
-    if body.mark_paid:
+    now = _now()
+
+    def _ensure(status: str, start: datetime) -> Subscription:
+        nonlocal sub
         if sub is None:
-            sub = Subscription(school_id=school.id, plan_code="standard", status=SubscriptionStatus.ACTIVE.value,
-                               starts_at=_now())
+            sub = Subscription(school_id=school.id, plan_code="standard", status=status, starts_at=start)
             db.add(sub)
+        return sub
+
+    if body.mark_paid:
+        sub = _ensure(SubscriptionStatus.ACTIVE.value, now)
+        sub.status = SubscriptionStatus.ACTIVE.value
+        if sub.renewal_at is None:
+            sub.renewal_at = sub.trial_ends_at or (now + timedelta(days=30))
+            sub.ends_at = sub.renewal_at
+    elif body.until or body.trial_days:
+        # A paid school can be put back on a free trial. The previous renewal is kept on the row.
+        sub = _ensure(SubscriptionStatus.TRIAL.value, now)
+        fresh = sub.status != SubscriptionStatus.TRIAL.value or sub.trial_started_at is None
+        sub.status = SubscriptionStatus.TRIAL.value
+        if fresh:
+            sub.trial_started_at = now
+        elif sub.trial_started_at is None:
+            sub.trial_started_at = before.trial_started_at
+        start = sub.trial_started_at or now
+        if body.until:
+            from src.modules.platform.commercial import end_of_day
+
+            sub.trial_ends_at = end_of_day(body.until)
+        else:
+            sub.trial_ends_at = start + timedelta(days=int(body.trial_days or 0))
+        sub.ends_at = sub.trial_ends_at
+    elif body.extend_days:
+        sub = _ensure(SubscriptionStatus.TRIAL.value, before.trial_started_at)
+        if sub.status == SubscriptionStatus.ACTIVE.value:
+            base = sub.renewal_at or sub.ends_at or now
+            if base < now:
+                base = now
+            sub.renewal_at = base + timedelta(days=int(body.extend_days))
+            sub.ends_at = sub.renewal_at
+        else:
+            sub.status = SubscriptionStatus.TRIAL.value
+            base = sub.trial_ends_at or before.trial_ends_at
+            if before.status == "payment_due" or base < now:
+                base = now
+            sub.trial_ends_at = base + timedelta(days=int(body.extend_days))
+            sub.ends_at = sub.trial_ends_at
+            if sub.trial_started_at is None:
+                sub.trial_started_at = before.trial_started_at
+    elif body.extend_renewal_days or body.renewal_until:
+        sub = _ensure(SubscriptionStatus.ACTIVE.value, now)
+        if body.renewal_until:
+            from src.modules.platform.commercial import end_of_day
+
+            sub.renewal_at = end_of_day(body.renewal_until)
+        else:
+            base = sub.renewal_at or sub.ends_at or now
+            if base < now:
+                base = now
+            sub.renewal_at = base + timedelta(days=int(body.extend_renewal_days or 0))
+        sub.ends_at = sub.renewal_at
+        if sub.status == SubscriptionStatus.TRIAL.value:
+            pass
         else:
             sub.status = SubscriptionStatus.ACTIVE.value
-    elif body.trial_days or body.extend_days:
-        if sub is not None and sub.status not in {SubscriptionStatus.TRIAL.value, SubscriptionStatus.PAST_DUE.value}:
-            raise ConflictError("This school is on a paid subscription; there is no trial to change.")
-        if sub is None:
-            sub = Subscription(school_id=school.id, plan_code="standard", status=SubscriptionStatus.TRIAL.value,
-                               starts_at=before.trial_started_at)
-            db.add(sub)
-        sub.status = SubscriptionStatus.TRIAL.value
-        if body.trial_days:
-            sub.ends_at = before.trial_started_at + timedelta(days=body.trial_days)
-        else:
-            base = max(before.trial_ends_at, _now()) if before.status == "payment_due" else before.trial_ends_at
-            sub.ends_at = base + timedelta(days=int(body.extend_days or 0))
     else:
-        raise ConflictError("Send trial_days, extend_days or mark_paid.")
+        raise ConflictError("Send trial_days, until, extend_days, extend_renewal_days, renewal_until or mark_paid.")
     await db.flush()
     after = await trial_for(db, school)
+    renewed = bool(body.extend_renewal_days or body.renewal_until or (body.extend_days and before.status == "active"))
     await AuditRepository(db).write(
-        action="platform.trial.update" if not body.mark_paid else "platform.subscription.paid",
+        action="platform.subscription.paid" if body.mark_paid else ("platform.renewal.update" if renewed else "platform.trial.update"),
         actor_id=actor.id,
         school_id=school.id,
         resource_type="school",
         resource_id=str(school.id),
         message=(
             f"Marked {school.name} as paid" if body.mark_paid
-            else f"Trial for {school.name} now ends {after.trial_ends_at.date().isoformat()}"
+            else (
+                f"Renewal for {school.name} is {sub.renewal_at.date().isoformat()}"
+                if renewed and sub is not None and sub.renewal_at is not None
+                else f"Trial for {school.name} now ends {after.trial_ends_at.date().isoformat()}"
+            )
         ),
-        details={"before": before.trial_ends_at.isoformat(), "after": after.trial_ends_at.isoformat(),
-                 "trial_days": body.trial_days, "extend_days": body.extend_days, "mark_paid": body.mark_paid},
+        details={
+            "before": before.trial_ends_at.isoformat(),
+            "after": after.trial_ends_at.isoformat(),
+            "renewal_at": sub.renewal_at.isoformat() if sub and sub.renewal_at else None,
+            "trial_days": body.trial_days,
+            "until": body.until.isoformat() if body.until else None,
+            "extend_days": body.extend_days,
+            "extend_renewal_days": body.extend_renewal_days,
+            "mark_paid": body.mark_paid,
+        },
     )
     return after
 

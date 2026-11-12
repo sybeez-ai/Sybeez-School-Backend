@@ -41,6 +41,7 @@ from src.modules.platform.schemas import (
     SchoolAdminMfaRecoveryOut,
     SchoolAdminResetPasswordOut,
     SchoolAdminResetPasswordRequest,
+    SchoolCommercialUpdate,
     SchoolCreate,
     SchoolDetailOut,
     SchoolLifecycleRequest,
@@ -236,9 +237,43 @@ async def delete_school(
     school_id: UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
     actor: Annotated[CurrentUser, Depends(require_super_admin)],
+    confirm_name: str = Query(..., min_length=1, max_length=255),
 ):
-    await PlatformService(db).delete_school(actor, school_id)
+    await PlatformService(db).delete_school(actor, school_id, confirm_name)
     return Response(status_code=204)
+
+
+@router.patch("/schools/{school_id}/commercial")
+async def update_school_commercial(
+    school_id: UUID,
+    body: SchoolCommercialUpdate,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_super_admin)],
+):
+    """Change the plan, per-student price, discount or renewal. Super admin only."""
+    from src.modules.fees.tenant import bind_tenant
+    from src.modules.platform.commercial import apply_commercial
+
+    school = await PlatformService(db).repo.get_school(school_id)
+    if school is None:
+        from src.core.exceptions import NotFoundError
+
+        raise NotFoundError("School not found")
+    await bind_tenant(db, school.id)
+    data = body.model_dump(exclude_unset=True)
+    return await apply_commercial(
+        db,
+        actor_id=actor.id,
+        school=school,
+        plan_code=data.get("plan_code"),
+        price_per_student=data.get("price_per_student"),
+        discount_percent=data.get("discount_percent"),
+        discount_amount=data.get("discount_amount"),
+        discount_reason=data.get("discount_reason"),
+        renewal_at=data.get("renewal_at"),
+        starts_at=data.get("starts_at"),
+        fields_set=set(body.model_fields_set),
+    )
 
 
 @router.post("/schools/{school_id}/admins", response_model=SchoolAdminLoginOut, status_code=201)

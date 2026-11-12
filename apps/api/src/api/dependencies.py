@@ -4,7 +4,7 @@ from uuid import UUID
 
 from fastapi import Depends, Header, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.database import get_db
@@ -145,31 +145,7 @@ async def _resolve_current_user(
         elif school_id is not None and header_id != school_id:
             raise ForbiddenError("Cross-tenant access denied")
 
-    tenant = db.info.get("rls_tenant")
-    if isinstance(tenant, dict) and tenant.get("bypass") != "on":
-        # Keep later transactions (after a commit) on the same resolved context,
-        # including an X-School-Id scope chosen by platform staff.
-        tenant.update(
-            school_id="" if school_id is None else str(school_id),
-            user_id=str(user.id),
-            role=role.value,
-            membership_id="" if membership_id is None else str(membership_id),
-            portals=",".join(portals),
-        )
-
-    if school_id is not None or portals:
-        from sqlalchemy import text
-
-        await db.execute(
-            text("SELECT set_config('app.school_id', :v, true)"),
-            {"v": "" if school_id is None else str(school_id)},
-        )
-        await db.execute(
-            text("SELECT set_config('app.portals', :v, true)"),
-            {"v": ",".join(portals)},
-        )
-
-    return CurrentUser(
+    current = CurrentUser(
         id=user.id,
         email=user.email,
         full_name=user.full_name,
@@ -180,6 +156,42 @@ async def _resolve_current_user(
         platform_role=user.platform_role or payload.get("platform_role"),
         portals=portals,
     )
+    # Always replace the previous request's tenant. A shared session must not keep
+    # a super-admin bypass after the next caller is a school user.
+    bypass = "on" if is_super_admin(current) else "off"
+    tenant = db.info.get("rls_tenant")
+    if not isinstance(tenant, dict):
+        tenant = {}
+        db.info["rls_tenant"] = tenant
+    tenant.update(
+        school_id="" if school_id is None else str(school_id),
+        user_id=str(user.id),
+        role=role.value,
+        membership_id="" if membership_id is None else str(membership_id),
+        portals=",".join(portals),
+        bypass=bypass,
+    )
+    await db.execute(
+        text("SELECT set_config('app.school_id', :v, true)"),
+        {"v": "" if school_id is None else str(school_id)},
+    )
+    await db.execute(
+        text("SELECT set_config('app.portals', :v, true)"),
+        {"v": ",".join(portals)},
+    )
+    await db.execute(
+        text("SELECT set_config('app.role', :v, true)"),
+        {"v": role.value},
+    )
+    await db.execute(
+        text("SELECT set_config('app.user_id', :v, true)"),
+        {"v": str(user.id)},
+    )
+    await db.execute(
+        text("SELECT set_config('app.rls_bypass', :v, true)"),
+        {"v": bypass},
+    )
+    return current
 
 
 def _finance_gate(roles: set[UserRole]) -> str | None:
