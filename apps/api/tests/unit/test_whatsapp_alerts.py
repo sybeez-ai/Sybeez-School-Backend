@@ -287,6 +287,10 @@ def test_missing_credentials_stay_mock_with_admin_status():
     assert effective_whatsapp_provider(ready) == "mock"
     ready_on = SimpleNamespace(**ready.__dict__, whatsapp_parent_cloud_enabled=True)
     assert provider_status(ready_on)["whatsapp_status"] == "configured"
+    sending = SimpleNamespace(**ready.__dict__, whatsapp_sending_enabled=True)
+    assert provider_status(sending)["whatsapp_status"] == "configured"
+    assert provider_status(sending)["whatsapp_sending_enabled"] is True
+    assert effective_whatsapp_provider(sending) == "meta_cloud"
     assert effective_whatsapp_provider(ready_on) == "meta_cloud"
 
 

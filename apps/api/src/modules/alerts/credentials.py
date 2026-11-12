@@ -47,8 +47,13 @@ def parent_cloud_enabled(settings: Any) -> bool:
     return bool(getattr(settings, "whatsapp_parent_cloud_enabled", False))
 
 
+def whatsapp_sending_on(settings: Any) -> bool:
+    """True when Silver has turned sending on, or the older parent-cloud flag is on."""
+    return parent_cloud_enabled(settings) or bool(getattr(settings, "whatsapp_sending_enabled", False))
+
+
 def whatsapp_admin_status(settings: Any) -> str:
-    if not parent_cloud_enabled(settings):
+    if not whatsapp_sending_on(settings):
         return WHATSAPP_OFF
     if missing_names(settings, WHATSAPP_FIELDS):
         return WHATSAPP_NOT_CONFIGURED
@@ -59,7 +64,7 @@ def effective_whatsapp_provider(settings: Any) -> str:
     provider = str(getattr(settings, "whatsapp_provider", "") or "mock").strip().lower() or "mock"
     if provider in {"meta", "whatsapp_cloud"}:
         provider = "meta_cloud"
-    if provider == "meta_cloud" and (not parent_cloud_enabled(settings) or not whatsapp_send_ready(settings)):
+    if provider == "meta_cloud" and (not whatsapp_sending_on(settings) or not whatsapp_send_ready(settings)):
         return "mock"
     return provider
 
@@ -67,6 +72,7 @@ def effective_whatsapp_provider(settings: Any) -> str:
 def provider_status(settings: Any) -> dict:
     return {
         "whatsapp_status": whatsapp_admin_status(settings),
+        "whatsapp_sending_enabled": bool(getattr(settings, "whatsapp_sending_enabled", False)),
         "whatsapp_provider": effective_whatsapp_provider(settings),
         "whatsapp_missing": missing_names(settings, WHATSAPP_FIELDS),
     }

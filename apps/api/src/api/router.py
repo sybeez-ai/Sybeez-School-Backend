@@ -6,6 +6,9 @@ from src.modules.academic_years.router import router as academic_years_router
 from src.modules.alerts.router import admin_router as alerts_admin_router
 from src.modules.alerts.router import webhook_router as alerts_webhook_router
 from src.modules.achievements.router import router as achievements_router
+from src.modules.campus.router import activities_router
+from src.modules.campus.router import calendar_router
+from src.modules.campus.router import library_router
 from src.modules.admissions.router import router as admissions_router
 from src.modules.ai_gateway.router import router as ai_gateway_router
 from src.modules.ai_reports.router import router as ai_reports_router
@@ -152,6 +155,9 @@ api_router.include_router(results_router, prefix=API_V1_PREFIX, dependencies=[De
 api_router.include_router(progress_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
 api_router.include_router(learning_sessions_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
 api_router.include_router(achievements_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
+api_router.include_router(library_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
+api_router.include_router(activities_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
+api_router.include_router(calendar_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
 api_router.include_router(documents_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
 api_router.include_router(notifications_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
 api_router.include_router(communication_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
