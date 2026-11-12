@@ -6,9 +6,9 @@ Salary is calculated the day the period's staff attendance is locked, including 
 
 ## Merge order
 
-This branch adds Alembic revision `0040` (`0040_payroll_production.py`, `down_revision = 0035`), revision `0041` (`0041_payroll_daily.py`, `down_revision = 0040`), revision `0042` (`0042_payroll_assistant.py`, `down_revision = 0041`), and revision `0043` (`0043_payroll_assistant_import.py`, `down_revision = 0042`). Land them on `HRM` after `0035`. `alembic upgrade head` on an empty Postgres 16 database applies `0001` through `0043`.
+`alembic upgrade head` on an empty Postgres 16 database applies `0001` through `0060`.
 
-Finance PR #1 uses revision ids `0028`, `0029`, and `0030` for different files than HRM's `0028_hr_integrity`, `0029_hr_employees`, and `0030_hr_departments`. Do not reuse those ids. When finance merges, renumber its revisions so they are not `0028`–`0035` or `0040`, then point `0040` at the new head if finance must run first. If the `sybeez_definer` role exists at upgrade time, payroll `SECURITY DEFINER` functions are altered to that owner.
+Finance PR #1 used revision ids `0028`, `0029`, and `0030` for different files than HRM's `0028_hr_integrity`, `0029_hr_employees`, and `0030_hr_departments`. Those finance revisions are `0041_finance_production` (`down_revision = 0040`), `0042_platform_rls`, and `0043_ai_shared_columns`. Payroll daily, assistant, and import used the same ids on the payroll branch. On `release` they are `0044_payroll_daily` (`down_revision = 0043`), `0045_payroll_assistant`, and `0046_payroll_assistant_import`. Platform access follows as `0047_platform_access` (`down_revision = 0046`), `0048_platform_rls_helpers`, and `0049_platform_staff_sessions`. The chain is linear. `0051` and `0052` stay unused: production already applied `0053`, so later work is not inserted in front of that stamp. WhatsApp and SMS alerts are `0053_whatsapp_alerts` (`down_revision = 0050`). `0054_teacher_own_staff_row` replaces `app.can_see` so a teacher can read and insert only their own `employees` row. Razorpay Route is `0055_razorpay_route` (`down_revision = 0054`). HR constraint names, the HR specification, and HR operations follow as `0056`, `0057`, and `0058`. `0059` links each HR employee to one login and limits staff payslip visibility to published rows. `0060` adds school expenses. `0050` replaces `app.can_see` so `FINANCE`, `HR`, and platform-staff portals match the HTTP grants. Payroll policies from `0040` stay in place; `0042` still forces RLS on those tables and does not replace them. `0048` adds `rls_*` helpers that read `app.*` and does not replace those policies. `0044`–`0046` force RLS on the tables they add. If the `sybeez_definer` role exists at upgrade time, payroll `SECURITY DEFINER` functions are altered to that owner.
 
 Production requires `S3_BUCKET`. The app stores object keys only and does not create AWS resources. Development writes under `apps/api/media` when the bucket is empty.
 
@@ -163,7 +163,7 @@ Existing `/hr/attendance` daily, history, summary, mark, bulk, patch, and delete
 
 `POST /internal/v1/payroll/generate` with `X-Internal-Token`. Body `{ school_id, period_start, period_end, locked_by, source }`. Response `{ run_id, created, skipped }`. The worker job type is `payroll_generate`.
 
-`GET /api/v1/schools/me/branches` returns `{ branches: [{ name }] }` for the signed-in school. Names come from weekly offs, holidays, and statutory profiles. Empty branch names are the whole school and are left out.
+`GET /api/v1/schools/me/branches` returns `{ branches: [{ name, id, code, address, active }] }` for the signed-in school. `name` comes from weekly offs, holidays, statutory profiles, and finance campus rows. Finance rows also include `id` and `code` so the fee desk can send `X-Branch-Id`. Cashiers see only assigned finance branches. Empty branch names are the whole school and are left out.
 
 The HRM login portal (`portal=hrm`) accepts school admin, HR manager, and payroll approver.
 
@@ -194,7 +194,7 @@ Generating a period is idempotent: a second generate for the same dates returns 
 
 Each payslip stores `lop_detail`: `[{ date, status, source, lop_days }]`. `source` is `UNMARKED_WORKING_DAY`, `ABSENT`, `HALF_DAY`, or `UNPAID_LEAVE`.
 
-`payroll_loan_events` records EMI, prepayment, closure, and reversal. Migration `0041` forces row level security on that table, same as the other payroll tables. Tables outside payroll are unchanged: the rest of the API does not set `app.school_id` on every request, so forcing RLS there would block those routes.
+`payroll_loan_events` records EMI, prepayment, closure, and reversal. Migration `0044` forces row level security on that table, same as the other payroll tables. Tables outside payroll are unchanged: the rest of the API does not set `app.school_id` on every request, so forcing RLS there would block those routes.
 
 Payslip template codes remain `CLASSIC`, `COMPACT`, and `STATUTORY` on payroll settings.
 
@@ -264,7 +264,7 @@ Nothing in payroll is written by the preview: no employee, statutory profile, ba
 
 `GET /payroll/assistant/import/{id}/rejects.csv` returns `row,employee_code,field,reason,value`. PAN and account numbers in the file are masked. The caller must be allowed to change payroll settings, which is the same role as the upload.
 
-Import routes use both payroll rate limits. Migration `0043` forces row level security on `payroll_assistant_imports` and `payroll_opening_ytd`.
+Import routes use both payroll rate limits. Migration `0046` forces row level security on `payroll_assistant_imports` and `payroll_opening_ytd`.
 
 Opening year-to-date gross is added to Form 16, and opening TDS is included in `tds_deducted`. The next pay run adds that gross once and reduces the remaining monthly TDS by the tax already paid. A run with no opening figures is unchanged.
 

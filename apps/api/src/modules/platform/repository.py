@@ -152,7 +152,14 @@ class PlatformRepository:
                 .where(Invitation.status == InvitationStatus.PENDING.value)
             )
         ).scalar_one()
-        students = (await self.db.execute(select(func.count()).select_from(Student))).scalar_one()
+        students = (
+            await self.db.execute(
+                select(func.count())
+                .select_from(Student)
+                .join(User, User.id == Student.user_id)
+                .where(User.status != "DELETED")
+            )
+        ).scalar_one()
         teachers = (await self.db.execute(select(func.count()).select_from(Teacher))).scalar_one()
         parents = (await self.db.execute(select(func.count()).select_from(Parent))).scalar_one()
         active_users = (

@@ -5,14 +5,20 @@ from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import CurrentUser, require_roles
+from src.modules.hr.access import require_hr_admin, require_hr_or_self, user_is_hr_admin
 from src.core.database import get_db
 from src.core.exceptions import ForbiddenError
+from src.modules.hr.audit import SELF_SERVICE_ROLES
 from src.modules.hr_letters.schemas import (
+    LETTER_TYPE_PATTERN,
     LetterCreate,
     LetterIssue,
     LetterOut,
     LetterRevoke,
     LetterTemplateOut,
+    LetterTemplateSave,
+    LetterTemplateSummary,
+    LetterTemplateVersionOut,
     LetterType,
     LetterUpdate,
 )
@@ -21,11 +27,9 @@ from src.shared.enums import UserRole
 
 router = APIRouter(prefix="/hr", tags=["hr-letters"])
 
-Admin = Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))]
-Staff = Annotated[
-    CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN, UserRole.TEACHER))
-]
-Teacher = Annotated[CurrentUser, Depends(require_roles(UserRole.TEACHER))]
+Admin = Annotated[CurrentUser, Depends(require_hr_admin)]
+Staff = Annotated[CurrentUser, Depends(require_hr_or_self)]
+Teacher = Annotated[CurrentUser, Depends(require_roles(*SELF_SERVICE_ROLES))]
 Db = Annotated[AsyncSession, Depends(get_db)]
 
 
@@ -40,10 +44,7 @@ async def list_letters(
     user: Admin,
     db: Db,
     employee_id: UUID | None = None,
-    letter_type: Annotated[
-        str | None,
-        Query(pattern="(?i)^(OFFER|APPOINTMENT|EXPERIENCE|RELIEVING|OTHER)$"),
-    ] = None,
+    letter_type: Annotated[str | None, Query(pattern=LETTER_TYPE_PATTERN)] = None,
     status: Annotated[str | None, Query(pattern="(?i)^(DRAFT|ISSUED|REVOKED)$")] = None,
     q: Annotated[str | None, Query(max_length=200)] = None,
 ):
@@ -59,6 +60,21 @@ async def letter_template(
     return await HrLetterService(db).template(
         _sid(user), employee_id, letter_type, user.full_name
     )
+
+
+@router.get("/letter-templates", response_model=list[LetterTemplateSummary])
+async def list_letter_templates(user: Admin, db: Db):
+    return await HrLetterService(db).list_templates(_sid(user))
+
+
+@router.get("/letter-templates/{letter_type}/versions", response_model=list[LetterTemplateVersionOut])
+async def letter_template_versions(letter_type: LetterType, user: Admin, db: Db):
+    return await HrLetterService(db).template_versions(_sid(user), letter_type)
+
+
+@router.post("/letter-templates/{letter_type}", response_model=LetterTemplateVersionOut, status_code=201)
+async def save_letter_template(letter_type: LetterType, body: LetterTemplateSave, user: Admin, db: Db):
+    return await HrLetterService(db).save_template(_sid(user), user.id, letter_type, body)
 
 
 @router.post("/letters", response_model=LetterOut, status_code=201)
@@ -88,7 +104,7 @@ async def revoke_letter(letter_id: UUID, body: LetterRevoke, user: Admin, db: Db
 
 @router.delete("/letters/{letter_id}", status_code=204)
 async def delete_letter(letter_id: UUID, user: Admin, db: Db):
-    await HrLetterService(db).delete(_sid(user), letter_id)
+    await HrLetterService(db).delete(_sid(user), user.id, letter_id)
     return Response(status_code=204)
 
 
@@ -98,12 +114,15 @@ async def letter_pdf(letter_id: UUID, user: Staff, db: Db):
         _sid(user),
         letter_id,
         user_id=user.id,
-        is_admin=user.role == UserRole.SCHOOL_ADMIN,
+        is_admin=await user_is_hr_admin(db, user),
     )
     return Response(
         content=content,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "private, no-store",
+        },
     )
 
 

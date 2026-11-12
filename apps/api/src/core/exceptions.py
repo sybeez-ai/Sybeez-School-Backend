@@ -29,6 +29,11 @@ class ConflictError(AppError):
         super().__init__(message, code=code, status_code=status.HTTP_409_CONFLICT)
 
 
+class ValidationError(AppError):
+    def __init__(self, message: str = "Validation failed", code: str = "validation_error"):
+        super().__init__(message, code=code, status_code=422)
+
+
 class UpstreamError(AppError):
     def __init__(self, message: str = "Upstream service error", code: str = "upstream_error"):
         super().__init__(message, code=code, status_code=status.HTTP_502_BAD_GATEWAY)

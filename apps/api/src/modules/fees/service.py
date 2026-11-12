@@ -5,17 +5,18 @@ from __future__ import annotations
 import csv
 import io
 import json
-import os
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID, uuid4
 
 from sqlalchemy import and_, func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from src.core.config import get_settings
 from src.core.exceptions import AppError, ConflictError, ForbiddenError, NotFoundError
+from src.modules.fees.dates import ist_today
 from src.db.models import (
     Enrollment,
     FeeAdjustment,
@@ -39,7 +40,12 @@ from src.db.models import (
     User,
 )
 from src.db.models.class_ import ClassRoom
-from src.modules.fees.calculations import calculate_late_fee, invoice_status_after_payment, money
+from src.modules.fees.calculations import (
+    calculate_late_fee,
+    invoice_status_after_payment,
+    money,
+    resolve_invoice_due_date,
+)
 from src.modules.fees.schemas import (
     AdjustmentCreate,
     AdjustmentOut,
@@ -69,12 +75,10 @@ from src.modules.fees.schemas import (
     StudentFeeSummaryOut,
 )
 from src.modules.notifications.service import create_in_app_notification
-from src.modules.notifications.deliveries import queue_outbound_delivery
 from src.shared.enums import (
     EnrollmentStatus,
     FeeInvoiceStatus,
     FeeStructureStatus,
-    NotificationChannel,
     NotificationType,
     PaymentStatus,
     StudentFeeAccountStatus,
@@ -100,7 +104,9 @@ class FeeService:
         entity_id: UUID | None,
         *,
         reason: str | None = None,
+        old_values: dict | None = None,
         new_values: dict | None = None,
+        ip_address: str | None = None,
     ) -> None:
         self.db.add(
             FeeAuditLog(
@@ -111,48 +117,51 @@ class FeeService:
                 entity_type=entity_type,
                 entity_id=entity_id,
                 reason=reason,
-                new_values=json.dumps(new_values) if new_values else None,
+                old_values=json.dumps(old_values, default=str) if old_values else None,
+                new_values=json.dumps(new_values, default=str) if new_values else None,
+                ip_address=ip_address,
             )
         )
 
     async def next_number(self, school_id: UUID, seq_type: str, prefix: str) -> str:
-        year = date.today().year
-        row = (
-            await self.db.execute(
-                select(FeeSequence).where(
-                    FeeSequence.school_id == school_id,
-                    FeeSequence.seq_type == seq_type,
-                    FeeSequence.year == year,
-                )
-            )
-        ).scalar_one_or_none()
-        if not row:
-            row = FeeSequence(
-                id=uuid4(), school_id=school_id, seq_type=seq_type, year=year, last_value=0
-            )
-            self.db.add(row)
-            await self.db.flush()
-        row.last_value += 1
-        await self.db.flush()
-        return f"{prefix}-{year}-{row.last_value:06d}"
+        from src.modules.fees.numbering import allocate_series_number
+        from src.modules.fees.tenant import bind_tenant
+
+        await bind_tenant(self.db, school_id)
+        return await allocate_series_number(self.db, school_id, seq_type, prefix)
+
+    async def _find_settings(self, school_id: UUID) -> FeeSettings | None:
+        return (
+            await self.db.execute(select(FeeSettings).where(FeeSettings.school_id == school_id).limit(1))
+        ).scalars().first()
 
     async def get_or_create_settings(self, school_id: UUID) -> FeeSettings:
-        row = (
-            await self.db.execute(select(FeeSettings).where(FeeSettings.school_id == school_id))
-        ).scalar_one_or_none()
+        row = await self._find_settings(school_id)
         if row:
             return row
         row = FeeSettings(id=uuid4(), school_id=school_id)
         # Production default: prefer Razorpay when credentials are configured.
         core = get_settings()
         if (core.app_env or "").lower() == "production":
-            key_id = os.getenv("RAZORPAY_KEY_ID", "").strip()
-            key_secret = os.getenv("RAZORPAY_KEY_SECRET", "").strip()
+            from src.modules.fees.razorpay_secrets import razorpay_env
+
+            key_id = razorpay_env("RAZORPAY_KEY_ID")
+            key_secret = razorpay_env("RAZORPAY_KEY_SECRET")
             if key_id and key_secret:
                 row.gateway_provider = "razorpay"
                 row.gateway_public_key = key_id
-        self.db.add(row)
-        await self.db.flush()
+        try:
+            async with self.db.begin_nested():
+                self.db.add(row)
+                await self.db.flush()
+        except IntegrityError:
+            # The finance page loads two dashboards at once. Both may try to
+            # create the school's single settings row; the loser must read the winner.
+            self.db.expunge(row)
+            existing = await self._find_settings(school_id)
+            if existing is None:
+                raise
+            return existing
         return row
 
     # ── categories ────────────────────────────────────────────
@@ -187,6 +196,9 @@ class FeeService:
             code=code,
             description=data.description,
             active=data.active,
+            is_80c_eligible=bool(getattr(data, "is_80c_eligible", False)),
+            gst_rate=money(getattr(data, "gst_rate", 0) or 0),
+            tally_ledger=getattr(data, "tally_ledger", None),
         )
         self.db.add(row)
         await self._audit(school_id, user_id, "FEE_CATEGORY_CREATED", "fee_category", row.id)
@@ -206,6 +218,12 @@ class FeeService:
             row.description = data.description
         if data.active is not None:
             row.active = data.active
+        if data.is_80c_eligible is not None:
+            row.is_80c_eligible = data.is_80c_eligible
+        if data.gst_rate is not None:
+            row.gst_rate = money(data.gst_rate)
+        if data.tally_ledger is not None:
+            row.tally_ledger = data.tally_ledger
         await self.db.commit()
         await self.db.refresh(row)
         return FeeCategoryOut.model_validate(row)
@@ -492,7 +510,7 @@ class FeeService:
         if not st:
             return "Student"
         user = await self.db.get(User, st.user_id)
-        return user.name if user else "Student"
+        return user.full_name if user else "Student"
 
     async def _class_name(self, class_id: UUID | None) -> str | None:
         if not class_id:
@@ -565,7 +583,7 @@ class FeeService:
 
         settings = await self.get_or_create_settings(school_id)
         invoice_date = data.invoice_date or date.today()
-        due_date = data.due_date or (installment.due_date if installment else invoice_date)
+        due_date = data.due_date or resolve_invoice_due_date(installment, list(structure.installments or []), invoice_date)
 
         # Resolve students via enrollment
         q = select(Enrollment).where(
@@ -710,6 +728,23 @@ class FeeService:
                     )
 
             await self._audit(school_id, user_id, "INVOICE_CREATED", "fee_invoice", inv.id)
+            from src.modules.fees.ledger import post_ledger_entry
+            from src.shared.enums import LedgerEntryType
+
+            await post_ledger_entry(
+                self.db,
+                school_id=school_id,
+                student_id=enr.student_id,
+                account_id=acc.id,
+                entry_type=LedgerEntryType.DEMAND.value,
+                debit=total,
+                credit=money(0),
+                ref_type="fee_invoice",
+                ref_id=inv.id,
+                narration=f"Invoice {inv.invoice_number}",
+                actor_user_id=user_id,
+                entry_date=invoice_date,
+            )
             await self._notify_invoice(school_id, enr.student_id, inv)
             created += 1
             total_amount += total
@@ -754,11 +789,25 @@ class FeeService:
         Daily job: scan invoices and send due/overdue reminders (in-app + SMS/WhatsApp),
         deduped via `fee_reminder_logs`.
         """
-        today = date.today()
-        due_offsets = {3, 0}  # days before due date
-        overdue_offsets = {1, 3, 7, 14, 30}  # days after due date
+        from src.db.models import SchoolAlertSettings
+        from src.modules.fees.reminder_plan import (
+            DEFAULT_DUE_DAYS,
+            DEFAULT_OVERDUE_DAYS,
+            clean_offsets,
+            in_send_window,
+            school_now,
+        )
+
+        cfg = await self.db.get(SchoolAlertSettings, school_id)
+        local_now = school_now(cfg.timezone if cfg else None)
+        if not in_send_window(local_now):
+            return {"invoices_considered": 0, "invoice_events_sent": 0, "deliveries_queued": 0, "outside_window": True}
+        today = local_now.date()  # the school's own calendar day, not the server's
+        due_offsets = set(clean_offsets(getattr(cfg, "fee_reminder_days", None), DEFAULT_DUE_DAYS))
+        overdue_offsets = set(clean_offsets(getattr(cfg, "fee_overdue_days", None), DEFAULT_OVERDUE_DAYS))
 
         max_window = max(due_offsets) if due_offsets else 0
+        min_due = today - timedelta(days=max(overdue_offsets)) if overdue_offsets else today
         rows = (
             await self.db.execute(
                 select(FeeInvoice)
@@ -773,6 +822,7 @@ class FeeService:
                         ]
                     ),
                     FeeInvoice.due_date <= (today + timedelta(days=max_window)),
+                    FeeInvoice.due_date >= min_due,
                 )
                 .order_by(FeeInvoice.due_date.asc())
             )
@@ -789,30 +839,19 @@ class FeeService:
             kind: str | None = None
             title: str | None = None
 
-            if days_until in due_offsets:
-                notif_type = NotificationType.FEE_DUE_REMINDER.value
-                kind = f"DUE_{days_until}"
-                title = "Fee due reminder"
-            elif days_until < 0:
-                days_overdue = abs(days_until)
-                if days_overdue in overdue_offsets:
+            from src.modules.fees.reminder_plan import reminder_kind
+
+            plan = reminder_kind(inv.due_date, today, sorted(due_offsets), sorted(overdue_offsets))
+            if plan is not None:
+                kind = plan[0]
+                if plan[1] == "fee_due":
+                    notif_type = NotificationType.FEE_DUE_REMINDER.value
+                    title = "Fee due reminder"
+                else:
                     notif_type = NotificationType.FEE_OVERDUE.value
-                    kind = f"OVERDUE_{days_overdue}"
                     title = "Fee overdue reminder"
 
             if not notif_type or not kind:
-                continue
-
-            existing = (
-                await self.db.execute(
-                    select(FeeReminderLog).where(
-                        FeeReminderLog.invoice_id == inv.id,
-                        FeeReminderLog.kind == kind,
-                        FeeReminderLog.sent_on == today,
-                    )
-                )
-            ).scalar_one_or_none()
-            if existing:
                 continue
 
             acc = await self.db.get(StudentFeeAccount, inv.student_fee_account_id)
@@ -820,9 +859,28 @@ class FeeService:
             if not student_id:
                 continue
 
-            # record dedupe marker first
-            self.db.add(FeeReminderLog(school_id=school_id, invoice_id=inv.id, kind=kind, sent_on=today))
-            await self.db.flush()
+            # Race-safe dedupe: only the worker whose INSERT wins sends; others skip. The unique key
+            # (invoice, kind, day) is enforced by the database, so overlapping runs cannot double-send.
+            from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+            claimed = (
+                await self.db.execute(
+                    pg_insert(FeeReminderLog)
+                    .values(school_id=school_id, invoice_id=inv.id, kind=kind, sent_on=today)
+                    .on_conflict_do_nothing(constraint="uq_fee_reminder_invoice_kind_day")
+                    .returning(FeeReminderLog.id)
+                )
+            ).scalar_one_or_none()
+            if claimed is None:
+                continue
+            # Re-read the invoice under the claim: if it was paid a moment ago, stop and release the claim.
+            await self.db.refresh(inv)
+            if inv.balance_amount <= Decimal("0") or inv.status not in (
+                FeeInvoiceStatus.ISSUED.value,
+                FeeInvoiceStatus.PARTIALLY_PAID.value,
+                FeeInvoiceStatus.OVERDUE.value,
+            ):
+                continue
 
             student_name = await self._student_name(student_id)
             if notif_type == NotificationType.FEE_DUE_REMINDER.value:
@@ -867,20 +925,34 @@ class FeeService:
                     event_key=f"{notif_type}:{inv.id}:{kind}:{parent.user_id}",
                 )
 
-                for ch in (NotificationChannel.SMS.value, NotificationChannel.WHATSAPP.value):
-                    row = await queue_outbound_delivery(
+            event_key = "fee_due" if notif_type == NotificationType.FEE_DUE_REMINDER.value else "fee_overdue"
+            if any_recipient:
+                from src.modules.alerts.service import dispatch_alert, school_display_name
+
+                try:
+                    alert = await dispatch_alert(
                         self.db,
                         school_id=school_id,
-                        user_id=parent.user_id,
-                        channel=ch,
+                        event_key=event_key,
                         notification_type=notif_type,
+                        student_id=student_id,
+                        variables={
+                            "student_name": student_name,
+                            "amount": f"{inv.currency} {inv.balance_amount}",
+                            "due_date": str(inv.due_date),
+                            "invoice_number": inv.invoice_number,
+                            "school_name": await school_display_name(self.db, school_id),
+                        },
+                        dedupe_key=f"{event_key}:{inv.id}:{kind}",
                         title=title,
-                        body=body,
                         link_path=link_path,
-                        meta={"invoice_id": str(inv.id), "kind": kind},
+                        urgent=False,
                     )
-                    if row:
-                        deliveries_queued += 1
+                    deliveries_queued += alert.queued + alert.scheduled
+                except Exception:
+                    from src.core.telemetry import track_alert
+
+                    track_alert("fee_alert_failed", invoice_id=str(inv.id))
 
             if any_recipient:
                 invoice_events_sent += 1
@@ -1000,12 +1072,13 @@ class FeeService:
                     select(FeeInvoiceItem).where(
                         FeeInvoiceItem.invoice_id == inv.id,
                         FeeInvoiceItem.description.ilike("%late fee%"),
-                    )
+                    ).limit(1)
                 )
-            ).scalar_one_or_none()
+            ).scalars().first()
             if existing_late:
                 continue
             rule = rules[0]
+            slabs = json.loads(rule.slabs_json) if getattr(rule, "slabs_json", None) else None
             fee = calculate_late_fee(
                 balance=money(inv.balance_amount),
                 due_date=inv.due_date,
@@ -1014,6 +1087,7 @@ class FeeService:
                 calculation_type=rule.calculation_type,
                 amount=money(rule.amount),
                 maximum_amount=money(rule.maximum_amount) if rule.maximum_amount is not None else None,
+                slabs=slabs,
             )
             if fee <= 0:
                 continue
@@ -1039,6 +1113,25 @@ class FeeService:
                 paid=money(inv.paid_amount),
                 due_date=inv.due_date,
             )
+            acc = await self.db.get(StudentFeeAccount, inv.student_fee_account_id)
+            if acc and acc.school_id == school_id:
+                from src.modules.fees.ledger import post_ledger_entry
+                from src.shared.enums import LedgerEntryType
+
+                await post_ledger_entry(
+                    self.db,
+                    school_id=school_id,
+                    student_id=acc.student_id,
+                    account_id=acc.id,
+                    entry_type=LedgerEntryType.FINE.value,
+                    debit=fee,
+                    credit=money(0),
+                    ref_type="fee_invoice",
+                    ref_id=inv.id,
+                    narration=f"Late fee on {inv.invoice_number}",
+                    actor_user_id=user_id,
+                    entry_date=today,
+                )
             applied += 1
         if applied:
             await self._audit(school_id, user_id, "LATE_FEE_APPLIED", "fee_invoice", None)
@@ -1066,8 +1159,12 @@ class FeeService:
             ).scalars().all()
             return [l.student_id for l in links]
         if role == UserRole.STUDENT.value:
-            settings = await self.get_or_create_settings(school_id)
-            if not settings.allow_student_view_fees:
+            # Read-only: a student session may not INSERT fee_settings under RLS, so a
+            # school without a settings row means the default (student viewing off).
+            settings = (
+                await self.db.execute(select(FeeSettings).where(FeeSettings.school_id == school_id))
+            ).scalar_one_or_none()
+            if settings is None or not settings.allow_student_view_fees:
                 raise ForbiddenError("Student fee viewing is disabled")
             st = (
                 await self.db.execute(
@@ -1240,11 +1337,23 @@ class FeeService:
             (
                 money(i.balance_amount)
                 for i in invoices
-                if money(i.balance_amount) > 0 and i.due_date < date.today()
+                if money(i.balance_amount) > 0 and i.due_date < ist_today()
             ),
             money(0),
         )
-        today = date.today()
+        today = ist_today()
+        stamp = func.coalesce(Payment.paid_at, Payment.created_at)
+        today_collection = money(
+            (
+                await self.db.execute(
+                    select(func.coalesce(func.sum(Payment.amount), 0)).where(
+                        Payment.school_id == school_id,
+                        Payment.status == PaymentStatus.SUCCESS.value,
+                        func.date(func.timezone("Asia/Kolkata", stamp)) == today,
+                    )
+                )
+            ).scalar_one()
+        )
         pays = (
             await self.db.execute(
                 select(Payment)
@@ -1256,16 +1365,16 @@ class FeeService:
                 .limit(10)
             )
         ).scalars().all()
-        today_collection = money(0)
         recent: list[PaymentOut] = []
         for p in pays:
-            if p.paid_at and p.paid_at.date() == today:
-                today_collection += money(p.amount)
             receipt = (
                 await self.db.execute(
-                    select(FeeReceipt).where(FeeReceipt.payment_id == p.id)
+                    select(FeeReceipt)
+                    .where(FeeReceipt.payment_id == p.id)
+                    .order_by(FeeReceipt.issued_at.desc())
+                    .limit(1)
                 )
-            ).scalar_one_or_none()
+            ).scalars().first()
             recent.append(
                 PaymentOut(
                     id=p.id,
@@ -1297,10 +1406,18 @@ class FeeService:
             recent_payments=recent,
         )
 
+    def _settings_out(self, row) -> FeeSettingsOut:
+        from src.modules.fees.exports import fee_books_view
+
+        out = FeeSettingsOut.model_validate(row)
+        for key, value in fee_books_view(row).items():
+            setattr(out, key, value)
+        return out
+
     async def get_settings(self, school_id: UUID) -> FeeSettingsOut:
         s = await self.get_or_create_settings(school_id)
         await self.db.commit()
-        return FeeSettingsOut.model_validate(s)
+        return self._settings_out(s)
 
     async def update_settings(
         self, school_id: UUID, data: FeeSettingsUpdate
@@ -1313,13 +1430,20 @@ class FeeService:
             "gateway_provider",
             "gateway_mode",
             "gateway_public_key",
+            "tally_ledger_map",
+            "section_80c_template",
+            "section_80c_signatory",
+            "section_80c_heads",
+            "financial_year_start_month",
         ):
+            if field not in data.model_fields_set:
+                continue
             val = getattr(data, field)
             if val is not None:
                 setattr(s, field, val)
         await self.db.commit()
         await self.db.refresh(s)
-        return FeeSettingsOut.model_validate(s)
+        return self._settings_out(s)
 
     async def list_late_rules(self, school_id: UUID) -> list[LateFeeRuleOut]:
         rows = (
@@ -1344,10 +1468,13 @@ class FeeService:
         row.calculation_type = data.calculation_type
         row.amount = money(data.amount)
         row.maximum_amount = money(data.maximum_amount) if data.maximum_amount is not None else None
+        row.slabs_json = json.dumps(data.slabs) if data.slabs else None
         row.active = data.active
         await self.db.commit()
         await self.db.refresh(row)
-        return LateFeeRuleOut.model_validate(row)
+        out = LateFeeRuleOut.model_validate(row)
+        out.slabs = json.loads(row.slabs_json) if row.slabs_json else None
+        return out
 
     async def report_collection(
         self, school_id: UUID, *, from_date: date | None = None, to_date: date | None = None

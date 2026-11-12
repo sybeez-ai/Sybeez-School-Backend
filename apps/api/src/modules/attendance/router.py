@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import CurrentUser, require_roles
+from src.modules.access.deps import require_permission
 from src.core.database import get_db
 from src.core.exceptions import ForbiddenError
 from src.modules.attendance.permissions import READ_ROLES, WRITE_ROLES
@@ -30,6 +31,8 @@ from src.modules.attendance.schemas import (
 from src.modules.attendance.service import AttendanceService
 from src.modules.reports.exporters import rows_to_csv
 from src.shared.enums import UserRole
+from src.shared.pagination import Page, PageQuery
+from src.modules.access.deps import public
 
 router = APIRouter(prefix="/attendance", tags=["attendance"])
 
@@ -40,7 +43,18 @@ def _sid(u: CurrentUser) -> UUID:
     return u.school_id
 
 
+@router.get("", response_model=Page[AttendanceOut])
+async def list_attendance(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_permission("attendance.read"))],
+    page: PageQuery,
+):
+    items, total = await AttendanceService(db).list_visible(user, _sid(user), page)
+    return Page(items=items, total=total, page=page.page, page_size=page.page_size)
+
+
 @router.get("/health")
+@public
 async def attendance_health():
     return {"module": "attendance", "status": "ok"}
 
@@ -203,7 +217,11 @@ async def get_roster(
     attended_on: date = Query(...),
 ):
     roster, _ = await AttendanceService(db).roster(
-        school_id=_sid(user), class_id=class_id, attended_on=attended_on
+        school_id=_sid(user),
+        class_id=class_id,
+        attended_on=attended_on,
+        user_id=user.id,
+        role=user.role.value,
     )
     return roster
 
@@ -216,7 +234,11 @@ async def get_summary(
     attended_on: date = Query(...),
 ):
     _, summary = await AttendanceService(db).roster(
-        school_id=_sid(user), class_id=class_id, attended_on=attended_on
+        school_id=_sid(user),
+        class_id=class_id,
+        attended_on=attended_on,
+        user_id=user.id,
+        role=user.role.value,
     )
     return summary
 
@@ -282,6 +304,8 @@ async def student_attendance(
             raise ForbiddenError("Cannot view another student's attendance")
     elif user.role == UserRole.PARENT:
         await svc.assert_parent_of(school_id=school_id, user_id=user.id, student_id=student_id)
+    elif user.role == UserRole.TEACHER:
+        await svc.assert_teacher_of_student(school_id=school_id, user_id=user.id, student_id=student_id)
     return await svc.list_for_student(
         school_id=school_id,
         student_id=student_id,
@@ -306,6 +330,8 @@ async def student_monthly(
             raise ForbiddenError("Cannot view another student's attendance")
     elif user.role == UserRole.PARENT:
         await svc.assert_parent_of(school_id=school_id, user_id=user.id, student_id=student_id)
+    elif user.role == UserRole.TEACHER:
+        await svc.assert_teacher_of_student(school_id=school_id, user_id=user.id, student_id=student_id)
     return await svc.monthly_stats(
         school_id=school_id, student_id=student_id, year=year, month=month
     )
@@ -321,6 +347,8 @@ async def student_audit(
     school_id = _sid(user)
     if user.role == UserRole.PARENT:
         await svc.assert_parent_of(school_id=school_id, user_id=user.id, student_id=student_id)
+    elif user.role == UserRole.TEACHER:
+        await svc.assert_teacher_of_student(school_id=school_id, user_id=user.id, student_id=student_id)
     return await svc.audit_for_student(school_id=school_id, student_id=student_id)
 
 

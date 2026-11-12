@@ -10,6 +10,7 @@ from src.core.exceptions import ForbiddenError
 from src.modules.ai_reports.schemas import AiReportOut, GenerateReportRequest
 from src.modules.ai_reports.service import AiReportsService
 from src.shared.enums import UserRole
+from src.modules.access.deps import public
 
 router = APIRouter(prefix="/ai-reports", tags=["ai-reports"])
 
@@ -27,6 +28,7 @@ def _bearer(authorization: str | None = Header(default=None)) -> str | None:
 
 
 @router.get("/health")
+@public
 async def ai_reports_health():
     return {"module": "ai_reports", "status": "ok"}
 

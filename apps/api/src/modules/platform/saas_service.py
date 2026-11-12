@@ -15,6 +15,7 @@ from src.modules.audit.repository import AuditRepository
 from src.modules.platform.schemas import (
     PlanCreate,
     PlanOut,
+    PlanPricing,
     PlanUpdate,
     PlatformAiOverview,
     PlatformAiSettingsOut,
@@ -24,6 +25,21 @@ from src.modules.platform.schemas import (
     MetricPoint,
 )
 from src.shared.enums import SubscriptionStatus
+
+
+def _pricing_of(entitlements: dict | None) -> PlanPricing:
+    raw = (entitlements or {}).get("pricing") or {}
+    try:
+        return PlanPricing.model_validate(raw)
+    except Exception:  # noqa: BLE001 - older free-form rows
+        return PlanPricing()
+
+
+def _with_pricing(entitlements: dict, pricing: PlanPricing | None) -> dict:
+    out = dict(entitlements or {})
+    if pricing is not None:
+        out["pricing"] = pricing.model_dump()
+    return out
 
 
 class PlatformSaasService:
@@ -82,7 +98,7 @@ class PlatformSaasService:
             max_teachers=data.max_teachers,
             max_storage_gb=data.max_storage_gb,
             ai_monthly_tokens=data.ai_monthly_tokens,
-            entitlements=data.entitlements or {},
+            entitlements=_with_pricing(data.entitlements or {}, data.pricing),
             is_public=data.is_public,
             sort_order=data.sort_order,
         )
@@ -101,8 +117,15 @@ class PlatformSaasService:
         plan = await self.db.get(PlatformPlan, plan_id)
         if not plan:
             raise NotFoundError("Plan not found")
-        for k, v in data.model_dump(exclude_unset=True).items():
+        changes = data.model_dump(exclude_unset=True)
+        pricing = changes.pop("pricing", None)
+        for k, v in changes.items():
             setattr(plan, k, v)
+        if pricing is not None or "entitlements" in changes:
+            plan.entitlements = _with_pricing(
+                dict(plan.entitlements or {}),
+                data.pricing if pricing is not None else _pricing_of(plan.entitlements),
+            )
         await self.db.flush()
         await self.audit.write(
             action="platform.plan.update",
@@ -143,6 +166,7 @@ class PlatformSaasService:
             max_storage_gb=plan.max_storage_gb,
             ai_monthly_tokens=plan.ai_monthly_tokens,
             entitlements=plan.entitlements or {},
+            pricing=_pricing_of(plan.entitlements),
             is_active=plan.is_active,
             is_public=plan.is_public,
             sort_order=plan.sort_order,

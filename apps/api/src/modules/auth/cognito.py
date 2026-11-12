@@ -233,6 +233,13 @@ def complete_new_password(
     return _auth_result_from_tokens(resp.get("AuthenticationResult") or {}, username)
 
 
+class CognitoAccessDeniedError(ConflictError):
+    """The API's IAM role may not call Cognito admin APIs (e.g. AccessDeniedException)."""
+
+
+_ACCESS_DENIED_CODES = {"AccessDeniedException", "AccessDenied", "UnrecognizedClientException"}
+
+
 def admin_create_user(
     *,
     email: str,
@@ -302,6 +309,8 @@ def admin_create_user(
                 return str(sub)
             except ClientError as inner:
                 raise ConflictError(f"Cognito user exists but password update failed: {inner}") from inner
+        if code in _ACCESS_DENIED_CODES:
+            raise CognitoAccessDeniedError(f"Cognito create user failed: {code}") from exc
         raise ConflictError(f"Cognito create user failed: {code}") from exc
 
 
@@ -551,3 +560,102 @@ def admin_confirm_forgot_password(*, email: str, confirmation_code: str, new_pas
         code = exc.response.get("Error", {}).get("Code", "")
         msg = exc.response.get("Error", {}).get("Message") or "Could not reset password"
         raise UnauthorizedError(f"{msg} ({code})") from exc
+
+
+def disable_user_for_deletion(*, email: str) -> str:
+    """Disable the pool user before an account deletion. Returns ``disabled``, ``missing`` or ``skipped``.
+
+    Raises when the user exists but cannot be disabled, so deletion stops before any data changes.
+    """
+    if not cognito_configured():
+        return "skipped"
+    s = get_settings()
+    client = _client()
+    username = _resolve_username(email)
+    try:
+        client.admin_disable_user(UserPoolId=s.cognito_user_pool_id, Username=username)
+        return "disabled"
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") == "UserNotFoundException":
+            return "missing"
+        logger.warning("Cognito disable for deletion failed: %s", exc.response.get("Error", {}).get("Code"))
+        raise
+
+
+def delete_user_after_deletion(*, email: str) -> bool:
+    """Delete the (already disabled) pool user. Best effort; returns whether it is gone."""
+    if not cognito_configured():
+        return True
+    s = get_settings()
+    try:
+        _client().admin_delete_user(UserPoolId=s.cognito_user_pool_id, Username=_resolve_username(email))
+        return True
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") == "UserNotFoundException":
+            return True
+        logger.error("Cognito delete after account deletion failed: %s", exc.response.get("Error", {}).get("Code"))
+        return False
+
+
+def reenable_user(*, email: str) -> None:
+    admin_set_enabled(email=email, enabled=True)
+
+
+# ── groups (informational claims only: the database role is always the authority) ──────────────────────────
+GROUP_FOR_ROLE = {
+    "PLATFORM_ADMIN": "PLATFORM_ADMIN",
+    "PLATFORM_STAFF": "PLATFORM_STAFF",
+    "SCHOOL_ADMIN": "SCHOOL_ADMIN",
+    "TEACHER": "TEACHER",
+    "STUDENT": "STUDENT",
+    "PARENT": "PARENT",
+    "HR_MANAGER": "HRM",
+    "HR": "HRM",
+    "PAYROLL_ADMIN": "FINANCE",
+    "PAYROLL_APPROVER": "FINANCE",
+    "ACCOUNTANT": "FINANCE",
+    "CASHIER": "FINANCE",
+    "AUDITOR": "FINANCE",
+    "FINANCE": "FINANCE",
+    "STAFF": "STAFF",
+}
+MANAGED_GROUPS = frozenset(GROUP_FOR_ROLE.values())
+
+
+def groups_for_roles(roles) -> set[str]:
+    return {GROUP_FOR_ROLE[str(r)] for r in roles if str(r) in GROUP_FOR_ROLE}
+
+
+def sync_user_groups(*, email: str, roles) -> bool:
+    """Make the pool user's managed groups equal the groups for ``roles``. Best effort: never raises.
+
+    Groups are informational. Authorization always comes from school_memberships in the database, so a failure here
+    (or a stale group) never grants or removes access.
+    """
+    if not cognito_configured():
+        return False
+    s = get_settings()
+    want = groups_for_roles(roles)
+    try:
+        client = _client()
+        username = _resolve_username(email)
+        have: set[str] = set()
+        token = None
+        while True:
+            kw = {"UserPoolId": s.cognito_user_pool_id, "Username": username}
+            if token:
+                kw["NextToken"] = token
+            page = client.admin_list_groups_for_user(**kw)
+            have |= {g["GroupName"] for g in page.get("Groups", [])}
+            token = page.get("NextToken")
+            if not token:
+                break
+        for g in sorted(want - have):
+            client.admin_add_user_to_group(UserPoolId=s.cognito_user_pool_id, Username=username, GroupName=g)
+        for g in sorted((have & MANAGED_GROUPS) - want):
+            client.admin_remove_user_from_group(UserPoolId=s.cognito_user_pool_id, Username=username, GroupName=g)
+        return True
+    except Exception as exc:  # noqa: BLE001
+        code = (getattr(exc, "response", None) or {}).get("Error", {}).get("Code") or type(exc).__name__
+        logger.warning("Cognito group sync failed (%s)", code)
+        return False

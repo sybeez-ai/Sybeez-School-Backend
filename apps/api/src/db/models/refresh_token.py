@@ -15,6 +15,8 @@ class RefreshToken(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     jti: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
     token_hash: Mapped[str] = mapped_column(String(128), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    family_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    absolute_session: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     revoked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     replaced_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
 

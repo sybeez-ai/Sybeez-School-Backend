@@ -10,7 +10,7 @@ class AuditLogOut(BaseModel):
     school_id: UUID | None = None
     school_name: str | None = None
     actor_id: UUID | None = None
-    actor_email: EmailStr | None = None
+    actor_email: str | None = None
     action: str
     message: str | None = None
     details: dict | None = None

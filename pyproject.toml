@@ -8,3 +8,14 @@ requires-python = ">=3.12"
 asyncio_mode = "auto"
 testpaths = ["apps/api/tests"]
 pythonpath = ["apps/api"]
+addopts = "--import-mode=importlib"
+
+[tool.ruff]
+line-length = 120
+src = ["apps/api", "apps/worker", "packages"]
+
+[tool.ruff.lint]
+# Syntax and pyflakes. The tree already has long lines and unused imports;
+# those stay out of CI so a pull request fails on new undefined names and syntax errors.
+select = ["E9", "F"]
+ignore = ["E501", "F401", "F841", "E741", "F541"]

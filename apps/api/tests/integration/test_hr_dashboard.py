@@ -42,6 +42,11 @@ async def test_empty_school_reports_zeros_not_errors(api, hr_world):
 async def test_dashboard_matches_module_apis(api, hr_world):
     admin, teacher = hr_world.admin_a, hr_world.teacher_a
     today = _today()
+    # Every day is a working day so the test does not depend on the weekday it runs on.
+    every_day = await api.patch(
+        "/api/v1/hr/settings", json={"working_weekdays": [0, 1, 2, 3, 4, 5, 6]}, headers=admin.headers
+    )
+    assert every_day.status_code == 200, every_day.text
     dept = (await api.post(DEPTS, json={"name": "Dash Office"}, headers=admin.headers)).json()
     cook = (
         await api.post(

@@ -40,6 +40,7 @@ from src.modules.exams.schemas import (
 )
 from src.modules.exams.service import ExamService
 from src.shared.enums import UserRole
+from src.modules.access.deps import public
 
 router = APIRouter(prefix="/exams", tags=["exams"])
 
@@ -51,6 +52,7 @@ def _sid(u: CurrentUser) -> UUID:
 
 
 @router.get("/health")
+@public
 async def exams_health():
     return {"module": "exams", "status": "ok"}
 
@@ -174,6 +176,8 @@ async def list_exams(
         academic_year_id=academic_year_id,
         status=status,
         grade_id=grade_id,
+        user_id=user.id,
+        role=user.role.value,
     )
 
 
@@ -195,7 +199,9 @@ async def get_exam(
         Depends(require_roles(UserRole.SCHOOL_ADMIN, UserRole.TEACHER)),
     ],
 ):
-    return await ExamService(db).get_exam(_sid(user), exam_id)
+    return await ExamService(db).get_exam(
+        _sid(user), exam_id, user_id=user.id, role=user.role.value
+    )
 
 
 @router.patch("/{exam_id}", response_model=ExamOut)
@@ -263,7 +269,9 @@ async def get_schedule(
         Depends(require_roles(UserRole.SCHOOL_ADMIN, UserRole.TEACHER)),
     ],
 ):
-    return await ExamService(db).list_schedule(_sid(user), exam_id)
+    return await ExamService(db).list_schedule(
+        _sid(user), exam_id, user_id=user.id, role=user.role.value
+    )
 
 
 @router.post("/{exam_id}/schedule", response_model=list[ExamScheduleOut])

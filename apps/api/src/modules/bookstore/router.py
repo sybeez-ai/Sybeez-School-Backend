@@ -18,6 +18,7 @@ from src.modules.bookstore.schemas import (
 )
 from src.modules.bookstore.service import BookstoreService
 from src.shared.enums import UserRole
+from src.modules.access.deps import public
 
 router = APIRouter(prefix="/bookstore", tags=["bookstore"])
 
@@ -29,6 +30,7 @@ def _sid(u: CurrentUser) -> UUID:
 
 
 @router.get("/health")
+@public
 async def bookstore_health():
     return {"module": "bookstore", "status": "ok"}
 

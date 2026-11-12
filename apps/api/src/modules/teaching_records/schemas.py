@@ -12,6 +12,7 @@ class TeachingRecordCreate(BaseModel):
     summary: str | None = None
     objectives: str | None = None
     homework_notes: str | None = None
+    syllabus_topic_id: UUID | None = None
 
 
 class TeachingRecordOut(BaseModel):
@@ -25,6 +26,7 @@ class TeachingRecordOut(BaseModel):
     summary: str | None
     objectives: str | None
     homework_notes: str | None
+    syllabus_topic_id: UUID | None = None
     created_at: datetime
     subject_name: str | None = None
     class_name: str | None = None

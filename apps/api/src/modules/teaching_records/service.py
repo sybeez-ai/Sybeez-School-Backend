@@ -3,8 +3,19 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.exceptions import ForbiddenError
-from src.db.models import ClassRoom, Enrollment, Student, Subject, Teacher, TeachingRecord, User
+from src.core.exceptions import ForbiddenError, NotFoundError
+from src.db.models import (
+    ClassRoom,
+    Enrollment,
+    Student,
+    Subject,
+    Syllabus,
+    SyllabusTopic,
+    Teacher,
+    TeacherAssignment,
+    TeachingRecord,
+    User,
+)
 from src.modules.teaching_records.repository import TeachingRecordRepository
 from src.modules.teaching_records.schemas import TeachingRecordCreate, TeachingRecordOut
 from src.shared.enums import EnrollmentStatus
@@ -23,6 +34,43 @@ class TeachingRecordService:
         if teacher is None:
             raise ForbiddenError("Teacher profile required")
         return teacher
+
+    async def assert_teaches(
+        self, *, school_id: UUID, teacher: Teacher, class_id: UUID, subject_id: UUID | None = None
+    ) -> None:
+        """Teacher must hold a teaching assignment for the section (and subject, when given)
+        or be the section's class teacher."""
+        classroom = await self.db.get(ClassRoom, class_id)
+        if classroom is None or classroom.school_id != school_id:
+            raise NotFoundError("Section not found")
+        if classroom.class_teacher_id == teacher.id:
+            return
+        stmt = select(TeacherAssignment.id).where(
+            TeacherAssignment.school_id == school_id,
+            TeacherAssignment.teacher_id == teacher.id,
+            TeacherAssignment.class_id == class_id,
+        )
+        if subject_id is not None:
+            stmt = stmt.where(TeacherAssignment.subject_id == subject_id)
+        if (await self.db.execute(stmt.limit(1))).scalar_one_or_none() is None:
+            raise ForbiddenError("You are not assigned to this section/subject")
+
+    async def assert_user_teaches_class(self, *, school_id: UUID, user_id: UUID, class_id: UUID) -> None:
+        teacher = await self._teacher_for_user(school_id, user_id)
+        await self.assert_teaches(school_id=school_id, teacher=teacher, class_id=class_id)
+
+    async def _validate_topic(self, *, school_id: UUID, subject_id: UUID, topic_id: UUID) -> None:
+        row = (
+            await self.db.execute(
+                select(Syllabus.subject_id)
+                .join(SyllabusTopic, SyllabusTopic.syllabus_id == Syllabus.id)
+                .where(SyllabusTopic.id == topic_id, SyllabusTopic.school_id == school_id)
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            raise NotFoundError("Syllabus topic not found")
+        if row != subject_id:
+            raise ForbiddenError("Syllabus topic belongs to a different subject")
 
     async def _student_class_id(self, school_id: UUID, user_id: UUID) -> UUID:
         student = (
@@ -94,6 +142,13 @@ class TeachingRecordService:
 
     async def create(self, *, school_id: UUID, user_id: UUID, data: TeachingRecordCreate) -> TeachingRecordOut:
         teacher = await self._teacher_for_user(school_id, user_id)
+        await self.assert_teaches(
+            school_id=school_id, teacher=teacher, class_id=data.class_id, subject_id=data.subject_id
+        )
+        if data.syllabus_topic_id is not None:
+            await self._validate_topic(
+                school_id=school_id, subject_id=data.subject_id, topic_id=data.syllabus_topic_id
+            )
         record = TeachingRecord(
             school_id=school_id,
             teacher_id=teacher.id,
@@ -104,6 +159,7 @@ class TeachingRecordService:
             summary=data.summary,
             objectives=data.objectives,
             homework_notes=data.homework_notes,
+            syllabus_topic_id=data.syllabus_topic_id,
         )
         created = await self.repo.create(record)
         rows = await self._enrich([created])

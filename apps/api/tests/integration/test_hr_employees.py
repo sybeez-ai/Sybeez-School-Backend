@@ -168,13 +168,15 @@ async def test_update_non_teaching_staff(api, hr_world, db_session):
 
     r = await api.patch(
         f"{EMP}/{emp['id']}",
-        json={"full_name": "Ravi K. Kumar", "address": "12 MG Road", "notes": "Night shift", "status": "LEFT"},
+        json={"full_name": "Ravi K. Kumar", "address": "12 MG Road", "notes": "Night shift", "status": "INACTIVE"},
         headers=hr_world.admin_a.headers,
     )
 
     assert r.status_code == 200, r.text
     assert r.json()["full_name"] == "Ravi K. Kumar"
-    assert r.json()["status"] == "LEFT"
+    assert r.json()["status"] == "INACTIVE"
+    left = await api.patch(f"{EMP}/{emp['id']}", json={"status": "LEFT"}, headers=hr_world.admin_a.headers)
+    assert left.status_code == 422 and "exit action" in left.json()["error"]["message"]
     got = (await api.get(f"{EMP}/{emp['id']}", headers=hr_world.admin_a.headers)).json()
     assert got["address"] == "12 MG Road"
     assert got["notes"] == "Night shift"

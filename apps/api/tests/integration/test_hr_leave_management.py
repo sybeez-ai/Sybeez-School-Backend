@@ -115,7 +115,7 @@ async def test_overlapping_pending_or_approved_leave_is_409(api, hr_world):
     overlap_pending = await _apply(api, t, "2026-12-05", "2026-12-06")
     await _decide(api, hr_world.admin_a, first["id"], "APPROVED")
     overlap_approved = await _apply(api, t, "2026-11-30", "2026-12-01")
-    adjacent = await _apply(api, t, "2026-12-06", "2026-12-06")
+    adjacent = await _apply(api, t, "2026-12-07", "2026-12-07")
     colleague = await _apply(api, hr_world.teacher_a2, "2026-12-01", "2026-12-05")
 
     assert overlap_pending.status_code == 409

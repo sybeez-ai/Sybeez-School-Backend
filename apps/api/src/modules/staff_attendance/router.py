@@ -6,7 +6,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.dependencies import CurrentUser, require_roles
+from src.api.dependencies import CurrentUser
+from src.modules.hr.access import require_hr_admin
 from src.core.database import get_db
 from src.core.exceptions import AppError, ForbiddenError
 from src.modules.staff_attendance.schemas import (
@@ -14,16 +15,15 @@ from src.modules.staff_attendance.schemas import (
     AttendanceMark,
     AttendanceOut,
     AttendanceUpdate,
+    AuditEntry,
     BulkResult,
     DailySheet,
     RangeSummary,
 )
 from src.modules.staff_attendance.service import StaffAttendanceService
-from src.shared.enums import UserRole
-
 router = APIRouter(prefix="/hr/attendance", tags=["hr-attendance"])
 
-Admin = Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))]
+Admin = Annotated[CurrentUser, Depends(require_hr_admin)]
 Db = Annotated[AsyncSession, Depends(get_db)]
 Q = Annotated[str | None, Query(max_length=200)]
 StaffType = Annotated[str | None, Query(pattern="^(TEACHING|NON_TEACHING)$")]
@@ -138,6 +138,18 @@ async def update_attendance(
 
 
 @router.delete("/{record_id}", status_code=204)
-async def delete_attendance(record_id: UUID, user: Admin, db: Db):
-    await StaffAttendanceService(db).delete(_sid(user), record_id)
+async def delete_attendance(
+    record_id: UUID,
+    user: Admin,
+    db: Db,
+    reason: Annotated[str | None, Query(max_length=500)] = None,
+):
+    await StaffAttendanceService(db).delete(
+        _sid(user), record_id, user.id, (reason or "").strip() or None
+    )
     return Response(status_code=204)
+
+
+@router.get("/{record_id}/history", response_model=list[AuditEntry])
+async def attendance_audit_trail(record_id: UUID, user: Admin, db: Db):
+    return await StaffAttendanceService(db).audit_trail(_sid(user), record_id)

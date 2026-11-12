@@ -19,6 +19,7 @@ from src.modules.personal_life.schemas import (
 )
 from src.modules.personal_life.service import PersonalLifeService
 from src.shared.enums import UserRole
+from src.modules.access.deps import public
 
 router = APIRouter(prefix="/personal-life", tags=["personal-life"])
 
@@ -32,6 +33,7 @@ def _sid(u: CurrentUser) -> UUID:
 
 
 @router.get("/health")
+@public
 async def personal_life_health():
     return {"module": "personal_life", "status": "ok"}
 

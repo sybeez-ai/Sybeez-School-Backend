@@ -95,6 +95,7 @@ async def test_routing_errors_use_the_standard_shape_and_keep_detail(api, hr_wor
 
 def test_unchecked_database_errors_become_client_errors_without_sql():
     request = Request({"type": "http", "method": "POST", "path": "/api/v1/hr/x", "headers": [(b"x-request-id", b"req-7")]})
+    request.state.request_id = "req-7"
     cases = (
         (IntegrityError("INSERT INTO departments ...", {}, Exception('duplicate key value violates "uq"')), 409, "conflict"),
         (DataError("UPDATE payroll_payslips ...", {}, Exception("numeric field overflow")), 422, "invalid_value"),

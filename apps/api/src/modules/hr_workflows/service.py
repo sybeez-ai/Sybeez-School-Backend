@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import UTC, date, datetime, timedelta
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -19,9 +19,9 @@ from src.modules.employees.lookup import (
     get_employee_brief,
     user_names,
 )
+from src.modules.hr.audit import hr_audit
 from src.modules.hr_notifications.service import (
     ADMIN_LINKS,
-    EMPLOYEE_LINKS,
     HR_ONBOARDING,
     HrNotifier,
 )
@@ -40,22 +40,6 @@ from src.modules.hr_workflows.schemas import (
 )
 from src.shared.enums import MembershipStatus, UserRole
 
-DEFAULT_TASKS = {
-    "ONBOARDING": (
-        "Collect joining documents",
-        "Create email and portal access",
-        "Assign department and reporting manager",
-        "Schedule orientation",
-        "Issue ID card",
-    ),
-    "OFFBOARDING": (
-        "Conduct exit interview",
-        "Collect school assets",
-        "Revoke system access",
-        "Final salary clearance",
-        "Issue relieving letter",
-    ),
-}
 WORKFLOW_LABEL = {"ONBOARDING": "Onboarding", "OFFBOARDING": "Offboarding"}
 
 
@@ -65,11 +49,9 @@ class HrWorkflowService:
 
     # ── reads ──────────────────────────────────────────────────────────────
 
-    @staticmethod
-    def template(workflow_type: str) -> TemplateOut:
-        return TemplateOut(
-            workflow_type=workflow_type, tasks=list(DEFAULT_TASKS[workflow_type])
-        )
+    async def template(self, school_id: UUID, workflow_type: str) -> TemplateOut:
+        rules = await load_rules(self.db, school_id)
+        return TemplateOut(workflow_type=workflow_type, tasks=list(rules.checklist(workflow_type)))
 
     async def owners(self, school_id: UUID) -> list[OwnerOut]:
         rows = await self.db.execute(
@@ -77,7 +59,9 @@ class HrWorkflowService:
             .join(SchoolMembership, SchoolMembership.user_id == User.id)
             .where(
                 SchoolMembership.school_id == school_id,
-                SchoolMembership.role == UserRole.SCHOOL_ADMIN.value,
+                SchoolMembership.role.in_(
+                    (UserRole.SCHOOL_ADMIN.value, UserRole.HR.value, UserRole.HR_MANAGER.value)
+                ),
                 SchoolMembership.status == MembershipStatus.ACTIVE.value,
                 User.is_active.is_(True),
             )
@@ -158,7 +142,7 @@ class HrWorkflowService:
         tasks = (
             data.tasks
             if data.tasks is not None
-            else [TaskIn(title=t) for t in DEFAULT_TASKS[data.workflow_type]]
+            else [TaskIn(title=t) for t in (await load_rules(self.db, school_id)).checklist(data.workflow_type)]
         )
         if not tasks:
             raise AppError("Add at least one checklist task", status_code=422)
@@ -194,19 +178,21 @@ class HrWorkflowService:
             raise ConflictError(
                 f"{emp.full_name} already has an active {WORKFLOW_LABEL[data.workflow_type].lower()} workflow"
             ) from exc
-        for i, t in enumerate(tasks):
-            self.db.add(
-                HrWorkflowTask(
-                    school_id=school_id,
-                    workflow_id=wf.id,
-                    title=t.title,
-                    description=t.description or None,
-                    sort_order=(i + 1) * 10,
-                    due_date=t.due_date,
-                    assignee_user_id=t.assignee_user_id,
-                    created_by=user_id,
-                )
+        rows = [
+            HrWorkflowTask(
+                id=uuid4(),
+                school_id=school_id,
+                workflow_id=wf.id,
+                title=t.title,
+                description=t.description or None,
+                sort_order=(i + 1) * 10,
+                due_date=t.due_date,
+                assignee_user_id=t.assignee_user_id,
+                created_by=user_id,
             )
+            for i, t in enumerate(tasks)
+        ]
+        self.db.add_all(rows)
         await self.db.flush()
         label = WORKFLOW_LABEL[wf.workflow_type]
         notifier = HrNotifier(self.db)
@@ -218,6 +204,7 @@ class HrWorkflowService:
             title=f"Your {label.lower()} has started",
             body=f"{len(tasks)} checklist item{'s' if len(tasks) != 1 else ''} — track progress in My HR.",
             entity_id=wf.id,
+            event="started",
             actor=user_id,
         )
         await notifier.send(
@@ -229,10 +216,21 @@ class HrWorkflowService:
             link=ADMIN_LINKS["workflow"],
             entity_type="hr_workflow",
             entity_id=wf.id,
+            event=f"owner:{owner}",
             actor=user_id,
         )
-        for t in tasks:
-            await self._notify_assignee(wf, emp.full_name, emp.user_id, t.title, t.assignee_user_id, user_id)
+        for t in rows:
+            await self._notify_assignee(wf, emp.full_name, emp.user_id, t.id, t.title, t.assignee_user_id, user_id)
+        await hr_audit(
+            self.db,
+            school_id=school_id,
+            actor_id=user_id,
+            action=f"hr.{wf.workflow_type.lower()}.started",
+            resource_type="employee",
+            resource_id=emp.id,
+            message=f"{label} started for {emp.full_name}",
+            details={"workflow_id": wf.id, "tasks": len(rows)},
+        )
         return await self.get(school_id, wf.id)
 
     async def update(
@@ -278,21 +276,21 @@ class HrWorkflowService:
                 )
             )
         ).scalar_one_or_none()
-        self.db.add(
-            HrWorkflowTask(
-                school_id=school_id,
-                workflow_id=wf.id,
-                title=data.title,
-                description=data.description or None,
-                sort_order=(last or 0) + 10,
-                due_date=data.due_date,
-                assignee_user_id=data.assignee_user_id,
-                created_by=user_id,
-            )
+        task = HrWorkflowTask(
+            id=uuid4(),
+            school_id=school_id,
+            workflow_id=wf.id,
+            title=data.title,
+            description=data.description or None,
+            sort_order=(last or 0) + 10,
+            due_date=data.due_date,
+            assignee_user_id=data.assignee_user_id,
+            created_by=user_id,
         )
+        self.db.add(task)
         await self._touch(wf, user_id)
         await self._notify_assignee(
-            wf, emp.full_name, emp.user_id, data.title, data.assignee_user_id, user_id
+            wf, emp.full_name, emp.user_id, task.id, data.title, data.assignee_user_id, user_id
         )
         return await self.get(school_id, wf.id)
 
@@ -325,7 +323,7 @@ class HrWorkflowService:
         await self._touch(wf, user_id)
         if reassigned:
             await self._notify_assignee(
-                wf, emp.full_name, emp.user_id, task.title, new_assignee, user_id
+                wf, emp.full_name, emp.user_id, task.id, task.title, new_assignee, user_id
             )
         return await self.get(school_id, wf.id)
 
@@ -359,6 +357,7 @@ class HrWorkflowService:
                 link=ADMIN_LINKS["workflow"],
                 entity_type="hr_workflow",
                 entity_id=wf.id,
+                event=f"task:{task.id}:done",
                 actor=user_id,
             )
         return await self.get(school_id, wf.id)
@@ -421,6 +420,7 @@ class HrWorkflowService:
         wf: HrWorkflow,
         employee_name: str,
         employee_user: UUID | None,
+        task_id: UUID,
         task_title: str,
         assignee: UUID | None,
         actor: UUID,
@@ -429,15 +429,18 @@ class HrWorkflowService:
             return
         label = WORKFLOW_LABEL[wf.workflow_type].lower()
         mine = assignee == employee_user
-        await HrNotifier(self.db).send(
+        notifier = HrNotifier(self.db)
+        links = await notifier.employee_links(wf.school_id, assignee) if mine else ADMIN_LINKS
+        await notifier.send(
             wf.school_id,
             [assignee],
             category=HR_ONBOARDING,
             title=f"Task assigned to you: {task_title}",
             body=f"Part of your {label}." if mine else f"Part of the {label} of {employee_name}.",
-            link=(EMPLOYEE_LINKS if mine else ADMIN_LINKS)["workflow"],
+            link=links["workflow"],
             entity_type="hr_workflow",
             entity_id=wf.id,
+            event=f"task:{task_id}:assigned:{assignee}",
             actor=actor,
         )
 
@@ -456,6 +459,7 @@ class HrWorkflowService:
                 title=f"Your {label.lower()} is complete",
                 body="Every checklist item has been finished.",
                 entity_id=wf.id,
+                event="completed",
                 actor=actor,
             )
         await notifier.send(
@@ -467,7 +471,18 @@ class HrWorkflowService:
             link=ADMIN_LINKS["workflow"],
             entity_type="hr_workflow",
             entity_id=wf.id,
+            event=f"closed:{verb}",
             actor=actor,
+        )
+        await hr_audit(
+            self.db,
+            school_id=wf.school_id,
+            actor_id=actor,
+            action=f"hr.{wf.workflow_type.lower()}.{verb}",
+            resource_type="employee",
+            resource_id=emp.id,
+            message=f"{label} of {emp.full_name} {verb}",
+            details={"workflow_id": wf.id, "reason": reason},
         )
 
     async def _assert_owner(

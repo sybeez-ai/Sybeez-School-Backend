@@ -15,6 +15,7 @@ class Headcount(BaseModel):
     inactive: int
     teaching: int
     non_teaching: int
+    left: int = 0
 
 
 class DepartmentHeadcount(BaseModel):
@@ -41,6 +42,9 @@ class RecordsSummary(BaseModel):
     draft_letters: int
     issued_letters: int
     active_documents: int
+    documents_pending_verification: int = 0
+    documents_expired: int = 0
+    documents_expiring: int = 0
     checklist_required: list[str]
     checklist_complete: int
     checklist_incomplete: int
@@ -64,7 +68,9 @@ class SalarySlipSummary(BaseModel):
 
 
 class HrAlert(BaseModel):
-    key: Literal["leave", "attendance", "documents", "requests", "onboarding", "letters"]
+    key: Literal[
+        "leave", "attendance", "documents", "verification", "expiry", "requests", "onboarding", "letters"
+    ]
     severity: Literal["info", "warning"]
     count: int
     message: str
@@ -77,6 +83,8 @@ class HrDashboardOut(BaseModel):
     headcount: Headcount
     departments: list[DepartmentHeadcount]
     attendance_today: DailySummary
+    is_working_day: bool = True
+    non_working_reason: str | None = None
     attendance_month: AttendanceMonth
     leave: LeaveSummary
     records: RecordsSummary

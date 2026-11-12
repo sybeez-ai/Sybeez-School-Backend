@@ -9,14 +9,17 @@ from src.core.exceptions import ForbiddenError, NotFoundError
 from src.db.models import ClassRoom, Enrollment, Parent, Student, StudentParent, User
 from src.modules.parents.schemas import LinkParentRequest, ParentChildBrief, ParentCreate, ParentOut
 from src.modules.schools.provisioning import create_school_user
+from src.modules.students.schemas import StudentOut
 from src.shared.enums import UserRole
+from src.shared.listing import fetch_page
+from src.shared.pagination import PageParams
 
 
 class ParentService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def create(self, school_id: UUID, data: ParentCreate) -> ParentOut:
+    async def create(self, school_id: UUID, data: ParentCreate, actor_id: UUID | None = None) -> ParentOut:
         """Create or reuse parent for email — supports multiple children per parent."""
         user, _, temp = await create_school_user(
             self.db,
@@ -25,6 +28,7 @@ class ParentService:
             full_name=data.full_name,
             password=data.password,
             role=UserRole.PARENT,
+            actor_id=actor_id,
         )
         parent = (
             await self.db.execute(

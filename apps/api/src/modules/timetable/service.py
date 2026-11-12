@@ -1,10 +1,13 @@
-from datetime import date, datetime, time
+from datetime import UTC, date, datetime, time
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.api.dependencies import CurrentUser
 from src.core.exceptions import AppError, ConflictError, ForbiddenError, NotFoundError
+from src.modules.access.scope import restrict_classes
 from src.db.models import (
     AcademicYear,
     ClassRoom,
@@ -635,8 +638,11 @@ class TimetableService:
         teacher_id: UUID | None = None,
         academic_year_id: UUID | None = None,
         day_of_week: int | None = None,
+        user: CurrentUser | None = None,
     ) -> list[TimetableEntryOut]:
         q = select(TimetableEntry).where(TimetableEntry.school_id == school_id)
+        if user is not None:
+            q = restrict_classes(q, user, school_id, TimetableEntry.class_id)
         if class_id:
             q = q.where(TimetableEntry.class_id == class_id)
         if teacher_id:
@@ -652,10 +658,14 @@ class TimetableService:
 
     # ── grid ─────────────────────────────────────────────────
 
-    async def grid(self, *, school_id: UUID, class_id: UUID) -> TimetableGridOut:
+    async def grid(self, *, school_id: UUID, class_id: UUID, user: CurrentUser | None = None) -> TimetableGridOut:
         classroom = await self.db.get(ClassRoom, class_id)
         if not classroom or classroom.school_id != school_id:
             raise NotFoundError("Section not found")
+        if user is not None and user.role == UserRole.TEACHER:
+            from src.modules.access.scope import assert_teacher_class
+
+            await assert_teacher_class(self.db, user.id, school_id, class_id)
         settings = await self.get_settings(school_id)
         periods = await self.list_periods(school_id, enabled_only=True)
         entries = await self.list_entries(school_id=school_id, class_id=class_id)
@@ -765,6 +775,24 @@ class TimetableService:
             return []
         return await self.list_entries(school_id=school_id, class_id=enr.class_id)
 
+    async def _school_now(self, school_id: UUID) -> datetime:
+        """Wall-clock time in the school's timezone (UTC if unset or unknown).
+
+        The API host runs in UTC; using it directly put Indian schools on
+        yesterday's timetable until 05:30 IST.
+        """
+        from src.db.models import School
+
+        tz_name = (
+            await self.db.execute(select(School.timezone).where(School.id == school_id))
+        ).scalar_one_or_none()
+        if tz_name:
+            try:
+                return datetime.now(ZoneInfo(tz_name))
+            except (ZoneInfoNotFoundError, ValueError):
+                pass
+        return datetime.now(UTC)
+
     async def today(
         self,
         *,
@@ -775,9 +803,10 @@ class TimetableService:
         student_id: UUID | None = None,
         as_of: time | None = None,
     ) -> TodayScheduleOut:
-        day = on_date or date.today()
+        local_now = await self._school_now(school_id) if on_date is None or as_of is None else None
+        day = on_date or local_now.date()
         dow = _weekday_monday0(day)
-        now_t = as_of or datetime.now().time().replace(second=0, microsecond=0)
+        now_t = as_of or local_now.time().replace(second=0, microsecond=0, tzinfo=None)
         periods = await self.list_periods(school_id, enabled_only=True)
 
         items: list[TodayItemOut] = []

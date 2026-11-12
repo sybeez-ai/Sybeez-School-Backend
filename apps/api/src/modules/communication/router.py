@@ -28,19 +28,25 @@ from src.modules.communication.schemas import (
 from src.modules.communication.service import CommunicationService, NotificationScope
 from src.modules.hr_notifications.service import HR_ENTITY_TYPES
 from src.shared.enums import UserRole
+from src.modules.access.deps import public
 
 CAMPUS_ROLES = (
     UserRole.STUDENT,
     UserRole.PARENT,
     UserRole.TEACHER,
+    UserRole.STAFF,
     UserRole.SCHOOL_ADMIN,
 )
+# Release inbox roles, plus non-teaching STAFF and the HR membership role.
 INBOX_ROLES = CAMPUS_ROLES + (
+    UserRole.HR,
     UserRole.HR_MANAGER,
     UserRole.PAYROLL_ADMIN,
     UserRole.PAYROLL_APPROVER,
     UserRole.ACCOUNTANT,
+    UserRole.CASHIER,
     UserRole.AUDITOR,
+    UserRole.FINANCE,
 )
 
 router = APIRouter(prefix="/communication", tags=["communication"])
@@ -59,6 +65,7 @@ def _scope(u: CurrentUser, scope: str | None) -> NotificationScope | None:
 
 
 @router.get("/health")
+@public
 async def communication_health():
     return {"module": "communication", "status": "ok"}
 
@@ -71,9 +78,7 @@ async def list_notifications(
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[
         CurrentUser,
-        Depends(
-            require_roles(*INBOX_ROLES)
-        ),
+        Depends(require_roles(*INBOX_ROLES)),
     ],
     unread: bool | None = Query(None),
     page: int = Query(1, ge=1),
@@ -90,12 +95,13 @@ async def unread_count(
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[
         CurrentUser,
-        Depends(
-            require_roles(*INBOX_ROLES)
-        ),
+        Depends(require_roles(*INBOX_ROLES, UserRole.PLATFORM_ADMIN, UserRole.PLATFORM_STAFF)),
     ],
     scope: Literal["hr"] | None = Query(None),
 ):
+    if user.role in {UserRole.PLATFORM_ADMIN, UserRole.PLATFORM_STAFF} and user.school_id is None:
+        # Platform consoles have no school inbox; the shell bell polls this endpoint.
+        return UnreadCountOut(count=0)
     return await CommunicationService(db).unread_count(user.id, _scope(user, scope))
 
 
@@ -105,9 +111,7 @@ async def mark_notification_read(
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[
         CurrentUser,
-        Depends(
-            require_roles(*INBOX_ROLES)
-        ),
+        Depends(require_roles(*INBOX_ROLES)),
     ],
 ):
     return await CommunicationService(db).mark_read(user.id, notification_id)
@@ -118,9 +122,7 @@ async def mark_all_read(
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[
         CurrentUser,
-        Depends(
-            require_roles(*INBOX_ROLES)
-        ),
+        Depends(require_roles(*INBOX_ROLES)),
     ],
     scope: Literal["hr"] | None = Query(None),
 ):
@@ -133,9 +135,7 @@ async def delete_notification(
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[
         CurrentUser,
-        Depends(
-            require_roles(*INBOX_ROLES)
-        ),
+        Depends(require_roles(*INBOX_ROLES)),
     ],
 ):
     await CommunicationService(db).delete_notification(user.id, notification_id)
@@ -149,9 +149,7 @@ async def get_preferences(
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[
         CurrentUser,
-        Depends(
-            require_roles(*CAMPUS_ROLES)
-        ),
+        Depends(require_roles(*INBOX_ROLES)),
     ],
 ):
     return await CommunicationService(db).get_preferences(user.id, user.school_id)
@@ -163,9 +161,7 @@ async def update_preferences(
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[
         CurrentUser,
-        Depends(
-            require_roles(*CAMPUS_ROLES)
-        ),
+        Depends(require_roles(*INBOX_ROLES)),
     ],
 ):
     return await CommunicationService(db).update_preferences(user.id, user.school_id, body)
@@ -250,7 +246,9 @@ async def get_announcement(
         ),
     ],
 ):
-    return await CommunicationService(db).get_announcement(_sid(user), announcement_id)
+    return await CommunicationService(db).get_announcement(
+        _sid(user), announcement_id, viewer_id=user.id, viewer_role=user.role.value
+    )
 
 
 @router.patch("/announcements/{announcement_id}", response_model=AnnouncementOut)

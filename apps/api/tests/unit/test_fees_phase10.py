@@ -59,6 +59,9 @@ def test_fees_openapi_paths():
         "/api/v1/fees/reports/collection",
         "/api/v1/fees/reports/outstanding",
         "/api/v1/fees/reports/overdue",
+        "/api/v1/fees/payment-links",
+        "/api/v1/fees/online-payments/reconciliation",
+        "/api/v1/fees/demands/generate",
         "/api/v1/payments/orders",
         "/api/v1/payments/verify",
         "/api/v1/payments/webhook/{provider}",
@@ -68,6 +71,11 @@ def test_fees_openapi_paths():
 
 def test_fees_endpoints_require_auth():
     assert client.get("/api/v1/fees/categories").status_code == 401
+    assert client.get("/api/v1/fees/receipts").status_code == 401
+    assert client.post("/api/v1/fees/collections", json={}).status_code == 401
+    assert client.get("/api/v1/auth/memberships").status_code == 401
+    assert client.post("/api/v1/auth/switch-school", json={}).status_code == 401
+    assert client.get("/api/v1/schools/me/branches").status_code == 401
     assert client.get("/api/v1/fees/dashboard").status_code == 401
     assert client.post("/api/v1/fees/invoices/generate", json={}).status_code == 401
     assert client.post("/api/v1/payments/orders", json={}).status_code == 401
@@ -220,3 +228,31 @@ def test_receipt_pdf_bytes():
     )
     assert pdf.startswith(b"%PDF")
     assert len(pdf) > 100
+
+
+def test_late_fee_not_charged_on_due_date_or_last_grace_day():
+    due = date(2027, 1, 10)
+    common = dict(balance=Decimal("1000"), calculation_type="PER_DAY", amount=Decimal("10"), maximum_amount=None)
+    assert calculate_late_fee(due_date=due, as_of=due, grace_days=0, **common) == Decimal("0.00")
+    assert calculate_late_fee(due_date=due, as_of=date(2027, 1, 11), grace_days=0, **common) == Decimal("10.00")
+    assert calculate_late_fee(due_date=due, as_of=date(2027, 1, 15), grace_days=5, **common) == Decimal("0.00")
+    assert calculate_late_fee(due_date=due, as_of=date(2027, 1, 17), grace_days=5, **common) == Decimal("20.00")
+
+
+def test_zero_total_invoice_is_paid():
+    past = date.today() - timedelta(days=2)
+    assert invoice_status_after_payment(total=Decimal(0), paid=Decimal(0), due_date=past) == "PAID"
+
+
+def test_generated_invoice_due_date_uses_structure_installment():
+    from types import SimpleNamespace
+
+    from src.modules.fees.calculations import resolve_invoice_due_date
+
+    issue = date(2026, 10, 11)
+    t1 = SimpleNamespace(due_date=date(2026, 11, 15))
+    t2 = SimpleNamespace(due_date=date(2027, 2, 15))
+    assert resolve_invoice_due_date(None, [t2, t1], issue) == date(2026, 11, 15)
+    assert resolve_invoice_due_date(t2, [t1, t2], issue) == date(2027, 2, 15)
+    assert resolve_invoice_due_date(None, [t1, t2], date(2027, 3, 1)) == date(2027, 2, 15)
+    assert resolve_invoice_due_date(None, [], issue) == issue

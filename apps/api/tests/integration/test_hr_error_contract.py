@@ -17,7 +17,11 @@ LEAK_MARKERS = re.compile(
     re.IGNORECASE,
 )
 LONG = "x" * 5000
-SKIP = {("PUT", "/api/v1/hr/files/{doc_id}/file")}  # multipart upload, covered by its own tests
+SKIP = {
+    ("PUT", "/api/v1/hr/files/{doc_id}/file"),  # multipart upload, covered by its own tests
+    ("POST", "/api/v1/hr/employees/{employee_id}/photo"),  # multipart upload, covered by its own tests
+    ("GET", "/api/v1/hr/files/signed/{token}"),  # opaque signed token, covered by test_hr_spec_compliance
+}
 
 
 def _hr_operations():

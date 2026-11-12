@@ -103,18 +103,22 @@ class ProgressService:
     async def _assert_teacher_can_view(
         self, *, school_id: UUID, user_id: UUID, student_id: UUID
     ) -> None:
+        await self._get_student(school_id, student_id)
         teacher = await self._teacher_for_user(school_id, user_id)
         enr = (
             await self.db.execute(
-                select(Enrollment).where(
+                select(Enrollment)
+                .where(
                     Enrollment.school_id == school_id,
                     Enrollment.student_id == student_id,
                     Enrollment.status == EnrollmentStatus.ACTIVE.value,
                 )
+                .order_by(Enrollment.created_at.desc())
+                .limit(1)
             )
-        ).scalar_one_or_none()
+        ).scalars().first()
         if enr is None:
-            return  # no active enrollment — allow teacher access
+            raise ForbiddenError("Student is not in one of your classes")
         assignments = (
             await self.db.execute(
                 select(TeacherAssignment).where(

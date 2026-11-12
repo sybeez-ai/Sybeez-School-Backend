@@ -46,7 +46,7 @@ All five portal pages and the `/login` hub show a **Dev login** button in develo
 Each portal login page shows a **Dev login** button in development that signs in with these credentials through the real auth API. Manual email/password login uses the same path.
 
 ```bash
-cd apps/api && PYTHONPATH=. python -m src.db.seed
+SEED_DEMO_DATA=true DEMO_PLATFORM_PASSWORD=... DEMO_SCHOOL_ADMIN_PASSWORD=... make seed
 ```
 
 Database: `sybeez_school` (dedicated local DB).

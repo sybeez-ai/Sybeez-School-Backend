@@ -88,8 +88,8 @@ def test_amount_override_is_fixed_and_opening_tds_reduces_the_month():
     assert assignment_calc("PERCENT", {"amount": "12000"}) == "FIXED"
     assert assignment_calc("PERCENT", {"percent": "40"}) == "PERCENT"
     assert assignment_calc("PERCENT", {"amount": "1", "percent": "40"}) == "PERCENT"
-    base = tds(TdsInput(monthly_taxable_earnings=Decimal("200000"), months_remaining=1))
-    same = tds(TdsInput(monthly_taxable_earnings=Decimal("200000"), prior_tds=Decimal("0"), months_remaining=1))
+    base = tds(TdsInput(monthly_taxable_earnings=Decimal("200000"), months_remaining=12))
+    same = tds(TdsInput(monthly_taxable_earnings=Decimal("200000"), prior_tds=Decimal("0"), months_remaining=12))
     assert same.monthly_tds == base.monthly_tds
     assert same.annual_gross == base.annual_gross
     cleared = tds(
