@@ -90,7 +90,7 @@ class HomeworkRepository:
             .where(Homework.school_id == school_id, Homework.class_id == class_id)
         )
         if published_only:
-            q = q.where(Homework.status.in_([HomeworkStatus.PUBLISHED.value, HomeworkStatus.CLOSED.value]))
+            q = q.where(Homework.status == HomeworkStatus.PUBLISHED.value)
         if homework_types:
             q = q.where(Homework.homework_type.in_(homework_types))
         elif homework_type:

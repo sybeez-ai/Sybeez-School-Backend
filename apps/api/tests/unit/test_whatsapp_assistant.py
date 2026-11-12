@@ -401,6 +401,33 @@ async def test_ai_service_tool_call_is_filtered_and_failures_use_the_local_plan(
 
 
 @pytest.mark.asyncio
+async def test_planner_uses_the_ai_step_contract_not_the_chat_messages_body():
+    seen = {}
+
+    async def post(url, headers, body):
+        seen["url"] = url
+        seen["headers"] = headers
+        seen["body"] = body
+        return {"message": {"role": "assistant", "content": "", "tool_calls": [{"function": {"name": "homework", "arguments": "{}"}}]}}
+
+    calls = await plan_tools(
+        [{"role": "system", "content": "ignore"}, {"role": "user", "content": "what homework do I have"}],
+        "AI assistant",
+        include_leave=False,
+        provider="ai_service",
+        ai_service_url="http://ai.invalid",
+        ai_service_token="test-token",
+        access_token="user-session",
+        post=post,
+    )
+    assert calls == [ToolCall("homework", {})]
+    assert seen["url"].endswith("/api/v1/ai/voice/agent/step")
+    assert seen["headers"]["Authorization"] == "Bearer user-session"
+    assert all(item["role"] != "system" for item in seen["body"]["messages"])
+    assert seen["body"]["tools"][0]["name"] == "attendance"
+
+
+@pytest.mark.asyncio
 async def test_webhook_verifies_signature_and_queues_without_sending(monkeypatch):
     """Call the handlers directly so the suite's event loop is not closed by TestClient."""
     from src.core.exceptions import UnauthorizedError

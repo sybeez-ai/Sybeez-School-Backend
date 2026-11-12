@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.exceptions import ForbiddenError, NotFoundError
 from src.db.models import Enrollment, Homework, Student, Subject, TeachingRecord
+from src.shared.enums import HomeworkStatus
 from src.modules.internal.schemas import (
     AIContextResponse,
     CurrentLearning,
@@ -65,7 +66,10 @@ class InternalAIContextService:
                 taught_content=content or [teaching.topic],
             )
 
-        hw_q = select(Homework).where(Homework.school_id == school_id)
+        hw_q = select(Homework).where(
+            Homework.school_id == school_id,
+            Homework.status == HomeworkStatus.PUBLISHED.value,
+        )
         if class_id:
             hw_q = hw_q.where(Homework.class_id == class_id)
         hw_q = hw_q.order_by(Homework.created_at.desc()).limit(5)
