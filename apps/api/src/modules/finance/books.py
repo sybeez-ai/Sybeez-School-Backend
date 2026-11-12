@@ -17,6 +17,10 @@ from src.db.models.books import (
     BookAsset,
     BookBankAccount,
     BookBankLine,
+    BookRefund,
+    CautionDeposit,
+    GstInvoice,
+    TdsEntry,
     BookPurchase,
     BookVendor,
     JournalEntry,
@@ -120,6 +124,40 @@ class BankLineIn(BaseModel):
 
 class BooksSettingsIn(BaseModel):
     financial_year_start_month: int = Field(ge=1, le=12)
+
+
+class CautionIn(BaseModel):
+    student_id: UUID
+    amount: Decimal = Field(gt=0)
+    received_on: date
+    note: str | None = Field(default=None, max_length=240)
+
+
+class BookRefundIn(BaseModel):
+    student_id: UUID | None = None
+    amount: Decimal = Field(gt=0)
+    refund_date: date
+    reason: str = Field(min_length=2, max_length=240)
+    status: str = "REQUESTED"
+
+
+class TdsIn(BaseModel):
+    party_name: str = Field(min_length=2, max_length=200)
+    pan: str | None = Field(default=None, max_length=10)
+    section_code: str = Field(default="194C", max_length=16)
+    amount: Decimal = Field(gt=0)
+    deducted_on: date
+    note: str | None = None
+
+
+class GstInvoiceIn(BaseModel):
+    invoice_number: str = Field(min_length=1, max_length=40)
+    party_name: str = Field(min_length=2, max_length=200)
+    gstin: str | None = Field(default=None, max_length=15)
+    invoice_date: date
+    taxable_amount: Decimal = Field(ge=0)
+    gst_amount: Decimal = Field(default=Decimal("0"), ge=0)
+    note: str | None = None
 
 
 class TaxIn(BaseModel):
@@ -350,6 +388,60 @@ class Books:
         await self.db.flush()
         return _row(row)
 
+    async def caution_deposits(self) -> list[dict]:
+        return await self._list(CautionDeposit, CautionDeposit.received_on.desc())
+
+    async def add_caution(self, data: CautionIn) -> dict:
+        row = CautionDeposit(
+            id=uuid4(), school_id=self.school_id, student_id=data.student_id, amount=_money(data.amount),
+            received_on=data.received_on, status="HELD", note=data.note,
+        )
+        self.db.add(row)
+        await self.db.flush()
+        return _row(row)
+
+    async def book_refunds(self) -> list[dict]:
+        return await self._list(BookRefund, BookRefund.refund_date.desc())
+
+    async def add_book_refund(self, data: BookRefundIn) -> dict:
+        if data.status not in {"REQUESTED", "PAID"}:
+            raise AppError("Status must be REQUESTED or PAID", status_code=422)
+        row = BookRefund(
+            id=uuid4(), school_id=self.school_id, student_id=data.student_id, amount=_money(data.amount),
+            refund_date=data.refund_date, reason=data.reason.strip(), status=data.status,
+        )
+        self.db.add(row)
+        await self.db.flush()
+        return _row(row)
+
+    async def tds_entries(self) -> list[dict]:
+        return await self._list(TdsEntry, TdsEntry.deducted_on.desc())
+
+    async def add_tds(self, data: TdsIn) -> dict:
+        row = TdsEntry(
+            id=uuid4(), school_id=self.school_id, party_name=data.party_name.strip(),
+            pan=(data.pan or "").strip().upper() or None, section_code=data.section_code.strip().upper(),
+            amount=_money(data.amount), deducted_on=data.deducted_on, note=data.note,
+        )
+        self.db.add(row)
+        await self.db.flush()
+        return _row(row)
+
+    async def gst_invoices(self) -> list[dict]:
+        return await self._list(GstInvoice, GstInvoice.invoice_date.desc())
+
+    async def add_gst_invoice(self, data: GstInvoiceIn) -> dict:
+        total = _money(data.taxable_amount + data.gst_amount)
+        row = GstInvoice(
+            id=uuid4(), school_id=self.school_id, invoice_number=data.invoice_number.strip(),
+            party_name=data.party_name.strip(), gstin=(data.gstin or "").strip().upper() or None,
+            invoice_date=data.invoice_date, taxable_amount=_money(data.taxable_amount),
+            gst_amount=_money(data.gst_amount), total=total, note=data.note,
+        )
+        self.db.add(row)
+        await self.db.flush()
+        return _row(row)
+
     async def add_bank(self, data: BankIn) -> dict:
         row = BookBankAccount(
             id=uuid4(), school_id=self.school_id, name=data.name.strip(), bank_name=data.bank_name.strip(),
@@ -502,6 +594,54 @@ async def list_bank_lines(
 async def create_bank_line(body: BankLineIn, svc: Annotated[FinanceService, Depends(_svc)]):
     assert_finance(svc.role, "expense.approve")
     return await _books(svc).add_bank_line(body)
+
+
+@router.get("/caution-deposits")
+async def list_caution(svc: Annotated[FinanceService, Depends(_svc)]):
+    assert_finance(svc.role, "ledger.read")
+    return await _books(svc).caution_deposits()
+
+
+@router.post("/caution-deposits", status_code=201)
+async def create_caution(body: CautionIn, svc: Annotated[FinanceService, Depends(_svc)]):
+    assert_finance(svc.role, "expense.approve")
+    return await _books(svc).add_caution(body)
+
+
+@router.get("/book-refunds")
+async def list_book_refunds(svc: Annotated[FinanceService, Depends(_svc)]):
+    assert_finance(svc.role, "ledger.read")
+    return await _books(svc).book_refunds()
+
+
+@router.post("/book-refunds", status_code=201)
+async def create_book_refund(body: BookRefundIn, svc: Annotated[FinanceService, Depends(_svc)]):
+    assert_finance(svc.role, "expense.approve")
+    return await _books(svc).add_book_refund(body)
+
+
+@router.get("/tds-entries")
+async def list_tds(svc: Annotated[FinanceService, Depends(_svc)]):
+    assert_finance(svc.role, "ledger.read")
+    return await _books(svc).tds_entries()
+
+
+@router.post("/tds-entries", status_code=201)
+async def create_tds(body: TdsIn, svc: Annotated[FinanceService, Depends(_svc)]):
+    assert_finance(svc.role, "expense.approve")
+    return await _books(svc).add_tds(body)
+
+
+@router.get("/gst-invoices")
+async def list_gst(svc: Annotated[FinanceService, Depends(_svc)]):
+    assert_finance(svc.role, "ledger.read")
+    return await _books(svc).gst_invoices()
+
+
+@router.post("/gst-invoices", status_code=201)
+async def create_gst(body: GstInvoiceIn, svc: Annotated[FinanceService, Depends(_svc)]):
+    assert_finance(svc.role, "expense.approve")
+    return await _books(svc).add_gst_invoice(body)
 
 
 @router.get("/settings")

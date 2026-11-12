@@ -349,11 +349,11 @@ async def submit_templates(
         for item in items
         if item.active
     ]
-    from src.modules.alerts.credentials import WHATSAPP_OFF, parent_cloud_enabled
+    from src.modules.alerts.credentials import WHATSAPP_OFF, whatsapp_sending_on
 
     settings = get_settings()
-    # Parent WhatsApp stays off until the feature flag is turned on.
-    if not parent_cloud_enabled(settings) and not dry_run:
+    # Stay off only when neither sending switch is on.
+    if not whatsapp_sending_on(settings) and not dry_run:
         dry_run = True
         held = True
     else:

@@ -190,6 +190,58 @@ class OpsPurchaseOrder(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
+class CautionDeposit(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    __tablename__ = "caution_deposits"
+
+    school_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True)
+    student_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("students.id", ondelete="CASCADE"), nullable=False, index=True)
+    amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    received_on: Mapped[date] = mapped_column(Date, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="HELD")  # HELD REFUNDED
+    refunded_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    note: Mapped[str | None] = mapped_column(String(240), nullable=True)
+
+
+class BookRefund(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """A refund recorded in the books, for a book sale or a similar charge."""
+
+    __tablename__ = "book_refunds"
+
+    school_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True)
+    student_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("students.id", ondelete="SET NULL"), nullable=True)
+    amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    refund_date: Mapped[date] = mapped_column(Date, nullable=False)
+    reason: Mapped[str] = mapped_column(String(240), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="REQUESTED")  # REQUESTED PAID
+
+
+class TdsEntry(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    __tablename__ = "tds_entries"
+
+    school_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True)
+    party_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    pan: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    section_code: Mapped[str] = mapped_column(String(16), nullable=False, default="194C")
+    amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    deducted_on: Mapped[date] = mapped_column(Date, nullable=False)
+    note: Mapped[str | None] = mapped_column(String(240), nullable=True)
+
+
+class GstInvoice(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    __tablename__ = "gst_invoices"
+    __table_args__ = (UniqueConstraint("school_id", "invoice_number", name="uq_gst_invoices_number"),)
+
+    school_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True)
+    invoice_number: Mapped[str] = mapped_column(String(40), nullable=False)
+    party_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    gstin: Mapped[str | None] = mapped_column(String(15), nullable=True)
+    invoice_date: Mapped[date] = mapped_column(Date, nullable=False)
+    taxable_amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    gst_amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=Decimal("0"))
+    total: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    note: Mapped[str | None] = mapped_column(String(240), nullable=True)
+
+
 class OpsMaintenanceJob(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "ops_maintenance_jobs"
 

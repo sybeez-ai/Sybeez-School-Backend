@@ -40,6 +40,7 @@ class DeliveryListOut(BaseModel):
 
 class ProviderStatusOut(BaseModel):
     whatsapp_status: str
+    whatsapp_sending_enabled: bool = False
     whatsapp_provider: str
     whatsapp_missing: list[str] = Field(default_factory=list)
 
