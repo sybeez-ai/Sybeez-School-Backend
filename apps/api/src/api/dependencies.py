@@ -4,7 +4,7 @@ from uuid import UUID
 
 from fastapi import Depends, Header, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.database import get_db
@@ -169,7 +169,7 @@ async def _resolve_current_user(
             {"v": ",".join(portals)},
         )
 
-    return CurrentUser(
+    current = CurrentUser(
         id=user.id,
         email=user.email,
         full_name=user.full_name,
@@ -180,6 +180,14 @@ async def _resolve_current_user(
         platform_role=user.platform_role or payload.get("platform_role"),
         portals=portals,
     )
+    # The platform owner is not limited to one school. Later commits re-apply this
+    # from rls_tenant. School services may still bind a single school when they write.
+    if is_super_admin(current):
+        tenant = db.info.get("rls_tenant")
+        if isinstance(tenant, dict):
+            tenant["bypass"] = "on"
+        await db.execute(text("SELECT set_config('app.rls_bypass', 'on', true)"))
+    return current
 
 
 def _finance_gate(roles: set[UserRole]) -> str | None:

@@ -4,7 +4,7 @@ from datetime import timedelta
 from uuid import UUID, uuid4
 
 from fastapi import UploadFile
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,6 +12,8 @@ from src.core.exceptions import ConflictError, ForbiddenError, NotFoundError, Va
 from src.api.dependencies import CurrentUser
 from src.core.config import get_settings
 from src.db.models import (
+    Employee,
+    Enrollment,
     Invitation,
     Parent,
     PlatformSchoolAccess,
@@ -40,7 +42,16 @@ from src.modules.platform.schemas import (
     SchoolUpdate,
 )
 from src.modules.schools.provisioning import create_school_user
-from src.shared.enums import InvitationStatus, MembershipStatus, PlatformRole, SchoolStatus, SubscriptionStatus, UserRole
+from src.shared.enums import (
+    EnrollmentStatus,
+    InvitationStatus,
+    MembershipStatus,
+    PersonStatus,
+    PlatformRole,
+    SchoolStatus,
+    SubscriptionStatus,
+    UserRole,
+)
 from src.shared.utils import generate_token, utcnow
 
 
@@ -227,12 +238,18 @@ class PlatformService:
             created_by_id=actor.id,
         )
         await self.repo.create_school(school)
+        from src.modules.platform.commercial import default_trial_days
+
+        trial_days = await default_trial_days(self.db)
+        started = utcnow()
         self.db.add(
             Subscription(
                 school_id=school.id,
                 plan_code=data.plan_code,
                 status=SubscriptionStatus.TRIAL.value,
-                starts_at=utcnow(),
+                starts_at=started,
+                trial_started_at=started,
+                trial_ends_at=started + timedelta(days=trial_days),
             )
         )
         await self.db.flush()
@@ -274,23 +291,31 @@ class PlatformService:
         for k, v in payload.items():
             setattr(school, k, v)
         if plan_code:
-            self.db.add(
-                Subscription(
-                    school_id=school.id,
-                    plan_code=plan_code,
-                    status=SubscriptionStatus.ACTIVE.value,
-                    starts_at=utcnow(),
+            from src.modules.platform.commercial import latest_subscription
+
+            current = await latest_subscription(self.db, school.id)
+            changed = current is None or current.plan_code != plan_code
+            if current is None:
+                self.db.add(
+                    Subscription(
+                        school_id=school.id,
+                        plan_code=plan_code,
+                        status=SubscriptionStatus.ACTIVE.value,
+                        starts_at=utcnow(),
+                    )
                 )
-            )
-            await self.audit.write(
-                action="platform.subscription.changed",
-                actor_id=actor.id,
-                school_id=school.id,
-                resource_type="subscription",
-                resource_id=str(school.id),
-                message=f"Plan changed to {plan_code}",
-                details={"plan_code": plan_code},
-            )
+            elif changed:
+                current.plan_code = plan_code
+            if changed:
+                await self.audit.write(
+                    action="platform.subscription.changed",
+                    actor_id=actor.id,
+                    school_id=school.id,
+                    resource_type="subscription",
+                    resource_id=str(school.id),
+                    message=f"Plan changed to {plan_code}",
+                    details={"plan_code": plan_code},
+                )
         await self.db.flush()
         await self.audit.write(
             action="platform.school.update",
@@ -370,7 +395,10 @@ class PlatformService:
             "teacher_added": base.teachers_count > 0,
             "student_added": base.students_count > 0,
         }
+        from src.modules.platform.commercial import commercial_view
+
         plan, sub_status = await self._plan_for_school(school_id)
+        commercial = await commercial_view(self.db, school)
         return SchoolDetailOut(
             **base.model_dump(),
             parents_count=parents,
@@ -383,9 +411,13 @@ class PlatformService:
                 "parents": parents,
             },
             subscription={
-                "plan_code": plan,
-                "status": sub_status,
+                "plan_code": commercial["plan_code"] or plan,
+                "plan_name": commercial["plan_name"],
+                "status": commercial["billing_status"] or sub_status,
+                "subscription_status": sub_status,
+                **commercial,
             },
+            commercial=commercial,
         )
 
     async def list_schools(
@@ -747,19 +779,58 @@ class PlatformService:
         )
         return admin_email
 
-    async def delete_school(self, actor: CurrentUser, school_id: UUID) -> None:
+    async def delete_school(self, actor: CurrentUser, school_id: UUID, confirm_name: str) -> None:
+        """Archive the school and close its people. Finance ledgers stay (they are append-only)."""
         school = await self.repo.get_school(school_id)
         if school is None:
             raise NotFoundError("School not found")
+        if (confirm_name or "").strip() != (school.name or "").strip():
+            raise ValidationError("Type the school name exactly to confirm deletion")
+        await self._assert_school_access(actor, school)
+        await bind_tenant(self.db, school.id)
+        school.status = SchoolStatus.ARCHIVED.value
+        await self.db.execute(
+            update(SchoolMembership)
+            .where(
+                SchoolMembership.school_id == school.id,
+                SchoolMembership.status == MembershipStatus.ACTIVE.value,
+            )
+            .values(status=MembershipStatus.LEFT.value)
+        )
+        await self.db.execute(
+            update(Student)
+            .where(Student.school_id == school.id, Student.status == PersonStatus.ACTIVE.value)
+            .values(status=PersonStatus.LEFT.value)
+        )
+        await self.db.execute(
+            update(Teacher)
+            .where(Teacher.school_id == school.id, Teacher.status == PersonStatus.ACTIVE.value)
+            .values(status=PersonStatus.LEFT.value)
+        )
+        await self.db.execute(
+            update(Parent)
+            .where(Parent.school_id == school.id, Parent.status == PersonStatus.ACTIVE.value)
+            .values(status=PersonStatus.LEFT.value)
+        )
+        await self.db.execute(
+            update(Employee)
+            .where(Employee.school_id == school.id, Employee.status == "ACTIVE")
+            .values(status="LEFT")
+        )
+        await self.db.execute(
+            update(Enrollment)
+            .where(Enrollment.school_id == school.id, Enrollment.status == EnrollmentStatus.ACTIVE.value)
+            .values(status=EnrollmentStatus.WITHDRAWN.value)
+        )
         await self.audit.write(
-            action="platform.school.delete",
+            action="platform.super_admin.delete",
             actor_id=actor.id,
             school_id=school.id,
             resource_type="school",
             resource_id=str(school.id),
-            message=f"School deleted: {school.name}",
+            message=f"Super admin deleted school: {school.name}",
+            details={"mode": "soft", "label": school.name, "confirm_name": confirm_name.strip()},
         )
-        await self.db.delete(school)
         await self.db.flush()
 
     async def upload_school_logo(self, actor: CurrentUser, school_id: UUID, file: UploadFile) -> SchoolOut:
