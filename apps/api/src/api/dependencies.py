@@ -228,15 +228,24 @@ def _perm_satisfies(perms: set[str], code: str) -> bool:
     return False
 
 
-def is_super_admin(user: CurrentUser) -> bool:
-    """The Sybeez super admin (admin@sybeez.ai) has unrestricted access to every role gate."""
-    if not user.is_platform_admin:
-        return False
-    if user.platform_role == PlatformRole.SUPER_ADMIN.value:
-        return True
+def superadmin_allowlist() -> frozenset[str]:
+    """Emails that may exercise Super Admin powers. Configurable via SUPERADMIN_EMAILS."""
     from src.core.config import get_settings
 
-    return user.email.lower() == get_settings().superadmin_email.lower()
+    raw = get_settings().superadmin_emails or ""
+    emails = frozenset(part.strip().lower() for part in raw.split(",") if part.strip())
+    if emails:
+        return emails
+    return frozenset({"admin@sybeez.ai", "silverstalan.inbaraj@sybeez.ai"})
+
+
+def is_super_admin(user: CurrentUser) -> bool:
+    """Super Admin requires the role and an allowlisted email. Other SUPER_ADMIN rows keep the label but not the powers."""
+    if not user.is_platform_admin:
+        return False
+    if (user.platform_role or "") != PlatformRole.SUPER_ADMIN.value:
+        return False
+    return user.email.lower() in superadmin_allowlist()
 
 
 def require_roles(*roles: UserRole):
@@ -287,11 +296,7 @@ get_scoped_user = get_current_user
 def require_super_admin(
     user: Annotated[CurrentUser, Depends(require_roles(UserRole.PLATFORM_ADMIN))],
 ) -> CurrentUser:
-    from src.core.config import get_settings
-
-    role_ok = user.platform_role == PlatformRole.SUPER_ADMIN.value
-    email_ok = user.is_platform_admin and user.email.lower() == get_settings().superadmin_email.lower()
-    if not (role_ok or email_ok):
+    if not is_super_admin(user):
         raise ForbiddenError("Super admin only")
     return user
 

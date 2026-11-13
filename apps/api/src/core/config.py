@@ -65,6 +65,8 @@ class Settings(BaseSettings):
     )
 
     superadmin_email: str = "admin@sybeez.ai"
+    # Comma-separated. Super Admin powers require this allowlist AND platform_role SUPER_ADMIN.
+    superadmin_emails: str = "admin@sybeez.ai,silverstalan.inbaraj@sybeez.ai"
     superadmin_secret_id: str = "sybeez-school/superadmin"
     auth_provider: str = "local"  # local | cognito
     cognito_client_id: str = ""

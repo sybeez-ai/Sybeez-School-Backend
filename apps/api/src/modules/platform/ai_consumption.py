@@ -92,6 +92,7 @@ async def school_people_tokens(db: AsyncSession, school_id: UUID) -> dict:
         students.append(
             {
                 "user_id": user.id,
+                "student_id": student.id,
                 "name": user.full_name,
                 "role": UserRole.STUDENT.value,
                 "standard": standard,
@@ -115,6 +116,7 @@ async def school_people_tokens(db: AsyncSession, school_id: UUID) -> dict:
         teachers.append(
             {
                 "user_id": user.id,
+                "teacher_id": _teacher.id,
                 "name": user.full_name,
                 "role": UserRole.TEACHER.value,
                 "email": user.email,
@@ -141,6 +143,7 @@ async def school_people_tokens(db: AsyncSession, school_id: UUID) -> dict:
         others.append(
             {
                 "user_id": user.id,
+                "membership_id": membership.id,
                 "name": user.full_name,
                 "role": membership.role,
                 "email": user.email,

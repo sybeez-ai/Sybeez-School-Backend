@@ -137,6 +137,39 @@ class PlatformSaasService:
         )
         return self._plan_out(plan)
 
+    async def delete_plan(self, actor: CurrentUser, plan_id: UUID) -> dict:
+        """Permanently remove a plan and clear it from schools that were using it."""
+        plan = await self.db.get(PlatformPlan, plan_id)
+        if not plan:
+            raise NotFoundError("Plan not found")
+        subs = list(
+            (
+                await self.db.execute(select(Subscription).where(Subscription.plan_code == plan.code))
+            ).scalars().all()
+        )
+        school_ids = []
+        for sub in subs:
+            school_ids.append(str(sub.school_id))
+            sub.plan_code = "unassigned"
+        code = plan.code
+        name = plan.name
+        await self.db.delete(plan)
+        await self.db.flush()
+        await self.audit.write(
+            action="platform.super_admin.delete",
+            actor_id=actor.id,
+            resource_type="platform_plan",
+            resource_id=str(plan_id),
+            message=f"Plan permanently deleted: {name}",
+            details={
+                "mode": "hard",
+                "label": name,
+                "plan_code": code,
+                "schools_detached": school_ids,
+            },
+        )
+        return {"deleted": True, "plan_code": code, "schools_detached": len(school_ids)}
+
     async def archive_plan(self, actor: CurrentUser, plan_id: UUID) -> PlanOut:
         plan = await self.db.get(PlatformPlan, plan_id)
         if not plan:

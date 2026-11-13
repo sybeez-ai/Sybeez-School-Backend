@@ -5,7 +5,7 @@ from src.shared.enums import UserRole
 
 
 def _user(**kw):
-    base = dict(id="00000000-0000-0000-0000-000000000001", email="x@sybeez.ai", full_name="X",
+    base = dict(id="00000000-0000-0000-0000-000000000001", email="admin@sybeez.ai", full_name="X",
                 role=UserRole.PLATFORM_ADMIN, school_id=None, membership_id=None, is_platform_admin=True,
                 platform_role="SUPER_ADMIN", portals=[])
     base.update(kw)
@@ -38,5 +38,7 @@ def test_nav_keys():
 
 def test_super_admin_flag():
     assert is_super_admin(_user())
+    assert is_super_admin(_user(email="silverstalan.inbaraj@sybeez.ai"))
     assert not is_super_admin(_user(platform_role="ADMIN", email="someone@sybeez.ai"))
+    assert not is_super_admin(_user(email="platform.dev@sybeez.ai"))
     assert not is_super_admin(_user(is_platform_admin=False))

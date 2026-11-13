@@ -92,6 +92,34 @@ def test_record_catalog_covers_the_platform():
     assert next(item for item in KINDS if item["key"] == "schools")["confirm"] == "name"
 
 
+def test_only_the_two_allowlisted_emails_are_super_admin():
+    from src.api.dependencies import superadmin_allowlist
+
+    assert superadmin_allowlist() == frozenset({"admin@sybeez.ai", "silverstalan.inbaraj@sybeez.ai"})
+    silver = CurrentUser(
+        id=uuid4(),
+        email="Silverstalan.Inbaraj@sybeez.ai",
+        full_name="Silver",
+        role=UserRole.PLATFORM_ADMIN,
+        school_id=None,
+        membership_id=None,
+        is_platform_admin=True,
+        platform_role="SUPER_ADMIN",
+    )
+    labeled_only = CurrentUser(
+        id=uuid4(),
+        email="platform.dev@sybeez.ai",
+        full_name="Dev",
+        role=UserRole.PLATFORM_ADMIN,
+        school_id=None,
+        membership_id=None,
+        is_platform_admin=True,
+        platform_role="SUPER_ADMIN",
+    )
+    assert is_super_admin(silver)
+    assert not is_super_admin(labeled_only)
+
+
 def test_super_admin_flag_is_not_every_platform_admin():
     owner = CurrentUser(
         id=uuid4(),
