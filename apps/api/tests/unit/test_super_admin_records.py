@@ -38,6 +38,28 @@ def test_days_left_rounds_up_a_partial_day():
     assert days_left(None, now) == 0
 
 
+def test_school_trial_days_fall_back_to_the_platform_default():
+    from src.modules.platform.commercial import effective_trial_days
+
+    assert effective_trial_days(None, 30) == 30
+    assert effective_trial_days(None, None) == 30
+    assert effective_trial_days(14, 30) == 14
+
+
+def test_ai_consumption_is_token_counts_only():
+    from uuid import UUID
+
+    from src.modules.platform.ai_consumption import school_token_rows
+
+    school = UUID("00000000-0000-0000-0000-0000000000aa")
+    rows = school_token_rows([(school, "North", 10), (school, "North", 5), (None, None, 2)])
+    assert rows[0]["tokens"] == 15
+    assert rows[0]["school_name"] == "North"
+    assert "cost" not in rows[0] and "amount" not in rows[0]
+    assert rows[1]["school_name"] == "Platform"
+    assert rows[1]["tokens"] == 2
+
+
 def test_school_name_confirmation_is_exact():
     assert names_match("St. Mary's", "St. Mary's")
     assert names_match("  North School  ", "North School")
@@ -68,6 +90,34 @@ def test_record_catalog_covers_the_platform():
         "hr_settings",
     } <= keys
     assert next(item for item in KINDS if item["key"] == "schools")["confirm"] == "name"
+
+
+def test_only_the_two_allowlisted_emails_are_super_admin():
+    from src.api.dependencies import superadmin_allowlist
+
+    assert superadmin_allowlist() == frozenset({"admin@sybeez.ai", "silverstalan.inbaraj@sybeez.ai"})
+    silver = CurrentUser(
+        id=uuid4(),
+        email="Silverstalan.Inbaraj@sybeez.ai",
+        full_name="Silver",
+        role=UserRole.PLATFORM_ADMIN,
+        school_id=None,
+        membership_id=None,
+        is_platform_admin=True,
+        platform_role="SUPER_ADMIN",
+    )
+    labeled_only = CurrentUser(
+        id=uuid4(),
+        email="platform.dev@sybeez.ai",
+        full_name="Dev",
+        role=UserRole.PLATFORM_ADMIN,
+        school_id=None,
+        membership_id=None,
+        is_platform_admin=True,
+        platform_role="SUPER_ADMIN",
+    )
+    assert is_super_admin(silver)
+    assert not is_super_admin(labeled_only)
 
 
 def test_super_admin_flag_is_not_every_platform_admin():

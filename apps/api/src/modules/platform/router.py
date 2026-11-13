@@ -139,6 +139,35 @@ async def platform_audit(
     return Page(items=items, total=total, page=page.page, page_size=page.page_size)
 
 
+@router.delete("/audit/{log_id}", status_code=204)
+async def delete_audit_log(
+    log_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_super_admin)],
+):
+    """Remove one log row. The deletion itself is written as a new audit entry."""
+    from src.core.exceptions import NotFoundError
+    from src.db.models import AuditLog
+    from src.modules.audit.repository import AuditRepository
+
+    row = await db.get(AuditLog, log_id)
+    if row is None:
+        raise NotFoundError("Log entry not found")
+    label = row.message or row.action
+    await AuditRepository(db).write(
+        action="platform.super_admin.delete",
+        actor_id=actor.id,
+        school_id=row.school_id,
+        resource_type="audit_log",
+        resource_id=str(row.id),
+        message=f"Super admin deleted log entry: {label}",
+        details={"mode": "hard", "deleted_action": row.action, "label": label},
+    )
+    await db.delete(row)
+    await db.flush()
+    return Response(status_code=204)
+
+
 @router.get("/schools", response_model=Page[SchoolOut])
 async def list_schools(
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -462,6 +491,48 @@ async def update_plan(
     return await PlatformSaasService(db).update_plan(actor, plan_id, body)
 
 
+@router.delete("/plans/{plan_id}", status_code=204)
+async def delete_plan(
+    plan_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_super_admin)],
+):
+    """Permanently delete a plan. Schools that used it are detached, not removed."""
+    await PlatformSaasService(db).delete_plan(actor, plan_id)
+    return Response(status_code=204)
+
+
+@router.delete("/schools/{school_id}/subscription", status_code=204)
+async def delete_school_subscription(
+    school_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_super_admin)],
+):
+    """Remove the school's current subscription row. The school itself stays."""
+    from src.core.exceptions import NotFoundError
+    from src.modules.audit.repository import AuditRepository
+    from src.modules.platform.commercial import latest_subscription
+
+    school = await db.get(School, school_id)
+    sub = await latest_subscription(db, school_id)
+    if school is None or sub is None:
+        raise NotFoundError("Subscription not found")
+    plan_code = sub.plan_code
+    sub_id = sub.id
+    await db.delete(sub)
+    await db.flush()
+    await AuditRepository(db).write(
+        action="platform.super_admin.delete",
+        actor_id=actor.id,
+        school_id=school.id,
+        resource_type="subscription",
+        resource_id=str(sub_id),
+        message=f"Super admin deleted subscription for {school.name}",
+        details={"mode": "hard", "plan_code": plan_code, "label": school.name},
+    )
+    return Response(status_code=204)
+
+
 @router.post("/plans/{plan_id}/archive", response_model=PlanOut)
 async def archive_plan(
     plan_id: UUID,
@@ -494,6 +565,107 @@ async def update_settings(
 
 
 # --- AI control plane (no provider secrets) ---
+
+
+@router.get("/ai/consumption")
+async def ai_consumption_by_school(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _: Annotated[CurrentUser, Depends(require_super_admin)],
+):
+    """Token totals per school. Super admin only. No prices."""
+    from src.modules.fees.tenant import set_rls_bypass
+    from src.modules.platform.ai_consumption import list_school_tokens
+
+    await set_rls_bypass(db, True)
+    return await list_school_tokens(db)
+
+
+@router.get("/ai/consumption/{school_id}")
+async def ai_consumption_for_school(
+    school_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _: Annotated[CurrentUser, Depends(require_super_admin)],
+):
+    """Students, teachers and other people in one school, with token counts only."""
+    from src.modules.fees.tenant import set_rls_bypass
+    from src.modules.platform.ai_consumption import school_people_tokens
+
+    await set_rls_bypass(db, True)
+    return await school_people_tokens(db, school_id)
+
+
+@router.delete("/ai/consumption/{school_id}", status_code=204)
+async def delete_school_ai_consumption(
+    school_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_super_admin)],
+):
+    """Delete stored token rows for a school. The school and its people stay."""
+    from sqlalchemy import delete as sql_delete
+
+    from src.core.exceptions import NotFoundError
+    from src.db.models import PlatformAiUsageDaily, PlatformAiUserUsage
+    from src.modules.audit.repository import AuditRepository
+    from src.modules.fees.tenant import set_rls_bypass
+
+    await set_rls_bypass(db, True)
+    school = await db.get(School, school_id)
+    if school is None:
+        raise NotFoundError("School not found")
+    await db.execute(sql_delete(PlatformAiUserUsage).where(PlatformAiUserUsage.school_id == school_id))
+    await db.execute(sql_delete(PlatformAiUsageDaily).where(PlatformAiUsageDaily.school_id == school_id))
+    await db.flush()
+    await AuditRepository(db).write(
+        action="platform.super_admin.delete",
+        actor_id=actor.id,
+        school_id=school.id,
+        resource_type="ai_usage",
+        resource_id=str(school.id),
+        message=f"Super admin deleted AI token records for {school.name}",
+        details={"mode": "hard", "label": school.name},
+    )
+    return Response(status_code=204)
+
+
+@router.delete("/ai/consumption/{school_id}/users/{user_id}", status_code=204)
+async def delete_person_ai_consumption(
+    school_id: UUID,
+    user_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_super_admin)],
+):
+    from sqlalchemy import delete as sql_delete
+
+    from src.core.exceptions import NotFoundError
+    from src.db.models import PlatformAiUserUsage
+    from src.modules.audit.repository import AuditRepository
+    from src.modules.fees.tenant import set_rls_bypass
+
+    await set_rls_bypass(db, True)
+    row = (
+        await db.execute(
+            select(PlatformAiUserUsage).where(
+                PlatformAiUserUsage.school_id == school_id,
+                PlatformAiUserUsage.user_id == user_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        raise NotFoundError("Token record not found")
+    person = await db.get(User, user_id)
+    label = person.full_name if person else str(user_id)
+    await db.execute(sql_delete(PlatformAiUserUsage).where(PlatformAiUserUsage.id == row.id))
+    await db.flush()
+    await AuditRepository(db).write(
+        action="platform.super_admin.delete",
+        actor_id=actor.id,
+        school_id=school_id,
+        resource_type="ai_user_usage",
+        resource_id=str(row.id),
+        message=f"Super admin deleted AI token record for {label}",
+        details={"mode": "hard", "label": label, "user_id": str(user_id)},
+    )
+    return Response(status_code=204)
 
 
 @router.get("/ai", response_model=PlatformAiOverview)
@@ -634,6 +806,36 @@ async def revoke_staff(
     await StaffService(db).revoke(user, staff_id)
     rows = await StaffService(db).list_staff()
     return _staff_out(next(row for row in rows if row["id"] == staff_id))
+
+
+@router.delete("/staff/{staff_id}", status_code=204)
+async def delete_staff(
+    staff_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_super_admin)],
+):
+    """Remove an internal employee login record. The person is not erased from other schools."""
+    from src.core.exceptions import NotFoundError
+    from src.db.models import PlatformStaff
+    from src.modules.audit.repository import AuditRepository
+
+    staff = await db.get(PlatformStaff, staff_id)
+    if staff is None:
+        raise NotFoundError("Employee not found")
+    person = await db.get(User, staff.user_id)
+    label = person.full_name if person else str(staff.user_id)
+    email = person.email if person else None
+    await db.delete(staff)
+    await db.flush()
+    await AuditRepository(db).write(
+        action="platform.super_admin.delete",
+        actor_id=actor.id,
+        resource_type="platform_staff",
+        resource_id=str(staff_id),
+        message=f"Super admin deleted employee: {label}",
+        details={"mode": "hard", "label": label, "email": email},
+    )
+    return Response(status_code=204)
 
 
 @router.post("/staff-invitations", status_code=201)

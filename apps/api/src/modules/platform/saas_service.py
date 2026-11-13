@@ -137,6 +137,39 @@ class PlatformSaasService:
         )
         return self._plan_out(plan)
 
+    async def delete_plan(self, actor: CurrentUser, plan_id: UUID) -> dict:
+        """Permanently remove a plan and clear it from schools that were using it."""
+        plan = await self.db.get(PlatformPlan, plan_id)
+        if not plan:
+            raise NotFoundError("Plan not found")
+        subs = list(
+            (
+                await self.db.execute(select(Subscription).where(Subscription.plan_code == plan.code))
+            ).scalars().all()
+        )
+        school_ids = []
+        for sub in subs:
+            school_ids.append(str(sub.school_id))
+            sub.plan_code = "unassigned"
+        code = plan.code
+        name = plan.name
+        await self.db.delete(plan)
+        await self.db.flush()
+        await self.audit.write(
+            action="platform.super_admin.delete",
+            actor_id=actor.id,
+            resource_type="platform_plan",
+            resource_id=str(plan_id),
+            message=f"Plan permanently deleted: {name}",
+            details={
+                "mode": "hard",
+                "label": name,
+                "plan_code": code,
+                "schools_detached": school_ids,
+            },
+        )
+        return {"deleted": True, "plan_code": code, "schools_detached": len(school_ids)}
+
     async def archive_plan(self, actor: CurrentUser, plan_id: UUID) -> PlanOut:
         plan = await self.db.get(PlatformPlan, plan_id)
         if not plan:
@@ -179,17 +212,38 @@ class PlatformSaasService:
         return PlatformSettingsOut.model_validate(row)
 
     async def update_settings(self, actor: CurrentUser, data: PlatformSettingsUpdate) -> PlatformSettingsOut:
+        from src.core.exceptions import ValidationError
+
         row = await self._ensure_settings()
-        for k, v in data.model_dump(exclude_unset=True).items():
-            setattr(row, k, v)
+        changes = data.model_dump(exclude_unset=True)
+        if "default_timezone" in changes and changes["default_timezone"] is not None:
+            zone = str(changes["default_timezone"]).strip()
+            if not zone or len(zone) > 64 or any(ch.isspace() for ch in zone):
+                raise ValidationError("Timezone must be an IANA name such as Asia/Kolkata")
+            changes["default_timezone"] = zone
+        if "default_currency" in changes and changes["default_currency"] is not None:
+            code = str(changes["default_currency"]).strip().upper() or "INR"
+            if len(code) > 8:
+                raise ValidationError("Currency code is too long")
+            changes["default_currency"] = code
+        if "default_trial_days" in changes and changes["default_trial_days"] is not None:
+            days = int(changes["default_trial_days"])
+            if not 1 <= days <= 3650:
+                raise ValidationError("Free-trial days must be between 1 and 3650")
+            changes["default_trial_days"] = days
+        watched = ("default_timezone", "default_currency", "default_trial_days")
+        before = {key: getattr(row, key) for key in watched}
+        for key, value in changes.items():
+            setattr(row, key, value)
         await self.db.flush()
+        after = {key: getattr(row, key) for key in watched}
         await self.audit.write(
             action="platform.settings.update",
             actor_id=actor.id,
             resource_type="platform_settings",
             resource_id=str(row.id),
             message="Platform settings updated",
-            details={"fields": list(data.model_dump(exclude_unset=True).keys())},
+            details={"fields": list(changes.keys()), "before": before, "after": after},
         )
         return PlatformSettingsOut.model_validate(row)
 

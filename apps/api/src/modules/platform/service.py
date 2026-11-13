@@ -156,9 +156,12 @@ class PlatformService:
         # Subscriptions and memberships are tenant tables under forced RLS; the platform
         # session carries no school, so bind this school before reading them.
         await bind_tenant(self.db, school.id)
+        from src.modules.platform.commercial import default_trial_days, effective_trial_days
+
         plan, sub_status = await self._plan_for_school(school.id)
         admin_email, admin_user_id, admin_name = await self._primary_admin(school.id)
         students, teachers = await self._people_counts(school.id)
+        platform_days = await default_trial_days(self.db)
         return SchoolOut(
             id=school.id,
             name=school.name,
@@ -175,6 +178,8 @@ class PlatformService:
             website=getattr(school, "website", None),
             timezone=school.timezone,
             currency=getattr(school, "currency", None) or "INR",
+            trial_days=getattr(school, "trial_days", None),
+            effective_trial_days=effective_trial_days(getattr(school, "trial_days", None), platform_days),
             logo_url=school.logo_url,
             plan_code=plan,
             subscription_status=sub_status,
@@ -287,6 +292,7 @@ class PlatformService:
         await self._assert_school_access(actor, school)
         await bind_tenant(self.db, school.id)
         payload = data.model_dump(exclude_unset=True)
+        previous_trial_days = school.trial_days
         plan_code = payload.pop("plan_code", None)
         for k, v in payload.items():
             setattr(school, k, v)
@@ -324,7 +330,14 @@ class PlatformService:
             resource_type="school",
             resource_id=str(school.id),
             message=f"School updated: {school.name}",
-            details={"fields": list(data.model_dump(exclude_unset=True).keys())},
+            details={
+                "fields": list(data.model_dump(exclude_unset=True).keys()),
+                **(
+                    {"trial_days": {"before": previous_trial_days, "after": school.trial_days}}
+                    if "trial_days" in data.model_fields_set
+                    else {}
+                ),
+            },
         )
         return await self._to_school_out(school)
 

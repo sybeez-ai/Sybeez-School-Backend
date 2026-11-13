@@ -89,6 +89,7 @@ class SchoolUpdate(BaseModel):
     timezone: str | None = None
     currency: str | None = None
     plan_code: str | None = None
+    trial_days: int | None = Field(default=None, ge=1, le=3650)
 
 
 class SchoolOut(BaseModel):
@@ -107,6 +108,8 @@ class SchoolOut(BaseModel):
     website: str | None = None
     timezone: str
     currency: str = "INR"
+    trial_days: int | None = None
+    effective_trial_days: int = 30
     logo_url: str | None = None
 
     @field_validator("logo_url", mode="before")

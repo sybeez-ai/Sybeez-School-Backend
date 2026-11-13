@@ -86,6 +86,8 @@ class MeResponse(BaseModel):
     school_id: UUID | None
     is_platform_admin: bool
     platform_role: str | None = None
+    # True only when the account has the SUPER_ADMIN role and an allowlisted email.
+    is_super_admin: bool = False
     is_active: bool = True
     portals: list[str] = []
     # Effective permission codes (role defaults + membership/staff grants); same for web and mobile.

@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import ForeignKey, String, Text, text
+from sqlalchemy import ForeignKey, Integer, String, Text, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -33,6 +33,8 @@ class School(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     website: Mapped[str | None] = mapped_column(Text, nullable=True)
     timezone: Mapped[str] = mapped_column(String(64), default="UTC", nullable=False)
     currency: Mapped[str] = mapped_column(String(8), default="INR", nullable=False)
+    # Empty means "use the platform default" when a free trial is started.
+    trial_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     logo_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_by_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),

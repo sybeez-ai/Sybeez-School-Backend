@@ -18,9 +18,17 @@ pytestmark = pytest.mark.asyncio
 
 
 async def _super(db) -> dict[str, str]:
-    u = User(id=uuid4(), email=f"super-{uuid4().hex[:8]}@example.test", full_name="Super", is_platform_admin=True,
-             platform_role="SUPER_ADMIN")
-    db.add(u)
+    from sqlalchemy import select
+
+    email = "admin@sybeez.ai"
+    u = (await db.execute(select(User).where(User.email == email))).scalar_one_or_none()
+    if u is None:
+        u = User(id=uuid4(), email=email, full_name="Super", is_platform_admin=True, platform_role="SUPER_ADMIN")
+        db.add(u)
+    else:
+        u.is_platform_admin = True
+        u.platform_role = "SUPER_ADMIN"
+        u.is_active = True
     await db.flush()
     tok = create_access_token(subject=u.id, role="PLATFORM_ADMIN", school_id=None, extra={"platform_role": "SUPER_ADMIN"})
     return {"Authorization": f"Bearer {tok}"}
