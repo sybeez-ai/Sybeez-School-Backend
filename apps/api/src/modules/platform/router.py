@@ -496,6 +496,33 @@ async def update_settings(
 # --- AI control plane (no provider secrets) ---
 
 
+@router.get("/ai/consumption")
+async def ai_consumption_by_school(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _: Annotated[CurrentUser, Depends(require_super_admin)],
+):
+    """Token totals per school. Super admin only. No prices."""
+    from src.modules.fees.tenant import set_rls_bypass
+    from src.modules.platform.ai_consumption import list_school_tokens
+
+    await set_rls_bypass(db, True)
+    return await list_school_tokens(db)
+
+
+@router.get("/ai/consumption/{school_id}")
+async def ai_consumption_for_school(
+    school_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _: Annotated[CurrentUser, Depends(require_super_admin)],
+):
+    """Students, teachers and other people in one school, with token counts only."""
+    from src.modules.fees.tenant import set_rls_bypass
+    from src.modules.platform.ai_consumption import school_people_tokens
+
+    await set_rls_bypass(db, True)
+    return await school_people_tokens(db, school_id)
+
+
 @router.get("/ai", response_model=PlatformAiOverview)
 async def ai_overview(
     db: Annotated[AsyncSession, Depends(get_db)],

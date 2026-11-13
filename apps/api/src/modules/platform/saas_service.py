@@ -179,17 +179,38 @@ class PlatformSaasService:
         return PlatformSettingsOut.model_validate(row)
 
     async def update_settings(self, actor: CurrentUser, data: PlatformSettingsUpdate) -> PlatformSettingsOut:
+        from src.core.exceptions import ValidationError
+
         row = await self._ensure_settings()
-        for k, v in data.model_dump(exclude_unset=True).items():
-            setattr(row, k, v)
+        changes = data.model_dump(exclude_unset=True)
+        if "default_timezone" in changes and changes["default_timezone"] is not None:
+            zone = str(changes["default_timezone"]).strip()
+            if not zone or len(zone) > 64 or any(ch.isspace() for ch in zone):
+                raise ValidationError("Timezone must be an IANA name such as Asia/Kolkata")
+            changes["default_timezone"] = zone
+        if "default_currency" in changes and changes["default_currency"] is not None:
+            code = str(changes["default_currency"]).strip().upper() or "INR"
+            if len(code) > 8:
+                raise ValidationError("Currency code is too long")
+            changes["default_currency"] = code
+        if "default_trial_days" in changes and changes["default_trial_days"] is not None:
+            days = int(changes["default_trial_days"])
+            if not 1 <= days <= 3650:
+                raise ValidationError("Free-trial days must be between 1 and 3650")
+            changes["default_trial_days"] = days
+        watched = ("default_timezone", "default_currency", "default_trial_days")
+        before = {key: getattr(row, key) for key in watched}
+        for key, value in changes.items():
+            setattr(row, key, value)
         await self.db.flush()
+        after = {key: getattr(row, key) for key in watched}
         await self.audit.write(
             action="platform.settings.update",
             actor_id=actor.id,
             resource_type="platform_settings",
             resource_id=str(row.id),
             message="Platform settings updated",
-            details={"fields": list(data.model_dump(exclude_unset=True).keys())},
+            details={"fields": list(changes.keys()), "before": before, "after": after},
         )
         return PlatformSettingsOut.model_validate(row)
 

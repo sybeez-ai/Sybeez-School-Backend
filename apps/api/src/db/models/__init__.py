@@ -206,7 +206,13 @@ from src.db.models.whatsapp_assistant import (
 )
 from src.db.models.admissions import AdmissionApplication, AdmissionDocument, AdmissionEnquiry, AdmissionStatusHistory
 from src.db.models.parent import Parent
-from src.db.models.platform_saas import PlatformAiSettings, PlatformAiUsageDaily, PlatformPlan, PlatformSettings
+from src.db.models.platform_saas import (
+    PlatformAiSettings,
+    PlatformAiUsageDaily,
+    PlatformAiUserUsage,
+    PlatformPlan,
+    PlatformSettings,
+)
 from src.db.models.platform_notification_read import PlatformNotificationRead
 from src.db.models.platform_school_access import PlatformSchoolAccess
 from src.db.models.progress import PracticeAttempt, Progress, StudentProgress
@@ -252,6 +258,7 @@ __all__ = [
     "PlatformSettings",
     "PlatformAiSettings",
     "PlatformAiUsageDaily",
+    "PlatformAiUserUsage",
     "AcademicYear",
     "Grade",
     "ClassRoom",

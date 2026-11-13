@@ -38,6 +38,28 @@ def test_days_left_rounds_up_a_partial_day():
     assert days_left(None, now) == 0
 
 
+def test_school_trial_days_fall_back_to_the_platform_default():
+    from src.modules.platform.commercial import effective_trial_days
+
+    assert effective_trial_days(None, 30) == 30
+    assert effective_trial_days(None, None) == 30
+    assert effective_trial_days(14, 30) == 14
+
+
+def test_ai_consumption_is_token_counts_only():
+    from uuid import UUID
+
+    from src.modules.platform.ai_consumption import school_token_rows
+
+    school = UUID("00000000-0000-0000-0000-0000000000aa")
+    rows = school_token_rows([(school, "North", 10), (school, "North", 5), (None, None, 2)])
+    assert rows[0]["tokens"] == 15
+    assert rows[0]["school_name"] == "North"
+    assert "cost" not in rows[0] and "amount" not in rows[0]
+    assert rows[1]["school_name"] == "Platform"
+    assert rows[1]["tokens"] == 2
+
+
 def test_school_name_confirmation_is_exact():
     assert names_match("St. Mary's", "St. Mary's")
     assert names_match("  North School  ", "North School")

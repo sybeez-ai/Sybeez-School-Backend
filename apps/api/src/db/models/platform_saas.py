@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, DateTime, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -87,3 +87,14 @@ class PlatformAiUsageDaily(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     estimated_cost: Mapped[float] = mapped_column(Numeric(12, 6), nullable=False, default=0)
     errors: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     safety_blocks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
+class PlatformAiUserUsage(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """Tokens recorded for one person at one school. School totals stay on the daily table."""
+
+    __tablename__ = "platform_ai_user_usage"
+    __table_args__ = (UniqueConstraint("school_id", "user_id", name="uq_ai_user_usage_school_user"),)
+
+    school_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
