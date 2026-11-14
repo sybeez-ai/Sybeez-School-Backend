@@ -17,6 +17,7 @@ from src.db.models import (
     Invitation,
     Parent,
     PlatformSchoolAccess,
+    PlatformStaff,
     School,
     SchoolMembership,
     Student,
@@ -63,6 +64,19 @@ def _slugify(name: str) -> str:
 def _name_key(name: str) -> str:
     """Normalise a school name for duplicate checks: 'St. Marry' == 'st marry'."""
     return re.sub(r"[^a-z0-9]+", "", (name or "").lower())
+
+
+def team_member_delete_block(actor: CurrentUser, user: User) -> str | None:
+    """Why a Super Admin cannot remove this platform team account, or None when removal is allowed."""
+    from src.api.dependencies import superadmin_allowlist
+
+    if user.id == actor.id:
+        return "You cannot delete your own account"
+    if (user.email or "").lower() in superadmin_allowlist():
+        return "The super admin account cannot be deleted"
+    if (user.platform_role or "") == PlatformRole.SUPER_ADMIN.value:
+        return "The super admin account cannot be deleted"
+    return None
 
 
 def _is_admin_or_above(platform_role: str | None) -> bool:
@@ -156,9 +170,12 @@ class PlatformService:
         # Subscriptions and memberships are tenant tables under forced RLS; the platform
         # session carries no school, so bind this school before reading them.
         await bind_tenant(self.db, school.id)
+        from src.modules.platform.commercial import default_trial_days, effective_trial_days
+
         plan, sub_status = await self._plan_for_school(school.id)
         admin_email, admin_user_id, admin_name = await self._primary_admin(school.id)
         students, teachers = await self._people_counts(school.id)
+        platform_days = await default_trial_days(self.db)
         return SchoolOut(
             id=school.id,
             name=school.name,
@@ -175,6 +192,8 @@ class PlatformService:
             website=getattr(school, "website", None),
             timezone=school.timezone,
             currency=getattr(school, "currency", None) or "INR",
+            trial_days=getattr(school, "trial_days", None),
+            effective_trial_days=effective_trial_days(getattr(school, "trial_days", None), platform_days),
             logo_url=school.logo_url,
             plan_code=plan,
             subscription_status=sub_status,
@@ -287,6 +306,7 @@ class PlatformService:
         await self._assert_school_access(actor, school)
         await bind_tenant(self.db, school.id)
         payload = data.model_dump(exclude_unset=True)
+        previous_trial_days = school.trial_days
         plan_code = payload.pop("plan_code", None)
         for k, v in payload.items():
             setattr(school, k, v)
@@ -324,7 +344,14 @@ class PlatformService:
             resource_type="school",
             resource_id=str(school.id),
             message=f"School updated: {school.name}",
-            details={"fields": list(data.model_dump(exclude_unset=True).keys())},
+            details={
+                "fields": list(data.model_dump(exclude_unset=True).keys()),
+                **(
+                    {"trial_days": {"before": previous_trial_days, "after": school.trial_days}}
+                    if "trial_days" in data.model_fields_set
+                    else {}
+                ),
+            },
         )
         return await self._to_school_out(school)
 
@@ -1121,4 +1148,39 @@ class PlatformService:
             is_active=user.is_active,
             created_at=user.created_at,
             last_login_at=user.last_login_at,
+        )
+
+    async def delete_employee(self, employee_id: UUID, actor: CurrentUser) -> None:
+        """Remove a platform team login. The user row stays so audit history is not broken."""
+        result = await self.db.execute(
+            select(User).where(User.id == employee_id, User.is_platform_admin.is_(True))
+        )
+        user = result.scalar_one_or_none()
+        if user is None:
+            raise NotFoundError("Employee not found")
+        blocked = team_member_delete_block(actor, user)
+        if blocked:
+            raise ForbiddenError(blocked)
+        label = user.full_name
+        email = user.email
+        user.is_active = False
+        user.status = "DISABLED"
+        user.is_platform_admin = False
+        user.platform_role = None
+        staff_rows = (
+            await self.db.execute(select(PlatformStaff).where(PlatformStaff.user_id == user.id))
+        ).scalars().all()
+        for staff in staff_rows:
+            staff.status = "REVOKED"
+        if user.cognito_sub and cognito_svc.cognito_configured():
+            cognito_svc.admin_set_enabled(email=email, enabled=False)
+        await self.db.flush()
+        await self.audit.write(
+            action="platform.super_admin.delete",
+            actor_id=actor.id,
+            school_id=None,
+            resource_type="user",
+            resource_id=str(user.id),
+            message=f"Super admin removed team member: {label}",
+            details={"mode": "soft", "label": label, "email": email},
         )

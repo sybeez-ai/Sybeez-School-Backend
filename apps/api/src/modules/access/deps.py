@@ -7,7 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.api.dependencies import CurrentUser, get_current_user
 from src.core.database import get_db
 from src.core.exceptions import ForbiddenError
-from src.core.config import get_settings
 from src.db.models import MembershipPermissionOverride, PlatformStaff, PlatformStaffPermission, PlatformStaffPortal
 from src.modules.access.catalog import PORTALS, permissions_for
 from src.shared.enums import UserRole
@@ -85,12 +84,9 @@ def require_super_admin():
     """Platform routes are limited to the bootstrapped super admin, not staff portal grants."""
 
     async def _dep(user: Annotated[CurrentUser, Depends(get_current_user)]) -> CurrentUser:
-        from src.shared.enums import PlatformRole
+        from src.api.dependencies import is_super_admin
 
-        email = get_settings().superadmin_email.lower()
-        role_ok = user.platform_role == PlatformRole.SUPER_ADMIN.value
-        email_ok = user.is_platform_admin and user.email.lower() == email
-        if not (role_ok or email_ok):
+        if not is_super_admin(user):
             raise ForbiddenError("Platform APIs are limited to the super admin")
         return user
 

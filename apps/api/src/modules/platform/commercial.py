@@ -76,9 +76,19 @@ def end_of_day(day) -> datetime:
     return datetime.combine(day, time(23, 59, 59), tzinfo=UTC)
 
 
+def effective_trial_days(school_days: int | None, platform_days: int | None) -> int:
+    """A school override wins. Otherwise the platform default, or 30."""
+    if school_days is not None and int(school_days) > 0:
+        return int(school_days)
+    if platform_days is not None and int(platform_days) > 0:
+        return int(platform_days)
+    return 30
+
+
 async def default_trial_days(db: AsyncSession) -> int:
     row = (await db.execute(select(PlatformSettings).limit(1))).scalar_one_or_none()
-    return int(row.default_trial_days) if row and row.default_trial_days else 30
+    stored = int(row.default_trial_days) if row and row.default_trial_days else 30
+    return effective_trial_days(None, stored)
 
 
 async def latest_subscription(db: AsyncSession, school_id: UUID) -> Subscription | None:

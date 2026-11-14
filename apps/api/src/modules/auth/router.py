@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.dependencies import CurrentUser, get_current_user
+from src.api.dependencies import CurrentUser, get_current_user, is_super_admin
 from src.core.config import get_settings
 from src.core.cookies import clear_auth_cookies, set_auth_cookies
 from src.core.database import get_db
@@ -254,6 +254,7 @@ async def me(
         school_id=user.school_id,
         is_platform_admin=user.is_platform_admin,
         platform_role=user.platform_role,
+        is_super_admin=is_super_admin(user),
         is_active=bool(row.is_active),
         portals=sorted(user.portals),
         permissions=await _permissions(db, user),
@@ -276,6 +277,7 @@ async def update_me(
         school_id=user.school_id,
         is_platform_admin=user.is_platform_admin,
         platform_role=user.platform_role,
+        is_super_admin=is_super_admin(user),
         is_active=bool(updated.is_active),
         portals=sorted(user.portals),
         permissions=await _permissions(db, user),
