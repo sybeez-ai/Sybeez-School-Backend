@@ -17,6 +17,7 @@ from src.db.models import (
     Invitation,
     Parent,
     PlatformSchoolAccess,
+    PlatformStaff,
     School,
     SchoolMembership,
     Student,
@@ -63,6 +64,19 @@ def _slugify(name: str) -> str:
 def _name_key(name: str) -> str:
     """Normalise a school name for duplicate checks: 'St. Marry' == 'st marry'."""
     return re.sub(r"[^a-z0-9]+", "", (name or "").lower())
+
+
+def team_member_delete_block(actor: CurrentUser, user: User) -> str | None:
+    """Why a Super Admin cannot remove this platform team account, or None when removal is allowed."""
+    from src.api.dependencies import superadmin_allowlist
+
+    if user.id == actor.id:
+        return "You cannot delete your own account"
+    if (user.email or "").lower() in superadmin_allowlist():
+        return "The super admin account cannot be deleted"
+    if (user.platform_role or "") == PlatformRole.SUPER_ADMIN.value:
+        return "The super admin account cannot be deleted"
+    return None
 
 
 def _is_admin_or_above(platform_role: str | None) -> bool:
@@ -1134,4 +1148,39 @@ class PlatformService:
             is_active=user.is_active,
             created_at=user.created_at,
             last_login_at=user.last_login_at,
+        )
+
+    async def delete_employee(self, employee_id: UUID, actor: CurrentUser) -> None:
+        """Remove a platform team login. The user row stays so audit history is not broken."""
+        result = await self.db.execute(
+            select(User).where(User.id == employee_id, User.is_platform_admin.is_(True))
+        )
+        user = result.scalar_one_or_none()
+        if user is None:
+            raise NotFoundError("Employee not found")
+        blocked = team_member_delete_block(actor, user)
+        if blocked:
+            raise ForbiddenError(blocked)
+        label = user.full_name
+        email = user.email
+        user.is_active = False
+        user.status = "DISABLED"
+        user.is_platform_admin = False
+        user.platform_role = None
+        staff_rows = (
+            await self.db.execute(select(PlatformStaff).where(PlatformStaff.user_id == user.id))
+        ).scalars().all()
+        for staff in staff_rows:
+            staff.status = "REVOKED"
+        if user.cognito_sub and cognito_svc.cognito_configured():
+            cognito_svc.admin_set_enabled(email=email, enabled=False)
+        await self.db.flush()
+        await self.audit.write(
+            action="platform.super_admin.delete",
+            actor_id=actor.id,
+            school_id=None,
+            resource_type="user",
+            resource_id=str(user.id),
+            message=f"Super admin removed team member: {label}",
+            details={"mode": "soft", "label": label, "email": email},
         )

@@ -118,6 +118,17 @@ async def create_employee(
     return await PlatformService(db).create_employee(body, await _actor_user(db, actor))
 
 
+@router.delete("/employees/{employee_id}", status_code=204)
+async def delete_employee(
+    employee_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_super_admin)],
+):
+    """Remove a platform team member. Allowlisted Super Admin accounts are refused."""
+    await PlatformService(db).delete_employee(employee_id, actor)
+    return Response(status_code=204)
+
+
 @router.patch("/employees/{employee_id}", response_model=PlatformEmployeeOut)
 async def update_employee(
     employee_id: UUID,

@@ -161,3 +161,28 @@ async def test_delete_refuses_without_confirmation():
         await delete_record(None, actor, "students", uuid4(), RecordDeleteIn(confirm=False))
     with pytest.raises(ValidationError):
         await delete_record(None, actor, "schools", uuid4(), RecordDeleteIn(confirm_name="  "))
+
+
+def test_team_delete_keeps_super_admin_accounts_and_allows_other_people():
+    from src.db.models import User
+    from src.modules.platform.service import team_member_delete_block
+
+    actor_id = uuid4()
+    actor = CurrentUser(
+        id=actor_id,
+        email="admin@sybeez.ai",
+        full_name="Owner",
+        role=UserRole.PLATFORM_ADMIN,
+        school_id=None,
+        membership_id=None,
+        is_platform_admin=True,
+        platform_role="SUPER_ADMIN",
+    )
+    self_row = User(id=actor_id, email="admin@sybeez.ai", full_name="Owner", platform_role="SUPER_ADMIN")
+    silver = User(id=uuid4(), email="silverstalan.inbaraj@sybeez.ai", full_name="Silver", platform_role="SUPER_ADMIN")
+    labeled = User(id=uuid4(), email="platform.dev@sybeez.ai", full_name="Dev", platform_role="SUPER_ADMIN")
+    support = User(id=uuid4(), email="support@sybeez.ai", full_name="Support", platform_role="SUPPORT")
+    assert team_member_delete_block(actor, self_row)
+    assert team_member_delete_block(actor, silver)
+    assert team_member_delete_block(actor, labeled)
+    assert team_member_delete_block(actor, support) is None
