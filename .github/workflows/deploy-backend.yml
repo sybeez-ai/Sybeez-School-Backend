@@ -163,8 +163,13 @@ jobs:
           # directly, so this does the same visit and waits until the API
           # reports the database is up. The sleep schedule is unchanged.
           echo "Waking the school by visiting it, then waiting for the API"
-          for attempt in $(seq 1 40); do
+          # The sleep page is a CloudFront response. Its script POSTs this path.
+          # curl does not run that script, so the deploy sends the same POST.
+          # A cold start took about 23 minutes on 14 Nov 2026, so wait ~30 minutes.
+          for attempt in $(seq 1 90); do
             curl -fsS -o /dev/null --max-time 25 "$SCHOOL_URL/" || true
+            curl -fsS -o /dev/null --max-time 25 -X POST "$SCHOOL_URL/api/v1/autosleep-wake" \
+              -H "origin: $SCHOOL_URL" -H "content-type: application/json" -d '{}' || true
             code="$(curl -sS -o /tmp/ready.json -w '%{http_code}' --max-time 25 "$READY_URL" || echo err)"
             if [ "$code" = "200" ] && python3 -c 'import json; d=json.load(open("/tmp/ready.json")); raise SystemExit(0 if d.get("dependencies",{}).get("database",{}).get("ok") is True else 1)'; then
               echo "API reports the database is up"
