@@ -27,7 +27,7 @@ from src.db.models import (
 )
 from src.modules.auth import cognito as cognito_svc
 from src.modules.auth.repository import hash_token
-from src.modules.fees.tenant import bind_tenant
+from src.modules.fees.tenant import bind_tenant, open_platform_school
 from src.modules.audit.repository import AuditRepository
 from src.modules.platform.repository import PlatformRepository
 from src.modules.platform.schemas import (
@@ -234,7 +234,7 @@ class PlatformService:
         # school_id = app.school_id under forced RLS. The platform admin's token
         # carries no school, so bind the new school's id before any insert.
         school_id = uuid4()
-        await bind_tenant(self.db, school_id)
+        await open_platform_school(self.db, school_id)
 
         school = School(
             id=school_id,
@@ -302,7 +302,7 @@ class PlatformService:
         if school is None:
             raise NotFoundError("School not found")
         await self._assert_school_access(actor, school)
-        await bind_tenant(self.db, school.id)
+        await open_platform_school(self.db, school.id)
         payload = data.model_dump(exclude_unset=True)
         previous_trial_days = school.trial_days
         plan_code = payload.pop("plan_code", None)
@@ -366,7 +366,7 @@ class PlatformService:
         if school is None:
             raise NotFoundError("School not found")
         await self._assert_school_access(actor, school)
-        await bind_tenant(self.db, school.id)
+        await open_platform_school(self.db, school.id)
         if status in {SchoolStatus.ARCHIVED.value, SchoolStatus.SUSPENDED.value, SchoolStatus.ACTIVE.value}:
             if (confirm_name or "").strip() != (school.name or "").strip():
                 raise ValidationError("Type the school name exactly to confirm this change")
@@ -670,7 +670,7 @@ class PlatformService:
         if school is None:
             raise NotFoundError("School not found")
         await self._assert_school_access(actor, school)
-        await bind_tenant(self.db, school.id)
+        await open_platform_school(self.db, school.id)
         raw = generate_token(24)
         inv = Invitation(
             school_id=school_id,
@@ -701,7 +701,7 @@ class PlatformService:
         if school is None:
             raise NotFoundError("School not found")
         await self._assert_school_access(actor, school)
-        await bind_tenant(self.db, school.id)
+        await open_platform_school(self.db, school.id)
         admin_email, _, _ = await self._primary_admin(school_id)
         if not admin_email:
             raise NotFoundError("School admin not found")
@@ -738,7 +738,7 @@ class PlatformService:
         if existing is not None:
             # Never reset someone else's password through this path.
             raise ConflictError("An account with this email already exists. Use a different email.")
-        await bind_tenant(self.db, school.id)
+        await open_platform_school(self.db, school.id)
         password = data.password or cognito_svc.generate_temporary_password()
         user, _, temp = await create_school_user(
             self.db,
@@ -796,7 +796,7 @@ class PlatformService:
         if school is None:
             raise NotFoundError("School not found")
         await self._assert_school_access(actor, school)
-        await bind_tenant(self.db, school.id)
+        await open_platform_school(self.db, school.id)
         admin_email, _, _ = await self._primary_admin(school_id)
         if not admin_email:
             raise NotFoundError("School admin not found")
@@ -1029,7 +1029,7 @@ class PlatformService:
         if school is None:
             raise NotFoundError("School not found")
         await self._assert_school_access(actor, school)
-        await bind_tenant(self.db, school.id)
+        await open_platform_school(self.db, school.id)
 
         content_type = (file.content_type or "").lower()
         ext_map = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}
@@ -1309,7 +1309,13 @@ class PlatformService:
         if membership is None:
             raise NotFoundError("School admin not found")
         person = await self.db.get(User, user_id)
-        if membership.status != MembershipStatus.LEFT.value:
+        stored = (
+            await self.db.execute(
+                text("SELECT status FROM school_memberships WHERE id = :id"),
+                {"id": membership.id},
+            )
+        ).scalar_one()
+        if stored != MembershipStatus.LEFT.value:
             changed = (
                 await self.db.execute(
                     text(
