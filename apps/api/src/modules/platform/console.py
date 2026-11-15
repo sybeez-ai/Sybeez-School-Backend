@@ -579,7 +579,10 @@ async def school_members(
     stmt = (
         select(SchoolMembership, User)
         .join(User, User.id == SchoolMembership.user_id)
-        .where(SchoolMembership.school_id == school_id)
+        .where(
+            SchoolMembership.school_id == school_id,
+            SchoolMembership.status != "LEFT",
+        )
         .order_by(SchoolMembership.created_at.asc())
     )
     if role:

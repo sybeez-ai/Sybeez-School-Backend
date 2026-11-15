@@ -490,7 +490,10 @@ class PlatformService:
             select(User, SchoolMembership, School)
             .join(SchoolMembership, SchoolMembership.user_id == User.id)
             .join(School, School.id == SchoolMembership.school_id)
-            .where(SchoolMembership.role == UserRole.SCHOOL_ADMIN.value)
+            .where(
+                SchoolMembership.role == UserRole.SCHOOL_ADMIN.value,
+                SchoolMembership.status == MembershipStatus.ACTIVE.value,
+            )
             .order_by(User.created_at.desc())
         )
         if school_id:
@@ -534,6 +537,7 @@ class PlatformService:
             .where(
                 User.id == admin_id,
                 SchoolMembership.role == UserRole.SCHOOL_ADMIN.value,
+                SchoolMembership.status == MembershipStatus.ACTIVE.value,
             )
             .order_by(School.name.asc())
         )
@@ -581,6 +585,7 @@ class PlatformService:
                 .join(School, School.id == SchoolMembership.school_id)
                 .where(
                     SchoolMembership.role == UserRole.SCHOOL_ADMIN.value,
+                    SchoolMembership.status == MembershipStatus.ACTIVE.value,
                     or_(
                         func.lower(User.email).like(like),
                         func.lower(User.full_name).like(like),
@@ -831,7 +836,9 @@ class PlatformService:
             details={"mode": "hard", "label": name, "confirm_name": confirm_name.strip(), "school_id": str(school_id)},
         )
         await self.db.flush()
-        tables = [
+        from src.modules.platform.purge import ForeignKey, missing_from_purge, purge_steps
+
+        school_tables = {
             row[0]
             for row in (
                 await self.db.execute(
@@ -844,63 +851,168 @@ class PlatformService:
                         WHERE c.table_schema = 'public'
                           AND c.column_name = 'school_id'
                           AND t.table_type = 'BASE TABLE'
-                          AND c.table_name <> 'schools'
                         """
                     )
                 )
             ).all()
-        ]
-        pending = [name for name in tables if name.replace("_", "").isalnum()]
-        references = [
-            (child, parent)
-            for child, parent in (
+            if str(row[0]).replace("_", "").isalnum()
+        }
+        foreign_keys = [
+            ForeignKey(
+                child=str(child),
+                parent=str(parent),
+                child_cols=tuple(str(col) for col in child_cols),
+                parent_cols=tuple(str(col) for col in parent_cols),
+            )
+            for child, parent, child_cols, parent_cols in (
                 await self.db.execute(
                     text(
                         """
-                        SELECT child.relname, parent.relname
+                        SELECT child.relname,
+                               parent.relname,
+                               array_agg(child_att.attname ORDER BY u.ord),
+                               array_agg(parent_att.attname ORDER BY u.ord)
                         FROM pg_constraint fk
                         JOIN pg_class child ON child.oid = fk.conrelid
                         JOIN pg_class parent ON parent.oid = fk.confrelid
                         JOIN pg_namespace ns ON ns.oid = child.relnamespace
+                        JOIN LATERAL unnest(fk.conkey, fk.confkey)
+                          WITH ORDINALITY AS u(child_num, parent_num, ord) ON true
+                        JOIN pg_attribute child_att
+                          ON child_att.attrelid = child.oid AND child_att.attnum = u.child_num
+                        JOIN pg_attribute parent_att
+                          ON parent_att.attrelid = parent.oid AND parent_att.attnum = u.parent_num
                         WHERE fk.contype = 'f' AND ns.nspname = 'public'
+                        GROUP BY fk.oid, child.relname, parent.relname
                         """
                     )
                 )
             ).all()
         ]
-        from src.modules.platform.purge import deletion_order
-
-        ordered = deletion_order(pending, references)
+        steps = purge_steps(school_tables, foreign_keys)
+        planned = {step.table for step in steps}
+        missing = missing_from_purge(school_tables, foreign_keys, planned)
+        if missing:
+            raise ConflictError(
+                "Could not delete the school because these tables are not in the purge: "
+                + ", ".join(missing[:8])
+            )
+        await self._delete_school_objects(school_id, school_tables, school.logo_url)
+        people = [
+            row[0]
+            for row in (
+                await self.db.execute(
+                    text(
+                        """
+                        SELECT user_id FROM students WHERE school_id = :sid
+                        UNION
+                        SELECT user_id FROM teachers WHERE school_id = :sid
+                        UNION
+                        SELECT user_id FROM school_memberships WHERE school_id = :sid
+                        """
+                    ),
+                    {"sid": school_id},
+                )
+            ).all()
+        ]
         last_error: Exception | None = None
+        pending = list(steps)
         for _ in range(6):
-            if not ordered:
+            if not pending:
                 break
-            stuck: list[str] = []
-            for table in ordered:
+            stuck: list = []
+            for step in pending:
                 try:
                     async with self.db.begin_nested():
-                        await self.db.execute(
-                            text(f'DELETE FROM "{table}" WHERE school_id = :sid'),
-                            {"sid": school_id},
-                        )
+                        await self.db.execute(text(step.sql), {"sid": school_id})
+                    if step.table in school_tables:
+                        left = (
+                            await self.db.execute(
+                                text(f'SELECT count(*) FROM "{step.table}" WHERE school_id = :sid'),
+                                {"sid": school_id},
+                            )
+                        ).scalar_one()
+                        if int(left or 0) > 0:
+                            stuck.append(step)
                 except Exception as exc:
                     last_error = exc
-                    stuck.append(table)
+                    stuck.append(step)
             if not stuck:
-                ordered = []
+                pending = []
                 break
-            if stuck == ordered:
+            if [step.table for step in stuck] == [step.table for step in pending]:
+                pending = stuck
                 break
-            ordered = stuck
+            pending = stuck
         try:
             async with self.db.begin_nested():
                 await self.db.execute(text("DELETE FROM schools WHERE id = :sid"), {"sid": school_id})
         except Exception as exc:
-            left = ", ".join(ordered[:8]) or "unknown"
+            left = ", ".join(step.table for step in pending[:8]) or "unknown"
+            detail = str(getattr(last_error, "orig", last_error) or exc).splitlines()[0][:180]
             raise ConflictError(
-                f"Could not delete the school because related rows remain ({left})"
+                f"Could not delete the school because related rows remain ({left}). {detail}"
             ) from (last_error or exc)
+        for person_id in people:
+            if person_id == actor.id:
+                continue
+            try:
+                async with self.db.begin_nested():
+                    await self.db.execute(
+                        text(
+                            """
+                            DELETE FROM users
+                            WHERE id = :uid
+                              AND COALESCE(is_platform_admin, false) = false
+                              AND NOT EXISTS (
+                                SELECT 1 FROM school_memberships m
+                                WHERE m.user_id = users.id AND m.status = 'ACTIVE'
+                              )
+                            """
+                        ),
+                        {"uid": person_id},
+                    )
+            except Exception:
+                continue
         await self.db.flush()
+
+    async def _delete_school_objects(self, school_id: UUID, school_tables: set[str], logo_url: str | None) -> None:
+        """Remove stored files for this school before the rows that name them are deleted."""
+        from sqlalchemy import text
+
+        from src.core.storage import delete_object
+
+        delete_object(logo_url)
+        names = sorted(table for table in school_tables if table != "schools" and table.replace("_", "").isalnum())
+        if not names:
+            return
+        columns = ("file_key", "object_key", "logo_url", "logo_object_key", "pdf_object_key", "photo_url")
+        found = (
+            await self.db.execute(
+                text(
+                    """
+                    SELECT c.table_name, c.column_name
+                    FROM information_schema.columns c
+                    WHERE c.table_schema = 'public'
+                      AND c.column_name = ANY(:columns)
+                      AND c.table_name = ANY(:tables)
+                    """
+                ),
+                {"columns": list(columns), "tables": names},
+            )
+        ).all()
+        for table, column in found:
+            if not str(table).replace("_", "").isalnum() or not str(column).replace("_", "").isalnum():
+                continue
+            keys = (
+                await self.db.execute(
+                    text(f'SELECT "{column}" FROM "{table}" WHERE school_id = :sid'),
+                    {"sid": school_id},
+                )
+            ).all()
+            for (key,) in keys:
+                if isinstance(key, str) and key:
+                    delete_object(key)
 
     async def upload_school_logo(self, actor: CurrentUser, school_id: UUID, file: UploadFile) -> SchoolOut:
         school = await self.repo.get_school(school_id)
@@ -1186,10 +1298,21 @@ class PlatformService:
         if membership is None:
             raise NotFoundError("School admin not found")
         person = await self.db.get(User, user_id)
-        membership.status = MembershipStatus.LEFT.value
+        if membership.status != MembershipStatus.LEFT.value:
+            changed = await self.db.execute(
+                update(SchoolMembership)
+                .where(
+                    SchoolMembership.id == membership.id,
+                    SchoolMembership.status != MembershipStatus.LEFT.value,
+                )
+                .values(status=MembershipStatus.LEFT.value)
+            )
+            if changed.rowcount != 1:
+                raise ConflictError("The admin was not removed. No membership changed.")
         await self.db.execute(
             update(RefreshToken).where(RefreshToken.user_id == user_id, RefreshToken.revoked.is_(False)).values(revoked=True)
         )
+        self.db.expire(membership)
         await self.db.flush()
         await self.audit.write(
             action="platform.super_admin.delete",
