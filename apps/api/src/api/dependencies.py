@@ -228,15 +228,29 @@ def _perm_satisfies(perms: set[str], code: str) -> bool:
     return False
 
 
-def superadmin_allowlist() -> frozenset[str]:
-    """Emails that may exercise Super Admin powers. Configurable via SUPERADMIN_EMAILS."""
-    from src.core.config import get_settings
+OWNER_EMAIL = "admin@sybeez.ai"
+SILVER_EMAIL = "silverstalan.inbaraj@sybeez.ai"
+EMPLOYEE_ROLES = frozenset({"SUPER_ADMIN", "ADMIN", "SALES"})
+# Older department labels become Admin. USER becomes Sales. Super Admin stays.
+_LEGACY_ADMIN_ROLES = frozenset(
+    {
+        "PLATFORM_ADMIN",
+        "SUPPORT",
+        "BILLING",
+        "OPERATIONS",
+        "MARKETING",
+        "ENGINEERING",
+        "PRODUCT",
+        "FINANCE",
+        "HR",
+        "ANALYST",
+    }
+)
 
-    raw = get_settings().superadmin_emails or ""
-    emails = frozenset(part.strip().lower() for part in raw.split(",") if part.strip())
-    if emails:
-        return emails
-    return frozenset({"admin@sybeez.ai", "silverstalan.inbaraj@sybeez.ai"})
+
+def superadmin_allowlist() -> frozenset[str]:
+    """The protected owner and the account that stays Super Admin. Not the only Super Admins."""
+    return frozenset({OWNER_EMAIL, SILVER_EMAIL})
 
 
 def normalize_platform_role(role: str | None) -> str:
@@ -249,25 +263,48 @@ def normalize_platform_role(role: str | None) -> str:
     return text
 
 
-# Missing role, or the older operator names, for the two allowlisted emails only.
-_LEGACY_SUPER_ADMIN = frozenset({"", PlatformRole.ADMIN.value, PlatformRole.PLATFORM_ADMIN.value})
+def account_email(user: CurrentUser | None) -> str:
+    return (getattr(user, "email", None) or "").strip().lower()
+
+
+def is_protected_owner(email: str | None) -> bool:
+    """admin@sybeez.ai cannot be removed, demoted, or deleted by anyone else."""
+    return (email or "").strip().lower() == OWNER_EMAIL
+
+
+def console_role(user: CurrentUser) -> str | None:
+    """One of SUPER_ADMIN, ADMIN, SALES, or None when this account is not on the console.
+
+    The owner email is always Super Admin. silverstalan.inbaraj@sybeez.ai stays Super Admin.
+    Any other platform admin with role SUPER_ADMIN is a Super Admin too.
+    """
+    email = account_email(user)
+    if email == OWNER_EMAIL or email == SILVER_EMAIL:
+        return PlatformRole.SUPER_ADMIN.value
+    if not user.is_platform_admin:
+        return None
+    role = normalize_platform_role(user.platform_role)
+    if role == PlatformRole.SUPER_ADMIN.value:
+        return PlatformRole.SUPER_ADMIN.value
+    if role == PlatformRole.SALES.value:
+        return PlatformRole.SALES.value
+    if role == PlatformRole.ADMIN.value:
+        return PlatformRole.ADMIN.value
+    if role in _LEGACY_ADMIN_ROLES:
+        return PlatformRole.ADMIN.value
+    if role in {"", "USER"}:
+        return PlatformRole.SALES.value
+    return PlatformRole.ADMIN.value
 
 
 def is_super_admin(user: CurrentUser) -> bool:
-    """Super Admin powers stay on the two allowlisted emails.
+    """Full console power, including deletes and employee access."""
+    return console_role(user) == PlatformRole.SUPER_ADMIN.value
 
-    The stored role may be SUPER_ADMIN (any spacing or case), blank, or a legacy
-    alias (ADMIN / PLATFORM_ADMIN). Any other email stays a normal platform
-    account, even when the role string says SUPER_ADMIN.
-    """
-    if not user.is_platform_admin:
-        return False
-    if (user.email or "").lower() not in superadmin_allowlist():
-        return False
-    role = normalize_platform_role(user.platform_role)
-    if role == PlatformRole.SUPER_ADMIN.value:
-        return True
-    return role in _LEGACY_SUPER_ADMIN
+
+def is_console_admin(user: CurrentUser) -> bool:
+    """Admin or Super Admin. Sales is not included."""
+    return console_role(user) in {PlatformRole.SUPER_ADMIN.value, PlatformRole.ADMIN.value}
 
 
 def require_roles(*roles: UserRole):

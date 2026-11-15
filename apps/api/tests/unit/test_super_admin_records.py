@@ -101,7 +101,7 @@ def test_record_catalog_covers_the_platform():
     assert next(item for item in KINDS if item["key"] == "schools")["confirm"] == "name"
 
 
-def test_only_the_two_allowlisted_emails_are_super_admin():
+def test_owner_stays_super_admin_and_other_super_admins_are_allowed():
     from src.api.dependencies import superadmin_allowlist
 
     assert superadmin_allowlist() == frozenset({"admin@sybeez.ai", "silverstalan.inbaraj@sybeez.ai"})
@@ -113,9 +113,9 @@ def test_only_the_two_allowlisted_emails_are_super_admin():
         school_id=None,
         membership_id=None,
         is_platform_admin=True,
-        platform_role="SUPER_ADMIN",
+        platform_role="SALES",
     )
-    labeled_only = CurrentUser(
+    granted = CurrentUser(
         id=uuid4(),
         email="platform.dev@sybeez.ai",
         full_name="Dev",
@@ -126,7 +126,7 @@ def test_only_the_two_allowlisted_emails_are_super_admin():
         platform_role="SUPER_ADMIN",
     )
     assert is_super_admin(silver)
-    assert not is_super_admin(labeled_only)
+    assert is_super_admin(granted)
 
 
 def test_super_admin_flag_is_not_every_platform_admin():
@@ -172,7 +172,7 @@ async def test_delete_refuses_without_confirmation():
         await delete_record(None, actor, "schools", uuid4(), RecordDeleteIn(confirm_name="  "))
 
 
-def test_team_delete_keeps_super_admin_accounts_and_allows_other_people():
+def test_team_delete_protects_only_the_owner_account():
     from src.db.models import User
     from src.modules.platform.service import team_member_delete_block
 
@@ -191,7 +191,19 @@ def test_team_delete_keeps_super_admin_accounts_and_allows_other_people():
     silver = User(id=uuid4(), email="silverstalan.inbaraj@sybeez.ai", full_name="Silver", platform_role="SUPER_ADMIN")
     labeled = User(id=uuid4(), email="platform.dev@sybeez.ai", full_name="Dev", platform_role="SUPER_ADMIN")
     support = User(id=uuid4(), email="support@sybeez.ai", full_name="Support", platform_role="SUPPORT")
+    owner = User(id=uuid4(), email="admin@sybeez.ai", full_name="Owner", platform_role="SUPER_ADMIN")
+    other = CurrentUser(
+        id=uuid4(),
+        email="platform.dev@sybeez.ai",
+        full_name="Dev",
+        role=UserRole.PLATFORM_ADMIN,
+        school_id=None,
+        membership_id=None,
+        is_platform_admin=True,
+        platform_role="SUPER_ADMIN",
+    )
     assert team_member_delete_block(actor, self_row)
-    assert team_member_delete_block(actor, silver)
-    assert team_member_delete_block(actor, labeled)
+    assert team_member_delete_block(other, owner)
+    assert team_member_delete_block(actor, silver) is None
+    assert team_member_delete_block(actor, labeled) is None
     assert team_member_delete_block(actor, support) is None

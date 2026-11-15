@@ -40,17 +40,15 @@ def test_super_admin_flag():
     assert is_super_admin(_user())
     assert is_super_admin(_user(email="silverstalan.inbaraj@sybeez.ai"))
     assert not is_super_admin(_user(platform_role="ADMIN", email="someone@sybeez.ai"))
-    assert not is_super_admin(_user(email="platform.dev@sybeez.ai"))
-    assert not is_super_admin(_user(is_platform_admin=False))
+    assert is_super_admin(_user(email="platform.dev@sybeez.ai", platform_role="SUPER_ADMIN"))
+    assert not is_super_admin(_user(is_platform_admin=False, email="teacher@school.test"))
 
 
-def test_allowlisted_admin_is_super_admin_when_role_is_missing_or_legacy():
+def test_owner_is_always_super_admin_and_other_super_admins_are_role_based():
     assert is_super_admin(_user(platform_role=None))
     assert is_super_admin(_user(platform_role="admin"))
-    assert is_super_admin(_user(platform_role=" platform-admin "))
-    assert is_super_admin(_user(platform_role="super admin"))
-    assert is_super_admin(_user(email="silverstalan.inbaraj@sybeez.ai", platform_role="ADMIN"))
-    assert not is_super_admin(_user(email="other@sybeez.ai", platform_role="SUPER_ADMIN"))
-    assert not is_super_admin(_user(email="other@sybeez.ai", platform_role="admin"))
-    assert not is_super_admin(_user(platform_role=None, is_platform_admin=False))
-    assert not is_super_admin(_user(platform_role="SUPPORT"))
+    assert is_super_admin(_user(email="silverstalan.inbaraj@sybeez.ai", platform_role="SALES"))
+    assert is_super_admin(_user(email="other@sybeez.ai", platform_role="SUPER_ADMIN"))
+    assert not is_super_admin(_user(email="other@sybeez.ai", platform_role="ADMIN"))
+    assert not is_super_admin(_user(email="other@sybeez.ai", platform_role="SALES"))
+    assert not is_super_admin(_user(platform_role=None, is_platform_admin=False, email="teacher@school.test"))

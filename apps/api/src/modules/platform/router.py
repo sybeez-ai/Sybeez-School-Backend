@@ -739,9 +739,9 @@ async def delete_person_ai_consumption(
 async def post_ai_usage(
     body: AiUsageIn,
     db: Annotated[AsyncSession, Depends(get_db)],
-    actor: Annotated[CurrentUser, Depends(get_current_user)],
+    actor: Annotated[CurrentUser, Depends(require_platform_member)],
 ):
-    """Add today's tokens for the signed-in user. Cookie or bearer, same as other platform routes."""
+    """Add today's tokens. Platform accounts only. School roles use POST /api/v1/ai/usage."""
     from src.modules.platform.ai_usage import record_usage
 
     return await record_usage(db, actor, body)
@@ -843,6 +843,7 @@ class StaffCreateIn(BaseModel):
     password: str = Field(min_length=8, max_length=200)
     portals: list[str] = Field(default_factory=list)
     permissions: list[str] = Field(default_factory=list)
+    platform_role: str = "SALES"
 
 
 class StaffAccessIn(BaseModel):
@@ -892,6 +893,7 @@ async def create_staff(
         password=body.password,
         portals=body.portals,
         permissions=body.permissions,
+        platform_role=body.platform_role,
     )
     rows = await StaffService(db).list_staff()
     match = next(row for row in rows if row["id"] == staff.id)
