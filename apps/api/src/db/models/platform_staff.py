@@ -56,6 +56,7 @@ class PlatformStaffInvitation(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     portals: Mapped[list] = mapped_column(JSONB, nullable=False)
     permissions: Mapped[list] = mapped_column(JSONB, nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
+    platform_role: Mapped[str | None] = mapped_column(String(32), nullable=True)
     invited_by: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )

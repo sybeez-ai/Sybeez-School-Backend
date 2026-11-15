@@ -39,6 +39,24 @@ def _check_portals(portals: list[str]) -> list[str]:
     return cleaned
 
 
+def console_role(raw: str | None) -> str | None:
+    """Super Admin, Admin, or Sales. Empty means the invite does not grant a console role."""
+    from src.api.dependencies import EMPLOYEE_ROLES
+
+    role = (raw or "").strip().upper().replace("-", "_").replace(" ", "_")
+    if not role:
+        return None
+    if role not in EMPLOYEE_ROLES:
+        raise ConflictError("Role must be Super Admin, Admin, or Sales")
+    return role
+
+
+def _locked(email: str) -> bool:
+    from src.api.dependencies import superadmin_allowlist
+
+    return email.lower().strip() in superadmin_allowlist()
+
+
 def _check_features(permissions: list[str]) -> list[str]:
     cleaned = []
     for code in permissions:
@@ -78,14 +96,12 @@ class StaffService:
         permissions: list[str],
         platform_role: str | None = None,
     ) -> PlatformStaff:
-        from src.api.dependencies import EMPLOYEE_ROLES, is_protected_owner
+        from src.api.dependencies import is_protected_owner
 
         email = email.lower().strip()
         if is_protected_owner(email) or email == get_settings().superadmin_email.lower():
             raise ForbiddenError("The owner account cannot be changed")
-        role = (platform_role or "").strip().upper().replace(" ", "_") or None
-        if role is not None and role not in EMPLOYEE_ROLES:
-            raise ConflictError("Role must be Super Admin, Admin, or Sales")
+        role = console_role(platform_role)
         portals = _check_portals(portals)
         permissions = _check_features(permissions)
         user = await self._user_by_email(email)
@@ -119,7 +135,9 @@ class StaffService:
             staff = PlatformStaff(user_id=user.id, status="ACTIVE", invited_by=actor.id)
             self.db.add(staff)
             await self.db.flush()
-        await self._replace_access(actor, staff, portals, permissions, action="staff.grant")
+        # An empty portal list is "role only". Do not wipe portal rows that already exist.
+        if portals or permissions:
+            await self._replace_access(actor, staff, portals, permissions, action="staff.grant")
         return staff
 
     async def set_access(
@@ -133,11 +151,15 @@ class StaffService:
         staff = await self._staff(staff_id)
         if staff.status != "ACTIVE":
             raise ConflictError("Staff access is revoked")
+        cleaned_portals = _check_portals(portals) if portals else []
+        cleaned_permissions = _check_features(permissions) if permissions else []
+        if not cleaned_portals and not cleaned_permissions:
+            return staff
         await self._replace_access(
             actor,
             staff,
-            _check_portals(portals),
-            _check_features(permissions),
+            cleaned_portals,
+            cleaned_permissions,
             action="staff.grant",
         )
         return staff
@@ -226,6 +248,7 @@ class StaffService:
                     "status": staff.status,
                     "portals": portals,
                     "permissions": permissions,
+                    "platform_role": user.platform_role,
                 }
             )
         return out
@@ -255,10 +278,12 @@ class StaffService:
         portals: list[str],
         permissions: list[str],
         expires_in_days: int = 7,
+        platform_role: str | None = None,
     ) -> tuple[PlatformStaffInvitation, str]:
         email = email.lower().strip()
-        if email == get_settings().superadmin_email.lower():
-            raise ForbiddenError("The super admin account cannot be invited as staff")
+        if _locked(email) or email == get_settings().superadmin_email.lower():
+            raise ForbiddenError("This account cannot be invited")
+        role = console_role(platform_role)
         portals = _check_portals(portals)
         permissions = _check_features(permissions)
         raw = generate_token(24)
@@ -267,6 +292,7 @@ class StaffService:
             token_hash=hash_token(raw),
             portals=portals,
             permissions=permissions,
+            platform_role=role,
             status=InvitationStatus.PENDING.value,
             invited_by=actor.id,
             expires_at=utcnow() + timedelta(days=expires_in_days),
@@ -314,6 +340,9 @@ class StaffService:
             if user.password_hash is None:
                 user.password_hash = hash_password(password)
             user.full_name = full_name
+        if inv.platform_role and not _locked(user.email):
+            user.is_platform_admin = True
+            user.platform_role = inv.platform_role
         staff = (
             await self.db.execute(select(PlatformStaff).where(PlatformStaff.user_id == user.id))
         ).scalar_one_or_none()
@@ -332,11 +361,99 @@ class StaffService:
             membership_id=None,
             is_platform_admin=False,
         )
-        await self._replace_access(actor, staff, list(inv.portals), list(inv.permissions), action="staff.grant")
+        if list(inv.portals or []) or list(inv.permissions or []):
+            await self._replace_access(actor, staff, list(inv.portals), list(inv.permissions), action="staff.grant")
         inv.status = InvitationStatus.ACCEPTED.value
         inv.accepted_at = utcnow()
         await self.db.flush()
         return user, staff
+
+    async def list_invitations(self) -> list[dict]:
+        rows = (
+            await self.db.execute(
+                select(PlatformStaffInvitation).order_by(PlatformStaffInvitation.created_at.desc())
+            )
+        ).scalars().all()
+        return [
+            {
+                "id": row.id,
+                "email": row.email,
+                "status": row.status,
+                "platform_role": row.platform_role,
+                "portals": list(row.portals or []),
+                "expires_at": row.expires_at,
+            }
+            for row in rows
+        ]
+
+    async def _invitation(self, invitation_id: UUID) -> PlatformStaffInvitation:
+        row = await self.db.get(PlatformStaffInvitation, invitation_id)
+        if row is None:
+            raise NotFoundError("Invitation not found")
+        return row
+
+    async def resend_invitation(self, actor: CurrentUser, invitation_id: UUID) -> tuple[PlatformStaffInvitation, str]:
+        """Renew a pending or expired invite. The person row is not created or removed."""
+        inv = await self._invitation(invitation_id)
+        if inv.status not in {InvitationStatus.PENDING.value, InvitationStatus.EXPIRED.value}:
+            raise ConflictError("Only a pending invite can be resent")
+        if _locked(inv.email):
+            raise ForbiddenError("This account cannot be invited")
+        raw = generate_token(24)
+        inv.token_hash = hash_token(raw)
+        inv.status = InvitationStatus.PENDING.value
+        inv.expires_at = utcnow() + timedelta(days=7)
+        await self.db.flush()
+        await write_audit(
+            self.db,
+            school_id=None,
+            actor_id=actor.id,
+            action="staff.invite.resend",
+            resource_type="platform_staff_invitation",
+            resource_id=str(inv.id),
+            message=f"Resent the invite for {inv.email}",
+            details={"email": inv.email},
+        )
+        return inv, raw
+
+    async def cancel_invitation(self, actor: CurrentUser, invitation_id: UUID) -> PlatformStaffInvitation:
+        """Mark a pending invite revoked. No person or invite row is deleted."""
+        inv = await self._invitation(invitation_id)
+        if inv.status != InvitationStatus.PENDING.value:
+            raise ConflictError("Only a pending invite can be cancelled")
+        inv.status = InvitationStatus.REVOKED.value
+        await self.db.flush()
+        await write_audit(
+            self.db,
+            school_id=None,
+            actor_id=actor.id,
+            action="staff.invite.cancel",
+            resource_type="platform_staff_invitation",
+            resource_id=str(inv.id),
+            message=f"Cancelled the invite for {inv.email}",
+            details={"email": inv.email},
+        )
+        return inv
+
+    async def set_role(self, actor: CurrentUser, staff_id: UUID, platform_role: str) -> PlatformStaff:
+        staff = await self._staff(staff_id)
+        user = (await self.db.execute(select(User).where(User.id == staff.user_id))).scalar_one()
+        if _locked(user.email):
+            raise ForbiddenError("This account stays Super Admin")
+        role = console_role(platform_role)
+        if role is None:
+            raise ConflictError("Role must be Super Admin, Admin, or Sales")
+        user.is_platform_admin = True
+        user.platform_role = role
+        await self.db.flush()
+        await self._audit(
+            actor,
+            staff,
+            "staff.role",
+            f"Set {user.email} to {user.platform_role}",
+            {"platform_role": user.platform_role},
+        )
+        return staff
 
     async def _audit(self, actor: CurrentUser, staff: PlatformStaff, action: str, message: str, details: dict) -> None:
         await write_audit(

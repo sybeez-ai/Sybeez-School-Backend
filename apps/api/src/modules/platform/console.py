@@ -409,7 +409,7 @@ def _link(t: str, log: AuditLog) -> str:
     if t in {"schools", "admins"} and log.school_id:
         return f"/platform/schools/detail?schoolId={log.school_id}"
     if t == "team":
-        return "/platform/team"
+        return "/platform/staff"
     if t == "plans":
         return "/platform/plans"
     return "/platform/logs"
