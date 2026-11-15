@@ -352,6 +352,24 @@ def require_roles(*roles: UserRole):
 get_scoped_user = get_current_user
 
 
+def require_console_member(
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+) -> CurrentUser:
+    """Super Admin, Admin, or Sales. School roles are refused."""
+    if console_role(user) is None:
+        raise ForbiddenError("Platform console only")
+    return user
+
+
+def require_console_admin(
+    user: Annotated[CurrentUser, Depends(require_console_member)],
+) -> CurrentUser:
+    """Admin and Super Admin. Sales cannot change prices, plans, or provider settings."""
+    if console_role(user) == PlatformRole.SALES.value:
+        raise ForbiddenError("Sales cannot change plans, prices, or provider settings")
+    return user
+
+
 def require_super_admin(
     user: Annotated[CurrentUser, Depends(require_roles(UserRole.PLATFORM_ADMIN))],
 ) -> CurrentUser:

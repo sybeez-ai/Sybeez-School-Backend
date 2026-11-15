@@ -52,3 +52,20 @@ def test_owner_is_always_super_admin_and_other_super_admins_are_role_based():
     assert not is_super_admin(_user(email="other@sybeez.ai", platform_role="ADMIN"))
     assert not is_super_admin(_user(email="other@sybeez.ai", platform_role="SALES"))
     assert not is_super_admin(_user(platform_role=None, is_platform_admin=False, email="teacher@school.test"))
+
+
+def test_sales_can_use_the_console_but_cannot_change_prices():
+    from src.api.dependencies import console_role, require_console_admin, require_console_member
+    from src.core.exceptions import ForbiddenError
+
+    sales = _user(email="seller@sybeez.ai", platform_role="SALES")
+    admin = _user(email="ops@sybeez.ai", platform_role="ADMIN")
+    assert console_role(sales) == "SALES"
+    assert require_console_member(sales) is sales
+    assert require_console_admin(admin) is admin
+    try:
+        require_console_admin(sales)
+    except ForbiddenError as exc:
+        assert "Sales" in str(exc)
+    else:
+        raise AssertionError("Sales was allowed to change plans")
