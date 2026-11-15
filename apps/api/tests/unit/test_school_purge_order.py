@@ -35,6 +35,24 @@ def test_a_table_that_only_references_students_is_purged_before_them():
     assert missing_from_purge(school_tables, keys, {step.table for step in steps}) == []
 
 
+def test_fee_rows_without_school_id_are_reached_through_students():
+    """fee_audit_logs -> fee_ledger_entries -> students, and neither fee table has school_id."""
+    school_tables = {"students"}
+    keys = [
+        ForeignKey("students", "schools", ("school_id",), ("id",)),
+        ForeignKey("fee_ledger_entries", "students", ("student_id",), ("id",)),
+        ForeignKey("fee_audit_logs", "fee_ledger_entries", ("ledger_entry_id",), ("id",)),
+    ]
+    steps = purge_steps(school_tables, keys)
+    names = [step.table for step in steps]
+    assert names.index("fee_audit_logs") < names.index("fee_ledger_entries") < names.index("students")
+    audit = next(step for step in steps if step.table == "fee_audit_logs")
+    assert "fee_ledger_entries" in audit.where
+    assert "students" in audit.where
+    assert "school_id = :sid" in audit.where
+    assert missing_from_purge(school_tables, keys, {step.table for step in steps}) == []
+
+
 def test_a_referencing_table_left_out_of_the_plan_fails_the_check():
     keys = [ForeignKey("student_notes", "students", ("student_id",), ("id",))]
     missing = missing_from_purge({"students"}, keys, {"students"})

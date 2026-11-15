@@ -122,9 +122,18 @@ async def get_db(request: Request) -> AsyncGenerator[AsyncSession, None]:
             await session.commit()
         except Exception as exc:
             await session.rollback()
+            detail = str(getattr(exc, "orig", exc)).splitlines()[0][:200]
+            # A deferred foreign key is checked on this commit, after the endpoint returned.
+            # The transaction is rolled back. Say so instead of a bare 500.
+            if "foreign key" in detail.lower():
+                logger.warning("foreign key on commit %s %s: %s", request.method, request.url.path, detail)
+                from src.core.exceptions import ConflictError
+
+                raise ConflictError(
+                    f"The change was not saved because related rows are still in use. {detail}"
+                ) from exc
             if "row-level security" in str(exc).lower():
                 # Name the policy/table (never row values) so 403s are diagnosable.
-                detail = str(getattr(exc, "orig", exc)).splitlines()[0][:200]
                 logger.warning("RLS violation on %s %s: %s", request.method, request.url.path, detail)
                 try:
                     import asyncio

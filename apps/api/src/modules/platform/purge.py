@@ -51,6 +51,7 @@ class ForeignKey:
 class DeleteStep:
     table: str
     sql: str
+    where: str
 
 
 def quote_ident(name: str) -> str:
@@ -120,7 +121,9 @@ def purge_steps(school_tables: set[str], foreign_keys: list[ForeignKey]) -> list
         where = _belongs(table, owned, foreign_keys, set())
         if where == "FALSE":
             continue
-        steps.append(DeleteStep(table=table, sql=f"DELETE FROM {quote_ident(table)} WHERE {where}"))
+        steps.append(
+            DeleteStep(table=table, sql=f"DELETE FROM {quote_ident(table)} WHERE {where}", where=where)
+        )
     return steps
 
 
