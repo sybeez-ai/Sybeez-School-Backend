@@ -181,9 +181,6 @@ jobs:
           echo "The school did not wake before the migration"
           exit 1
 
-      - name: Match the migrate secret and the RDS master password
-        run: python3 .github/scripts/align_migrate_master_password.py
-
       - name: Run migrations and fail the deploy if they fail
         env:
           MIGRATE_CONTAINER: ${{ vars.AWS_BACKEND_MIGRATE_CONTAINER || 'sybeez-school-migrate' }}

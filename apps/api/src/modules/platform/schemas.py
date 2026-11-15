@@ -142,6 +142,8 @@ class SchoolCommercialUpdate(BaseModel):
 
 
 class SchoolDetailOut(SchoolOut):
+    created_by_id: UUID | None = None
+    created_by_name: str | None = None
     parents_count: int = 0
     admins_count: int = 0
     entitlements: dict[str, Any] = Field(default_factory=dict)

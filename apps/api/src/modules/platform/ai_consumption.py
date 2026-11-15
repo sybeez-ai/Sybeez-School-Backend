@@ -23,26 +23,45 @@ from src.db.models import (
 from src.shared.enums import EnrollmentStatus, MembershipStatus, PersonStatus, UserRole
 
 
-def school_token_rows(pairs: list[tuple[UUID | None, str | None, int]]) -> list[dict]:
-    """Collapse daily rows into one token total per school. Drops money."""
+def school_token_rows(pairs: list[tuple]) -> list[dict]:
+    """Collapse daily rows into one token total per school, split by model. Drops money."""
     totals: dict[UUID | None, dict] = {}
-    for school_id, name, tokens in pairs:
-        row = totals.setdefault(school_id, {"school_id": school_id, "school_name": name or "Platform", "tokens": 0})
-        row["tokens"] += int(tokens or 0)
+    for item in pairs:
+        if len(item) == 4:
+            school_id, name, model, tokens = item
+        else:
+            school_id, name, tokens = item
+            model = "unknown"
+        row = totals.setdefault(
+            school_id,
+            {"school_id": school_id, "school_name": name or "Platform", "tokens": 0, "models": []},
+        )
+        count = int(tokens or 0)
+        row["tokens"] += count
+        row["models"].append({"model": model or "unknown", "tokens": count})
         if name:
             row["school_name"] = name
+    for row in totals.values():
+        row["models"].sort(key=lambda entry: (-entry["tokens"], entry["model"]))
     return sorted(totals.values(), key=lambda item: (-item["tokens"], item["school_name"]))
 
 
 async def list_school_tokens(db: AsyncSession) -> list[dict]:
     rows = (
         await db.execute(
-            select(PlatformAiUsageDaily.school_id, School.name, func.sum(PlatformAiUsageDaily.input_tokens + PlatformAiUsageDaily.output_tokens))
+            select(
+                PlatformAiUsageDaily.school_id,
+                School.name,
+                PlatformAiUsageDaily.model,
+                func.sum(PlatformAiUsageDaily.input_tokens + PlatformAiUsageDaily.output_tokens),
+            )
             .outerjoin(School, School.id == PlatformAiUsageDaily.school_id)
-            .group_by(PlatformAiUsageDaily.school_id, School.name)
+            .group_by(PlatformAiUsageDaily.school_id, School.name, PlatformAiUsageDaily.model)
         )
     ).all()
-    return school_token_rows([(school_id, name, int(tokens or 0)) for school_id, name, tokens in rows])
+    return school_token_rows(
+        [(school_id, name, model, int(tokens or 0)) for school_id, name, model, tokens in rows]
+    )
 
 
 async def school_people_tokens(db: AsyncSession, school_id: UUID) -> dict:
@@ -152,12 +171,32 @@ async def school_people_tokens(db: AsyncSession, school_id: UUID) -> dict:
         )
 
     assigned = sum(int(value or 0) for value in usage.values())
+    model_rows = (
+        await db.execute(
+            select(
+                PlatformAiUsageDaily.model,
+                func.sum(PlatformAiUsageDaily.input_tokens + PlatformAiUsageDaily.output_tokens),
+            )
+            .where(PlatformAiUsageDaily.school_id == school_id)
+            .group_by(PlatformAiUsageDaily.model)
+        )
+    ).all()
+
+    def with_models(person: dict) -> dict:
+        count = int(person.get("tokens") or 0)
+        person["models"] = [{"model": "recorded", "tokens": count}] if count else []
+        return person
+
     return {
         "school_id": school.id,
         "school_name": school.name,
         "tokens": school_tokens,
+        "models": [
+            {"model": model or "unknown", "tokens": int(tokens or 0)}
+            for model, tokens in sorted(model_rows, key=lambda row: -int(row[1] or 0))
+        ],
         "unassigned_tokens": max(0, school_tokens - assigned),
-        "students": students,
-        "teachers": teachers,
-        "others": others,
+        "students": [with_models(person) for person in students],
+        "teachers": [with_models(person) for person in teachers],
+        "others": [with_models(person) for person in others],
     }

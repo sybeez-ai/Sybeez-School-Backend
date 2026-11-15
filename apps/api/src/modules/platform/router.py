@@ -13,7 +13,7 @@ from src.api.dependencies import (
     require_super_admin,
 )
 from src.core.database import get_db
-from src.db.models import School, User
+from src.db.models import Invitation, School, User
 from src.modules.audit.schemas import AuditLogOut
 from src.modules.audit.service import AuditService
 from src.modules.fees.route_schemas import PlatformRouteUpdate, RouteSchoolOut
@@ -81,6 +81,43 @@ async def dashboard(
     await _platform_read_scope(db)
     counts = await PlatformService(db).dashboard()
     return PlatformDashboard(**counts)
+
+
+@router.get("/analytics")
+async def platform_analytics(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _: Annotated[CurrentUser, Depends(require_platform_member)],
+):
+    """Home-page counts from live rows. No prices."""
+    return await PlatformService(db).home_analytics()
+
+
+@router.get("/attention")
+async def platform_attention(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _: Annotated[CurrentUser, Depends(require_platform_member)],
+):
+    """Schools behind the old home 'Attention required' card."""
+    await _platform_read_scope(db)
+    dashboard = await PlatformService(db).dashboard()
+    suspended = (
+        await db.execute(select(School.id, School.name).where(School.status == "SUSPENDED").order_by(School.name))
+    ).all()
+    missing = (
+        await db.execute(
+            select(School.id, School.name)
+            .where(
+                School.status != "ARCHIVED",
+                ~School.id.in_(select(Invitation.school_id)),
+            )
+            .order_by(School.name)
+        )
+    ).all()
+    return {
+        "items": [item.model_dump() for item in dashboard.attention],
+        "suspended": [{"school_id": row[0], "school_name": row[1]} for row in suspended],
+        "missing_admin": [{"school_id": row[0], "school_name": row[1]} for row in missing],
+    }
 
 
 @router.get("/search", response_model=PlatformSearchResult)
@@ -240,7 +277,7 @@ async def suspend_school(
     user: Annotated[CurrentUser, Depends(require_roles(UserRole.PLATFORM_ADMIN))],
 ):
     return await PlatformService(db).set_school_status(
-        user, school_id, status=SchoolStatus.SUSPENDED.value, reason=body.reason
+        user, school_id, status=SchoolStatus.SUSPENDED.value, reason=body.reason, confirm_name=body.confirm_name
     )
 
 
@@ -252,7 +289,7 @@ async def reactivate_school(
     user: Annotated[CurrentUser, Depends(require_roles(UserRole.PLATFORM_ADMIN))],
 ):
     return await PlatformService(db).set_school_status(
-        user, school_id, status=SchoolStatus.ACTIVE.value, reason=body.reason
+        user, school_id, status=SchoolStatus.ACTIVE.value, reason=body.reason, confirm_name=body.confirm_name
     )
 
 
@@ -280,6 +317,18 @@ async def delete_school(
     confirm_name: str = Query(..., min_length=1, max_length=255),
 ):
     await PlatformService(db).delete_school(actor, school_id, confirm_name)
+    return Response(status_code=204)
+
+
+@router.delete("/schools/{school_id}/admins/{user_id}", status_code=204)
+async def remove_school_admin(
+    school_id: UUID,
+    user_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_super_admin)],
+):
+    """Revoke one school admin's access and sessions."""
+    await PlatformService(db).remove_school_admin(actor, school_id, user_id)
     return Response(status_code=204)
 
 
@@ -506,7 +555,7 @@ async def update_plan(
 async def delete_plan(
     plan_id: UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
-    actor: Annotated[CurrentUser, Depends(require_super_admin)],
+    actor: Annotated[CurrentUser, Depends(require_roles(UserRole.PLATFORM_ADMIN))],
 ):
     """Permanently delete a plan. Schools that used it are detached, not removed."""
     await PlatformSaasService(db).delete_plan(actor, plan_id)

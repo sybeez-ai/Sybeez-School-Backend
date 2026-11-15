@@ -369,9 +369,9 @@ class PlatformService:
             raise NotFoundError("School not found")
         await self._assert_school_access(actor, school)
         await bind_tenant(self.db, school.id)
-        if status == SchoolStatus.ARCHIVED.value:
-            if confirm_name and confirm_name.strip() != school.name:
-                raise ForbiddenError("Confirmation name does not match school name")
+        if status in {SchoolStatus.ARCHIVED.value, SchoolStatus.SUSPENDED.value, SchoolStatus.ACTIVE.value}:
+            if (confirm_name or "").strip() != (school.name or "").strip():
+                raise ValidationError("Type the school name exactly to confirm this change")
         school.status = status
         await self.db.flush()
         action = {
@@ -426,8 +426,11 @@ class PlatformService:
 
         plan, sub_status = await self._plan_for_school(school_id)
         commercial = await commercial_view(self.db, school)
+        creator = await self.db.get(User, school.created_by_id) if school.created_by_id else None
         return SchoolDetailOut(
             **base.model_dump(),
+            created_by_id=school.created_by_id,
+            created_by_name=creator.full_name if creator else None,
             parents_count=parents,
             admins_count=admins,
             entitlements=entitlements,
@@ -807,57 +810,66 @@ class PlatformService:
         return admin_email
 
     async def delete_school(self, actor: CurrentUser, school_id: UUID, confirm_name: str) -> None:
-        """Archive the school and close its people. Finance ledgers stay (they are append-only)."""
+        """Erase the school and every row stored against it. The audit entry is kept."""
+        from sqlalchemy import text
+
+        from src.modules.fees.tenant import set_rls_bypass
+
         school = await self.repo.get_school(school_id)
         if school is None:
             raise NotFoundError("School not found")
         if (confirm_name or "").strip() != (school.name or "").strip():
             raise ValidationError("Type the school name exactly to confirm deletion")
         await self._assert_school_access(actor, school)
-        await bind_tenant(self.db, school.id)
-        school.status = SchoolStatus.ARCHIVED.value
-        await self.db.execute(
-            update(SchoolMembership)
-            .where(
-                SchoolMembership.school_id == school.id,
-                SchoolMembership.status == MembershipStatus.ACTIVE.value,
-            )
-            .values(status=MembershipStatus.LEFT.value)
-        )
-        await self.db.execute(
-            update(Student)
-            .where(Student.school_id == school.id, Student.status == PersonStatus.ACTIVE.value)
-            .values(status=PersonStatus.LEFT.value)
-        )
-        await self.db.execute(
-            update(Teacher)
-            .where(Teacher.school_id == school.id, Teacher.status == PersonStatus.ACTIVE.value)
-            .values(status=PersonStatus.LEFT.value)
-        )
-        await self.db.execute(
-            update(Parent)
-            .where(Parent.school_id == school.id, Parent.status == PersonStatus.ACTIVE.value)
-            .values(status=PersonStatus.LEFT.value)
-        )
-        await self.db.execute(
-            update(Employee)
-            .where(Employee.school_id == school.id, Employee.status == "ACTIVE")
-            .values(status="LEFT")
-        )
-        await self.db.execute(
-            update(Enrollment)
-            .where(Enrollment.school_id == school.id, Enrollment.status == EnrollmentStatus.ACTIVE.value)
-            .values(status=EnrollmentStatus.WITHDRAWN.value)
-        )
+        name = school.name
+        await set_rls_bypass(self.db, True)
         await self.audit.write(
             action="platform.super_admin.delete",
             actor_id=actor.id,
-            school_id=school.id,
+            school_id=None,
             resource_type="school",
-            resource_id=str(school.id),
-            message=f"Super admin deleted school: {school.name}",
-            details={"mode": "soft", "label": school.name, "confirm_name": confirm_name.strip()},
+            resource_id=str(school_id),
+            message=f"Super admin deleted school: {name}",
+            details={"mode": "hard", "label": name, "confirm_name": confirm_name.strip(), "school_id": str(school_id)},
         )
+        await self.db.flush()
+        tables = [
+            row[0]
+            for row in (
+                await self.db.execute(
+                    text(
+                        """
+                        SELECT c.table_name
+                        FROM information_schema.columns c
+                        JOIN information_schema.tables t
+                          ON t.table_schema = c.table_schema AND t.table_name = c.table_name
+                        WHERE c.table_schema = 'public'
+                          AND c.column_name = 'school_id'
+                          AND t.table_type = 'BASE TABLE'
+                          AND c.table_name <> 'schools'
+                        """
+                    )
+                )
+            ).all()
+        ]
+        pending = [name for name in tables if name.replace("_", "").isalnum()]
+        for _ in range(12):
+            if not pending:
+                break
+            stuck: list[str] = []
+            for table in pending:
+                try:
+                    async with self.db.begin_nested():
+                        await self.db.execute(
+                            text(f'DELETE FROM "{table}" WHERE school_id = :sid'),
+                            {"sid": school_id},
+                        )
+                except Exception:
+                    stuck.append(table)
+            if len(stuck) == len(pending):
+                break
+            pending = stuck
+        await self.db.execute(text("DELETE FROM schools WHERE id = :sid"), {"sid": school_id})
         await self.db.flush()
 
     async def upload_school_logo(self, actor: CurrentUser, school_id: UUID, file: UploadFile) -> SchoolOut:
@@ -900,6 +912,111 @@ class PlatformService:
 
     async def dashboard(self):
         return await self.repo.dashboard_counts()
+
+    async def home_analytics(self) -> dict:
+        """Real platform totals for the home page. No estimated money."""
+        from datetime import timedelta
+
+        from sqlalchemy import text
+
+        from src.modules.fees.tenant import set_rls_bypass
+        from src.shared.utils import utcnow
+
+        await set_rls_bypass(self.db, True)
+        now = utcnow()
+        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        soon = now + timedelta(days=14)
+        by_status = (
+            await self.db.execute(select(School.status, func.count()).group_by(School.status))
+        ).all()
+        students = (await self.db.execute(select(func.count()).select_from(Student))).scalar_one()
+        teachers = (await self.db.execute(select(func.count()).select_from(Teacher))).scalar_one()
+        recent = (
+            await self.db.execute(select(School).order_by(School.created_at.desc()).limit(8))
+        ).scalars().all()
+        trials = (
+            await self.db.execute(
+                text(
+                    """
+                    SELECT s.id, s.name, sub.trial_ends_at
+                    FROM schools s
+                    JOIN subscriptions sub ON sub.school_id = s.id
+                    WHERE sub.trial_ends_at IS NOT NULL
+                      AND sub.trial_ends_at >= :now
+                      AND sub.trial_ends_at <= :soon
+                    ORDER BY sub.trial_ends_at
+                    LIMIT 12
+                    """
+                ),
+                {"now": now, "soon": soon},
+            )
+        ).all()
+        renewals = (
+            await self.db.execute(
+                text(
+                    """
+                    SELECT s.id, s.name, sub.renewal_at
+                    FROM schools s
+                    JOIN subscriptions sub ON sub.school_id = s.id
+                    WHERE sub.renewal_at IS NOT NULL
+                      AND sub.renewal_at >= :now
+                      AND sub.renewal_at <= :soon
+                    ORDER BY sub.renewal_at
+                    LIMIT 12
+                    """
+                ),
+                {"now": now, "soon": soon},
+            )
+        ).all()
+        tokens = (
+            await self.db.execute(
+                text(
+                    """
+                    SELECT s.id, s.name, COALESCE(SUM(u.input_tokens + u.output_tokens), 0) AS tokens
+                    FROM platform_ai_usage_daily u
+                    JOIN schools s ON s.id = u.school_id
+                    WHERE u.usage_date >= :start
+                    GROUP BY s.id, s.name
+                    ORDER BY tokens DESC
+                    LIMIT 12
+                    """
+                ),
+                {"start": month_start},
+            )
+        ).all()
+        signups = (
+            await self.db.execute(
+                text(
+                    """
+                    SELECT to_char(date_trunc('month', created_at), 'YYYY-MM') AS month, COUNT(*)
+                    FROM schools
+                    WHERE created_at >= :start
+                    GROUP BY 1
+                    ORDER BY 1
+                    """
+                ),
+                {"start": now - timedelta(days=180)},
+            )
+        ).all()
+        return {
+            "schools_by_status": [{"status": status, "count": int(count)} for status, count in by_status],
+            "students_total": int(students or 0),
+            "teachers_total": int(teachers or 0),
+            "signups_by_month": [{"month": month, "count": int(count)} for month, count in signups],
+            "trials_expiring": [
+                {"school_id": row[0], "school_name": row[1], "trial_ends_at": row[2]} for row in trials
+            ],
+            "renewals_due": [
+                {"school_id": row[0], "school_name": row[1], "renewal_at": row[2]} for row in renewals
+            ],
+            "ai_tokens_this_month": [
+                {"school_id": row[0], "school_name": row[1], "tokens": int(row[2] or 0)} for row in tokens
+            ],
+            "recent_schools": [
+                {"school_id": school.id, "school_name": school.name, "status": school.status, "created_at": school.created_at}
+                for school in recent
+            ],
+        }
 
     async def list_employees(self) -> list[PlatformEmployeeOut]:
         result = await self.db.execute(
@@ -1016,6 +1133,42 @@ class PlatformService:
             resource_type="user",
             resource_id=str(user_id),
             message="Revoked school access",
+        )
+
+    async def remove_school_admin(self, actor: CurrentUser, school_id: UUID, user_id: UUID) -> None:
+        """Revoke a school admin: membership, sessions, and role access."""
+        from src.db.models import RefreshToken
+        from src.modules.fees.tenant import set_rls_bypass
+
+        await set_rls_bypass(self.db, True)
+        school = await self.repo.get_school(school_id)
+        if school is None:
+            raise NotFoundError("School not found")
+        membership = (
+            await self.db.execute(
+                select(SchoolMembership).where(
+                    SchoolMembership.school_id == school_id,
+                    SchoolMembership.user_id == user_id,
+                    SchoolMembership.role == UserRole.SCHOOL_ADMIN.value,
+                )
+            )
+        ).scalar_one_or_none()
+        if membership is None:
+            raise NotFoundError("School admin not found")
+        person = await self.db.get(User, user_id)
+        membership.status = MembershipStatus.LEFT.value
+        await self.db.execute(
+            update(RefreshToken).where(RefreshToken.user_id == user_id, RefreshToken.revoked.is_(False)).values(revoked=True)
+        )
+        await self.db.flush()
+        await self.audit.write(
+            action="platform.super_admin.delete",
+            actor_id=actor.id,
+            school_id=school_id,
+            resource_type="school_admin",
+            resource_id=str(user_id),
+            message=f"Super admin removed school admin: {person.full_name if person else user_id}",
+            details={"mode": "revoke", "email": person.email if person else None, "label": school.name},
         )
 
     async def create_employee(self, data: PlatformEmployeeCreate, actor: User) -> PlatformEmployeeOut:
