@@ -25,6 +25,15 @@ class AuditRepository:
         message: str | None = None,
         details: dict | None = None,
     ) -> AuditLog:
+        if school_id is not None:
+            tenant = self.db.info.get("rls_tenant") if isinstance(getattr(self.db, "info", None), dict) else None
+            role = str((tenant or {}).get("role") or "")
+            if role == "PLATFORM_ADMIN":
+                # A platform session has no school. audit_logs rejects the insert unless
+                # the session school is this school and the platform bypass stays on.
+                from src.modules.fees.tenant import open_platform_school
+
+                await open_platform_school(self.db, school_id)
         log = AuditLog(
             actor_id=actor_id,
             school_id=school_id,

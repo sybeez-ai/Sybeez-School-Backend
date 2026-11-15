@@ -715,12 +715,12 @@ async def set_school_trial(
     """Set or extend a school's free trial (e.g. grant another 30 days), or record that it has paid."""
     from src.modules.audit.service import AuditService  # noqa: F401
     from src.modules.audit.repository import AuditRepository
-    from src.modules.fees.tenant import bind_tenant
+    from src.modules.fees.tenant import open_platform_school
 
     school = await db.get(School, school_id)
     if school is None:
         raise NotFoundError("School not found")
-    await bind_tenant(db, school.id)
+    await open_platform_school(db, school.id)
     before = await trial_for(db, school)
     sub = await _latest_sub(db, school.id)
     now = _now()

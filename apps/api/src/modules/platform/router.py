@@ -95,6 +95,15 @@ async def platform_analytics(
     return await PlatformService(db).home_analytics()
 
 
+def attention_items(dashboard) -> list:
+    """dashboard() returns a dict. Older callers treated it as the model."""
+    raw = dashboard["attention"] if isinstance(dashboard, dict) else dashboard.attention
+    items = []
+    for item in raw or []:
+        items.append(item if isinstance(item, dict) else item.model_dump())
+    return items
+
+
 @router.get("/attention")
 async def platform_attention(
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -117,7 +126,7 @@ async def platform_attention(
         )
     ).all()
     return {
-        "items": [item.model_dump() for item in dashboard.attention],
+        "items": attention_items(dashboard),
         "suspended": [{"school_id": row[0], "school_name": row[1]} for row in suspended],
         "missing_admin": [{"school_id": row[0], "school_name": row[1]} for row in missing],
     }
@@ -204,6 +213,10 @@ async def delete_audit_log(
     row = await db.get(AuditLog, log_id)
     if row is None:
         raise NotFoundError("Log entry not found")
+    if row.school_id is not None:
+        from src.modules.fees.tenant import open_platform_school
+
+        await open_platform_school(db, row.school_id)
     label = row.message or row.action
     await AuditRepository(db).write(
         action="platform.super_admin.delete",
@@ -343,7 +356,7 @@ async def update_school_commercial(
     actor: Annotated[CurrentUser, Depends(require_console_admin)],
 ):
     """Change the plan, per-student price, discount or renewal. Sales cannot change prices."""
-    from src.modules.fees.tenant import bind_tenant
+    from src.modules.fees.tenant import open_platform_school
     from src.modules.platform.commercial import apply_commercial
 
     school = await PlatformService(db).repo.get_school(school_id)
@@ -351,7 +364,7 @@ async def update_school_commercial(
         from src.core.exceptions import NotFoundError
 
         raise NotFoundError("School not found")
-    await bind_tenant(db, school.id)
+    await open_platform_school(db, school.id)
     data = body.model_dump(exclude_unset=True)
     return await apply_commercial(
         db,
@@ -574,8 +587,10 @@ async def delete_school_subscription(
     """Remove the school's current subscription row. The school itself stays."""
     from src.core.exceptions import NotFoundError
     from src.modules.audit.repository import AuditRepository
+    from src.modules.fees.tenant import open_platform_school
     from src.modules.platform.commercial import latest_subscription
 
+    await open_platform_school(db, school_id)
     school = await db.get(School, school_id)
     sub = await latest_subscription(db, school_id)
     if school is None or sub is None:
@@ -674,10 +689,10 @@ async def put_school_ai_limit(
     actor: Annotated[CurrentUser, Depends(require_console_member)],
 ):
     """Set a school's monthly token cap and default model. Sales can do this."""
-    from src.modules.fees.tenant import set_rls_bypass
+    from src.modules.fees.tenant import open_platform_school
     from src.modules.platform.ai_limits import LimitIn, save_school_limit
 
-    await set_rls_bypass(db, True)
+    await open_platform_school(db, school_id)
     return await save_school_limit(db, actor, school_id, LimitIn.model_validate(body.model_dump()))
 
 
@@ -690,10 +705,10 @@ async def put_group_ai_limit(
     actor: Annotated[CurrentUser, Depends(require_console_member)],
 ):
     """Set the cap and model for every student, staff member, or parent, unless a person overrides it."""
-    from src.modules.fees.tenant import set_rls_bypass
+    from src.modules.fees.tenant import open_platform_school
     from src.modules.platform.ai_limits import LimitIn, save_group_limit
 
-    await set_rls_bypass(db, True)
+    await open_platform_school(db, school_id)
     return await save_group_limit(db, actor, school_id, group, LimitIn.model_validate(body.model_dump()))
 
 
@@ -706,10 +721,10 @@ async def put_person_ai_limit(
     actor: Annotated[CurrentUser, Depends(require_console_member)],
 ):
     """Override one person's monthly token cap and model."""
-    from src.modules.fees.tenant import set_rls_bypass
+    from src.modules.fees.tenant import open_platform_school
     from src.modules.platform.ai_limits import LimitIn, save_person_limit
 
-    await set_rls_bypass(db, True)
+    await open_platform_school(db, school_id)
     return await save_person_limit(db, actor, school_id, user_id, LimitIn.model_validate(body.model_dump()))
 
 
@@ -725,9 +740,9 @@ async def delete_school_ai_consumption(
     from src.core.exceptions import NotFoundError
     from src.db.models import PlatformAiUsageDaily, PlatformAiUserUsage
     from src.modules.audit.repository import AuditRepository
-    from src.modules.fees.tenant import set_rls_bypass
+    from src.modules.fees.tenant import open_platform_school
 
-    await set_rls_bypass(db, True)
+    await open_platform_school(db, school_id)
     school = await db.get(School, school_id)
     if school is None:
         raise NotFoundError("School not found")
@@ -758,9 +773,9 @@ async def delete_person_ai_consumption(
     from src.core.exceptions import NotFoundError
     from src.db.models import PlatformAiUserUsage
     from src.modules.audit.repository import AuditRepository
-    from src.modules.fees.tenant import set_rls_bypass
+    from src.modules.fees.tenant import open_platform_school
 
-    await set_rls_bypass(db, True)
+    await open_platform_school(db, school_id)
     rows = (
         await db.execute(
             select(PlatformAiUserUsage).where(

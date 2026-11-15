@@ -523,6 +523,10 @@ async def _delete_row(db: AsyncSession, actor: CurrentUser, kind: str, record_id
         raise NotFoundError("Unknown record type")
     if mode == "soft":
         await db.flush()
+    if school_id is not None:
+        from src.modules.fees.tenant import open_platform_school
+
+        await open_platform_school(db, school_id)
     await _audit(db, actor, kind=kind, record_id=record_id, school_id=school_id, label=label, mode=mode)
 
 
