@@ -114,6 +114,19 @@ async def proxy_to_ai(
     )
 
 
+@router.get("/allowance")
+async def my_ai_allowance(
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Annotated[object, Depends(get_db)],
+):
+    """Whether this person can spend more AI tokens this month, and which model to use."""
+    from src.modules.fees.tenant import set_rls_bypass
+    from src.modules.platform.ai_limits import allowance_for_user
+
+    await set_rls_bypass(db, True)
+    return await allowance_for_user(db, user)
+
+
 @router.post("/usage")
 async def record_my_ai_usage(
     body: AiUsageIn,

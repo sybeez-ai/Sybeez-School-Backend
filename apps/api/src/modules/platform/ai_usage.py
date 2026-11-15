@@ -140,6 +140,15 @@ async def apply_usage(db: AsyncSession, actor: CurrentUser, row: AiUsageIn, *, w
             },
         )
         await db.execute(person)
+        from src.modules.platform.ai_limits import add_person_month
+
+        await add_person_month(
+            db,
+            school_id=usage.school_id,
+            user_id=usage.user_id,
+            tokens=usage.tokens,
+            when=day,
+        )
     await db.flush()
     return usage
 

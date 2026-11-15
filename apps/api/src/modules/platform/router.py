@@ -640,7 +640,9 @@ async def ai_consumption_by_school(
     from src.modules.platform.ai_consumption import list_school_tokens
 
     await set_rls_bypass(db, True)
-    return await list_school_tokens(db)
+    from src.modules.platform.ai_limits import annotate_schools
+
+    return await annotate_schools(db, await list_school_tokens(db))
 
 
 @router.get("/ai/consumption/{school_id}")
@@ -654,7 +656,61 @@ async def ai_consumption_for_school(
     from src.modules.platform.ai_consumption import school_people_tokens
 
     await set_rls_bypass(db, True)
-    return await school_people_tokens(db, school_id)
+    from src.modules.platform.ai_limits import annotate_people
+
+    return await annotate_people(db, await school_people_tokens(db, school_id))
+
+
+class AiLimitIn(BaseModel):
+    monthly_token_limit: int | None = Field(default=None, ge=0, le=2_000_000_000)
+    model: str | None = Field(default=None, max_length=120)
+
+
+@router.put("/ai/limits/schools/{school_id}")
+async def put_school_ai_limit(
+    school_id: UUID,
+    body: AiLimitIn,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_console_member)],
+):
+    """Set a school's monthly token cap and default model. Sales can do this."""
+    from src.modules.fees.tenant import set_rls_bypass
+    from src.modules.platform.ai_limits import LimitIn, save_school_limit
+
+    await set_rls_bypass(db, True)
+    return await save_school_limit(db, actor, school_id, LimitIn.model_validate(body.model_dump()))
+
+
+@router.put("/ai/limits/schools/{school_id}/groups/{group}")
+async def put_group_ai_limit(
+    school_id: UUID,
+    group: str,
+    body: AiLimitIn,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_console_member)],
+):
+    """Set the cap and model for every student, staff member, or parent, unless a person overrides it."""
+    from src.modules.fees.tenant import set_rls_bypass
+    from src.modules.platform.ai_limits import LimitIn, save_group_limit
+
+    await set_rls_bypass(db, True)
+    return await save_group_limit(db, actor, school_id, group, LimitIn.model_validate(body.model_dump()))
+
+
+@router.put("/ai/limits/schools/{school_id}/people/{user_id}")
+async def put_person_ai_limit(
+    school_id: UUID,
+    user_id: UUID,
+    body: AiLimitIn,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_console_member)],
+):
+    """Override one person's monthly token cap and model."""
+    from src.modules.fees.tenant import set_rls_bypass
+    from src.modules.platform.ai_limits import LimitIn, save_person_limit
+
+    await set_rls_bypass(db, True)
+    return await save_person_limit(db, actor, school_id, user_id, LimitIn.model_validate(body.model_dump()))
 
 
 @router.delete("/ai/consumption/{school_id}", status_code=204)
