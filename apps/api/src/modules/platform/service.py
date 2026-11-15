@@ -811,9 +811,9 @@ class PlatformService:
         """Erase the school and every row stored against it. The audit entry is kept."""
         from sqlalchemy import text
 
-        from src.modules.fees.tenant import set_rls_bypass
+        from src.modules.fees.tenant import open_platform_school
 
-        await set_rls_bypass(self.db, True)
+        await open_platform_school(self.db, school_id)
         school = await self.repo.get_school(school_id)
         if school is None:
             raise NotFoundError("School not found")
@@ -851,23 +851,55 @@ class PlatformService:
             ).all()
         ]
         pending = [name for name in tables if name.replace("_", "").isalnum()]
-        for _ in range(12):
-            if not pending:
+        references = [
+            (child, parent)
+            for child, parent in (
+                await self.db.execute(
+                    text(
+                        """
+                        SELECT child.relname, parent.relname
+                        FROM pg_constraint fk
+                        JOIN pg_class child ON child.oid = fk.conrelid
+                        JOIN pg_class parent ON parent.oid = fk.confrelid
+                        JOIN pg_namespace ns ON ns.oid = child.relnamespace
+                        WHERE fk.contype = 'f' AND ns.nspname = 'public'
+                        """
+                    )
+                )
+            ).all()
+        ]
+        from src.modules.platform.purge import deletion_order
+
+        ordered = deletion_order(pending, references)
+        last_error: Exception | None = None
+        for _ in range(6):
+            if not ordered:
                 break
             stuck: list[str] = []
-            for table in pending:
+            for table in ordered:
                 try:
                     async with self.db.begin_nested():
                         await self.db.execute(
                             text(f'DELETE FROM "{table}" WHERE school_id = :sid'),
                             {"sid": school_id},
                         )
-                except Exception:
+                except Exception as exc:
+                    last_error = exc
                     stuck.append(table)
-            if len(stuck) == len(pending):
+            if not stuck:
+                ordered = []
                 break
-            pending = stuck
-        await self.db.execute(text("DELETE FROM schools WHERE id = :sid"), {"sid": school_id})
+            if stuck == ordered:
+                break
+            ordered = stuck
+        try:
+            async with self.db.begin_nested():
+                await self.db.execute(text("DELETE FROM schools WHERE id = :sid"), {"sid": school_id})
+        except Exception as exc:
+            left = ", ".join(ordered[:8]) or "unknown"
+            raise ConflictError(
+                f"Could not delete the school because related rows remain ({left})"
+            ) from (last_error or exc)
         await self.db.flush()
 
     async def upload_school_logo(self, actor: CurrentUser, school_id: UUID, file: UploadFile) -> SchoolOut:
@@ -1136,9 +1168,9 @@ class PlatformService:
     async def remove_school_admin(self, actor: CurrentUser, school_id: UUID, user_id: UUID) -> None:
         """Revoke a school admin: membership, sessions, and role access."""
         from src.db.models import RefreshToken
-        from src.modules.fees.tenant import set_rls_bypass
+        from src.modules.fees.tenant import open_platform_school
 
-        await set_rls_bypass(self.db, True)
+        await open_platform_school(self.db, school_id)
         school = await self.repo.get_school(school_id)
         if school is None:
             raise NotFoundError("School not found")

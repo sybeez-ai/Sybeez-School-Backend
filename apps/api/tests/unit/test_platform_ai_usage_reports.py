@@ -310,8 +310,8 @@ def test_school_and_admin_deletes_enable_bypass_before_the_write():
 
     school = inspect.getsource(PlatformService.delete_school)
     admin = inspect.getsource(PlatformService.remove_school_admin)
-    assert school.index("set_rls_bypass") < school.index("DELETE FROM")
+    assert school.index("open_platform_school") < school.index("DELETE FROM")
     assert "confirm_name" in school
     assert "platform.super_admin.delete" in school
-    assert admin.index("set_rls_bypass") < admin.index("LEFT")
+    assert admin.index("open_platform_school") < admin.index("LEFT")
     assert "platform.super_admin.delete" in admin

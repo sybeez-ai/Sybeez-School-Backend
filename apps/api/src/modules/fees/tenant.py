@@ -70,6 +70,22 @@ async def set_rls_bypass(db: AsyncSession, enabled: bool) -> None:
     await apply_tenant(db)
 
 
+async def open_platform_school(db: AsyncSession, school_id: UUID) -> None:
+    """Run a platform write against one school.
+
+    Bypass stays on, and app.school_id is that school. Policies that only
+    match the session school then allow the row, and policies that honor
+    app.rls_bypass still allow it. bind_tenant() turns bypass off, so platform
+    deletes must not use it.
+    """
+    tenant = _tenant(db)
+    tenant["school_id"] = str(school_id)
+    tenant["bypass"] = "on"
+    if not tenant.get("role"):
+        tenant["role"] = "PLATFORM_ADMIN"
+    await apply_tenant(db)
+
+
 async def reset_tenant_guc(db: AsyncSession) -> None:
     db.info["rls_tenant"] = {}
     await apply_tenant(db)

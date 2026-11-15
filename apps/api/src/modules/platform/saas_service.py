@@ -143,7 +143,7 @@ class PlatformSaasService:
         Subscription rows are tenant-scoped. Bypass has to be on before they are read or updated,
         or row-level security hides them from a platform session that has no school.
         """
-        from src.modules.fees.tenant import set_rls_bypass
+        from src.modules.fees.tenant import open_platform_school, set_rls_bypass
 
         await set_rls_bypass(self.db, True)
         plan = await self.db.get(PlatformPlan, plan_id)
@@ -157,6 +157,7 @@ class PlatformSaasService:
         school_ids = []
         for sub in subs:
             school_ids.append(str(sub.school_id))
+            await open_platform_school(self.db, sub.school_id)
             sub.plan_code = "unassigned"
         code = plan.code
         name = plan.name
