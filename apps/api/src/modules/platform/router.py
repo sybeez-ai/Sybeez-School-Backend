@@ -222,7 +222,7 @@ async def delete_audit_log(
 @router.get("/schools", response_model=Page[SchoolOut])
 async def list_schools(
     db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_super_admin)],
+    user: Annotated[CurrentUser, Depends(require_console_member)],
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=100),
     q: str | None = Query(default=None),
@@ -844,7 +844,7 @@ class StaffCreateIn(BaseModel):
     password: str = Field(min_length=8, max_length=200)
     portals: list[str] = Field(default_factory=list)
     permissions: list[str] = Field(default_factory=list)
-    platform_role: str = "SALES"
+    platform_role: str | None = None
 
 
 class StaffAccessIn(BaseModel):
