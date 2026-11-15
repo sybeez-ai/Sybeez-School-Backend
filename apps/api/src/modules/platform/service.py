@@ -925,15 +925,14 @@ class PlatformService:
                 try:
                     async with self.db.begin_nested():
                         await self.db.execute(text(step.sql), {"sid": school_id})
-                    if step.table in school_tables:
-                        left = (
-                            await self.db.execute(
-                                text(f'SELECT count(*) FROM "{step.table}" WHERE school_id = :sid'),
-                                {"sid": school_id},
-                            )
-                        ).scalar_one()
-                        if int(left or 0) > 0:
-                            stuck.append(step)
+                    left = (
+                        await self.db.execute(
+                            text(f'SELECT count(*) FROM "{step.table}" WHERE {step.where}'),
+                            {"sid": school_id},
+                        )
+                    ).scalar_one()
+                    if int(left or 0) > 0:
+                        stuck.append(step)
                 except Exception as exc:
                     last_error = exc
                     stuck.append(step)
@@ -946,10 +945,21 @@ class PlatformService:
             pending = stuck
         try:
             async with self.db.begin_nested():
-                await self.db.execute(text("DELETE FROM schools WHERE id = :sid"), {"sid": school_id})
+                deleted = (
+                    await self.db.execute(
+                        text("DELETE FROM schools WHERE id = :sid RETURNING id"),
+                        {"sid": school_id},
+                    )
+                ).first()
+            if deleted is None:
+                raise ConflictError("The school was not deleted. No school row changed.")
+            # Fire deferred foreign keys now, inside this request, not in get_db()'s commit.
+            await self.db.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
+        except ConflictError:
+            raise
         except Exception as exc:
             left = ", ".join(step.table for step in pending[:8]) or "unknown"
-            detail = str(getattr(last_error, "orig", last_error) or exc).splitlines()[0][:180]
+            detail = str(getattr(exc, "orig", exc) or last_error or exc).splitlines()[0][:180]
             raise ConflictError(
                 f"Could not delete the school because related rows remain ({left}). {detail}"
             ) from (last_error or exc)
@@ -1279,7 +1289,8 @@ class PlatformService:
 
     async def remove_school_admin(self, actor: CurrentUser, school_id: UUID, user_id: UUID) -> None:
         """Revoke a school admin: membership, sessions, and role access."""
-        from src.db.models import RefreshToken
+        from sqlalchemy import text
+
         from src.modules.fees.tenant import open_platform_school
 
         await open_platform_school(self.db, school_id)
@@ -1299,20 +1310,47 @@ class PlatformService:
             raise NotFoundError("School admin not found")
         person = await self.db.get(User, user_id)
         if membership.status != MembershipStatus.LEFT.value:
-            changed = await self.db.execute(
-                update(SchoolMembership)
-                .where(
-                    SchoolMembership.id == membership.id,
-                    SchoolMembership.status != MembershipStatus.LEFT.value,
+            changed = (
+                await self.db.execute(
+                    text(
+                        """
+                        UPDATE school_memberships
+                        SET status = 'LEFT'
+                        WHERE id = :id AND status IS DISTINCT FROM 'LEFT'
+                        RETURNING id
+                        """
+                    ),
+                    {"id": membership.id},
                 )
-                .values(status=MembershipStatus.LEFT.value)
-            )
-            if changed.rowcount != 1:
+            ).all()
+            if len(changed) != 1:
                 raise ConflictError("The admin was not removed. No membership changed.")
         await self.db.execute(
-            update(RefreshToken).where(RefreshToken.user_id == user_id, RefreshToken.revoked.is_(False)).values(revoked=True)
+            text(
+                """
+                UPDATE refresh_tokens
+                SET revoked = true
+                WHERE user_id = :uid AND revoked IS NOT TRUE
+                """
+            ),
+            {"uid": user_id},
         )
-        self.db.expire(membership)
+        status = (
+            await self.db.execute(
+                text("SELECT status FROM school_memberships WHERE id = :id"),
+                {"id": membership.id},
+            )
+        ).scalar_one()
+        if status != MembershipStatus.LEFT.value:
+            raise ConflictError("The admin is still active. The membership update did not stick.")
+        open_sessions = (
+            await self.db.execute(
+                text("SELECT count(*) FROM refresh_tokens WHERE user_id = :uid AND revoked IS NOT TRUE"),
+                {"uid": user_id},
+            )
+        ).scalar_one()
+        if int(open_sessions or 0) > 0:
+            raise ConflictError("The admin's sessions were not revoked.")
         await self.db.flush()
         await self.audit.write(
             action="platform.super_admin.delete",
