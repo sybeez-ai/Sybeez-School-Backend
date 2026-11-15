@@ -324,9 +324,10 @@ class PlatformSaasService:
         errors = sum(r.errors for r in rows)
         safety = sum(r.safety_blocks for r in rows)
         from src.modules.platform.ai_consumption import list_school_tokens
+        from src.modules.platform.ai_limits import annotate_schools
 
-        listed = await list_school_tokens(self.db)
-        schools = {row["school_id"] for row in listed if int(row.get("tokens") or 0) > 0}
+        listed = await annotate_schools(self.db, await list_school_tokens(self.db))
+        schools = {row["school_id"] for row in listed["items"] if int(row.get("tokens") or 0) > 0}
 
         by_provider: dict[str, int] = {}
         by_model: dict[str, int] = {}

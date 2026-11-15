@@ -241,6 +241,15 @@ async def school_people_tokens(db: AsyncSession, school_id: UUID) -> dict:
             .group_by(PlatformAiUsageDaily.model)
         )
     ).all()
+    if school_tokens <= 0 and assigned > 0:
+        school_tokens = assigned
+        rolled: dict[str, int] = {}
+        for _user_id, model, tokens in usage_rows:
+            name = (model or "").strip()
+            if not name:
+                continue
+            rolled[name] = rolled.get(name, 0) + int(tokens or 0)
+        model_rows = list(rolled.items())
 
     def with_models(person: dict) -> dict:
         models = model_breakdown(by_user.get(person["user_id"], []))
