@@ -76,6 +76,17 @@ def end_of_day(day) -> datetime:
     return datetime.combine(day, time(23, 59, 59), tzinfo=UTC)
 
 
+def _days_used(start: datetime | None, end: datetime | None) -> int:
+    if start is None:
+        return 0
+    stop = utcnow()
+    if end is not None and end < stop:
+        stop = end
+    if stop <= start:
+        return 0
+    return max(0, (stop - start).days)
+
+
 def effective_trial_days(school_days: int | None, platform_days: int | None) -> int:
     """A school override wins. Otherwise the platform default, or 30."""
     if school_days is not None and int(school_days) > 0:
@@ -169,6 +180,9 @@ async def commercial_view(db: AsyncSession, school: School) -> dict[str, Any]:
         "trial_started_at": trial_start,
         "trial_ends_at": trial_end,
         "trial_days_left": days_left(trial_end) if status == "trial" else 0,
+        "trial_length_days": effective_trial_days(getattr(school, "trial_days", None), None),
+        "trial_days_used": _days_used(trial_start, trial_end),
+        "payment_started_at": sub.starts_at if sub and sub.status == SubscriptionStatus.ACTIVE.value else None,
         **totals,
     }
 

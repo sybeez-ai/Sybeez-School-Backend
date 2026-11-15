@@ -46,6 +46,15 @@ def test_school_trial_days_fall_back_to_the_platform_default():
     assert effective_trial_days(14, 30) == 14
 
 
+def test_deploy_does_not_read_the_migrate_secret():
+    from pathlib import Path
+
+    workflow = Path(__file__).resolve().parents[4] / ".github" / "workflows" / "deploy-backend.yml"
+    text = workflow.read_text()
+    assert "align_migrate_master_password" not in text
+    assert "Match the migrate secret" not in text
+
+
 def test_ai_consumption_is_token_counts_only():
     from uuid import UUID
 
