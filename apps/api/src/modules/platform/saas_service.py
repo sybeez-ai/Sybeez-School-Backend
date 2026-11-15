@@ -138,7 +138,14 @@ class PlatformSaasService:
         return self._plan_out(plan)
 
     async def delete_plan(self, actor: CurrentUser, plan_id: UUID) -> dict:
-        """Permanently remove a plan and clear it from schools that were using it."""
+        """Permanently remove a plan and clear it from schools that were using it.
+
+        Subscription rows are tenant-scoped. Bypass has to be on before they are read or updated,
+        or row-level security hides them from a platform session that has no school.
+        """
+        from src.modules.fees.tenant import set_rls_bypass
+
+        await set_rls_bypass(self.db, True)
         plan = await self.db.get(PlatformPlan, plan_id)
         if not plan:
             raise NotFoundError("Plan not found")
@@ -299,6 +306,9 @@ class PlatformSaasService:
         return row
 
     async def ai_overview(self) -> PlatformAiOverview:
+        from src.modules.fees.tenant import set_rls_bypass
+
+        await set_rls_bypass(self.db, True)
         since = datetime.now(timezone.utc) - timedelta(days=30)
         rows = list(
             (

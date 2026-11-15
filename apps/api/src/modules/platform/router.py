@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import (
     CurrentUser,
+    get_current_user,
     require_admin_or_above,
     require_platform_member,
     require_roles,
@@ -18,6 +19,7 @@ from src.modules.audit.schemas import AuditLogOut
 from src.modules.audit.service import AuditService
 from src.modules.fees.route_schemas import PlatformRouteUpdate, RouteSchoolOut
 from src.modules.fees.route_service import RouteService
+from src.modules.platform.ai_usage import AiUsageBackfillIn, AiUsageIn
 from src.modules.platform.saas_service import PlatformSaasService
 from src.modules.platform.schemas import (
     SchoolAdminLoginCreate,
@@ -702,30 +704,81 @@ async def delete_person_ai_consumption(
     from src.modules.fees.tenant import set_rls_bypass
 
     await set_rls_bypass(db, True)
-    row = (
+    rows = (
         await db.execute(
             select(PlatformAiUserUsage).where(
                 PlatformAiUserUsage.school_id == school_id,
                 PlatformAiUserUsage.user_id == user_id,
             )
         )
-    ).scalar_one_or_none()
-    if row is None:
+    ).scalars().all()
+    if not rows:
         raise NotFoundError("Token record not found")
     person = await db.get(User, user_id)
     label = person.full_name if person else str(user_id)
-    await db.execute(sql_delete(PlatformAiUserUsage).where(PlatformAiUserUsage.id == row.id))
+    await db.execute(
+        sql_delete(PlatformAiUserUsage).where(
+            PlatformAiUserUsage.school_id == school_id,
+            PlatformAiUserUsage.user_id == user_id,
+        )
+    )
     await db.flush()
     await AuditRepository(db).write(
         action="platform.super_admin.delete",
         actor_id=actor.id,
         school_id=school_id,
         resource_type="ai_user_usage",
-        resource_id=str(row.id),
+        resource_id=str(rows[0].id),
         message=f"Super admin deleted AI token record for {label}",
-        details={"mode": "hard", "label": label, "user_id": str(user_id)},
+        details={"mode": "hard", "label": label, "user_id": str(user_id), "models": len(rows)},
     )
     return Response(status_code=204)
+
+
+@router.post("/ai/usage")
+async def post_ai_usage(
+    body: AiUsageIn,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(get_current_user)],
+):
+    """Add today's tokens for the signed-in user. Cookie or bearer, same as other platform routes."""
+    from src.modules.platform.ai_usage import record_usage
+
+    return await record_usage(db, actor, body)
+
+
+@router.post("/ai/usage/backfill")
+async def post_ai_usage_backfill(
+    body: AiUsageBackfillIn,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_super_admin)],
+):
+    """Replay usage the AI service already recorded. Super admin only. Does not invent tokens."""
+    from src.modules.platform.ai_usage import backfill_ai_usage
+
+    return await backfill_ai_usage(db, actor, body.rows)
+
+
+@router.get("/reports/{kind}")
+async def platform_report(
+    kind: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_platform_member)],
+):
+    """CSV export. Schools, trials, renewals and AI tokens are for any platform member.
+
+    Billing, sign-ins and logs are super admin only. An empty report is a header row, not a 404.
+    """
+    from src.modules.platform.reports import assert_report_access, render_report
+
+    assert_report_access(kind, user)
+    filename = f"{kind.strip().lower()}.csv"
+    content = await render_report(db, kind)
+    return Response(
+        content=content,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/ai", response_model=PlatformAiOverview)

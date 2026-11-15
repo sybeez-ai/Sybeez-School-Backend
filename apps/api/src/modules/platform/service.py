@@ -815,6 +815,7 @@ class PlatformService:
 
         from src.modules.fees.tenant import set_rls_bypass
 
+        await set_rls_bypass(self.db, True)
         school = await self.repo.get_school(school_id)
         if school is None:
             raise NotFoundError("School not found")
@@ -822,7 +823,6 @@ class PlatformService:
             raise ValidationError("Type the school name exactly to confirm deletion")
         await self._assert_school_access(actor, school)
         name = school.name
-        await set_rls_bypass(self.db, True)
         await self.audit.write(
             action="platform.super_admin.delete",
             actor_id=actor.id,

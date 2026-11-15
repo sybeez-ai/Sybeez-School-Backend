@@ -23,8 +23,23 @@ from src.db.models import (
 from src.shared.enums import EnrollmentStatus, MembershipStatus, PersonStatus, UserRole
 
 
+def model_breakdown(entries: list[tuple[str | None, int]]) -> list[dict]:
+    """Sum tokens for one person by model. An empty list stays empty — no placeholder model."""
+    totals: dict[str, int] = {}
+    for model, tokens in entries:
+        key = (model or "").strip() or "unknown"
+        totals[key] = totals.get(key, 0) + int(tokens or 0)
+    return [
+        {"model": model, "tokens": count}
+        for model, count in sorted(totals.items(), key=lambda item: (-item[1], item[0]))
+    ]
+
+
 def school_token_rows(pairs: list[tuple]) -> list[dict]:
-    """Collapse daily rows into one token total per school, split by model. Drops money."""
+    """Collapse daily rows into one token total per school, split by model. Drops money.
+
+    A 4-tuple with model None is a school that has no usage yet: tokens stay 0 and models stays empty.
+    """
     totals: dict[UUID | None, dict] = {}
     for item in pairs:
         if len(item) == 4:
@@ -34,29 +49,48 @@ def school_token_rows(pairs: list[tuple]) -> list[dict]:
             model = "unknown"
         row = totals.setdefault(
             school_id,
-            {"school_id": school_id, "school_name": name or "Platform", "tokens": 0, "models": []},
+            {"school_id": school_id, "school_name": name or "Platform", "tokens": 0, "models": {}},
         )
         count = int(tokens or 0)
         row["tokens"] += count
-        row["models"].append({"model": model or "unknown", "tokens": count})
+        if model is not None:
+            key = (model or "").strip() or "unknown"
+            row["models"][key] = row["models"].get(key, 0) + count
         if name:
             row["school_name"] = name
+    out = []
     for row in totals.values():
-        row["models"].sort(key=lambda entry: (-entry["tokens"], entry["model"]))
-    return sorted(totals.values(), key=lambda item: (-item["tokens"], item["school_name"]))
+        models = [{"model": model, "tokens": count} for model, count in row["models"].items()]
+        models.sort(key=lambda entry: (-entry["tokens"], entry["model"]))
+        out.append(
+            {
+                "school_id": row["school_id"],
+                "school_name": row["school_name"],
+                "tokens": row["tokens"],
+                "models": models,
+            }
+        )
+    return sorted(out, key=lambda item: (-item["tokens"], item["school_name"]))
 
 
 async def list_school_tokens(db: AsyncSession) -> list[dict]:
+    from src.modules.fees.tenant import set_rls_bypass
+
+    await set_rls_bypass(db, True)
+    usage = (
+        select(
+            PlatformAiUsageDaily.school_id.label("school_id"),
+            PlatformAiUsageDaily.model.label("model"),
+            func.sum(PlatformAiUsageDaily.input_tokens + PlatformAiUsageDaily.output_tokens).label("tokens"),
+        )
+        .group_by(PlatformAiUsageDaily.school_id, PlatformAiUsageDaily.model)
+        .subquery()
+    )
     rows = (
         await db.execute(
-            select(
-                PlatformAiUsageDaily.school_id,
-                School.name,
-                PlatformAiUsageDaily.model,
-                func.sum(PlatformAiUsageDaily.input_tokens + PlatformAiUsageDaily.output_tokens),
+            select(School.id, School.name, usage.c.model, usage.c.tokens).outerjoin(
+                usage, usage.c.school_id == School.id
             )
-            .outerjoin(School, School.id == PlatformAiUsageDaily.school_id)
-            .group_by(PlatformAiUsageDaily.school_id, School.name, PlatformAiUsageDaily.model)
         )
     ).all()
     return school_token_rows(
@@ -65,6 +99,9 @@ async def list_school_tokens(db: AsyncSession) -> list[dict]:
 
 
 async def school_people_tokens(db: AsyncSession, school_id: UUID) -> dict:
+    from src.modules.fees.tenant import set_rls_bypass
+
+    await set_rls_bypass(db, True)
     school = await db.get(School, school_id)
     if school is None:
         raise NotFoundError("School not found")
@@ -77,13 +114,16 @@ async def school_people_tokens(db: AsyncSession, school_id: UUID) -> dict:
             )
         ).scalar_one()
     )
-    usage = dict(
-        (
-            await db.execute(
-                select(PlatformAiUserUsage.user_id, PlatformAiUserUsage.tokens).where(PlatformAiUserUsage.school_id == school_id)
+    usage_rows = (
+        await db.execute(
+            select(PlatformAiUserUsage.user_id, PlatformAiUserUsage.model, PlatformAiUserUsage.tokens).where(
+                PlatformAiUserUsage.school_id == school_id
             )
-        ).all()
-    )
+        )
+    ).all()
+    by_user: dict[UUID, list[tuple[str | None, int]]] = {}
+    for user_id, model, tokens in usage_rows:
+        by_user.setdefault(user_id, []).append((model, int(tokens or 0)))
 
     students = []
     student_rows = (
@@ -117,7 +157,6 @@ async def school_people_tokens(db: AsyncSession, school_id: UUID) -> dict:
                 "standard": standard,
                 "admission_no": student.admission_no,
                 "email": user.email,
-                "tokens": int(usage.get(user.id, 0) or 0),
             }
         )
 
@@ -139,7 +178,6 @@ async def school_people_tokens(db: AsyncSession, school_id: UUID) -> dict:
                 "name": user.full_name,
                 "role": UserRole.TEACHER.value,
                 "email": user.email,
-                "tokens": int(usage.get(user.id, 0) or 0),
             }
         )
 
@@ -166,11 +204,10 @@ async def school_people_tokens(db: AsyncSession, school_id: UUID) -> dict:
                 "name": user.full_name,
                 "role": membership.role,
                 "email": user.email,
-                "tokens": int(usage.get(user.id, 0) or 0),
             }
         )
 
-    assigned = sum(int(value or 0) for value in usage.values())
+    assigned = sum(int(tokens or 0) for _user_id, _model, tokens in usage_rows)
     model_rows = (
         await db.execute(
             select(
@@ -183,8 +220,9 @@ async def school_people_tokens(db: AsyncSession, school_id: UUID) -> dict:
     ).all()
 
     def with_models(person: dict) -> dict:
-        count = int(person.get("tokens") or 0)
-        person["models"] = [{"model": "recorded", "tokens": count}] if count else []
+        models = model_breakdown(by_user.get(person["user_id"], []))
+        person["tokens"] = sum(item["tokens"] for item in models)
+        person["models"] = models
         return person
 
     return {

@@ -239,13 +239,35 @@ def superadmin_allowlist() -> frozenset[str]:
     return frozenset({"admin@sybeez.ai", "silverstalan.inbaraj@sybeez.ai"})
 
 
+def normalize_platform_role(role: str | None) -> str:
+    """Compare platform roles independent of case, spaces, and hyphens."""
+    import re
+
+    text = (role or "").strip().upper()
+    text = re.sub(r"[\s\-]+", "_", text)
+    text = re.sub(r"_+", "_", text).strip("_")
+    return text
+
+
+# Missing role, or the older operator names, for the two allowlisted emails only.
+_LEGACY_SUPER_ADMIN = frozenset({"", PlatformRole.ADMIN.value, PlatformRole.PLATFORM_ADMIN.value})
+
+
 def is_super_admin(user: CurrentUser) -> bool:
-    """Super Admin requires the role and an allowlisted email. Other SUPER_ADMIN rows keep the label but not the powers."""
+    """Super Admin powers stay on the two allowlisted emails.
+
+    The stored role may be SUPER_ADMIN (any spacing or case), blank, or a legacy
+    alias (ADMIN / PLATFORM_ADMIN). Any other email stays a normal platform
+    account, even when the role string says SUPER_ADMIN.
+    """
     if not user.is_platform_admin:
         return False
-    if (user.platform_role or "") != PlatformRole.SUPER_ADMIN.value:
+    if (user.email or "").lower() not in superadmin_allowlist():
         return False
-    return user.email.lower() in superadmin_allowlist()
+    role = normalize_platform_role(user.platform_role)
+    if role == PlatformRole.SUPER_ADMIN.value:
+        return True
+    return role in _LEGACY_SUPER_ADMIN
 
 
 def require_roles(*roles: UserRole):

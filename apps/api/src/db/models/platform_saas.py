@@ -90,11 +90,14 @@ class PlatformAiUsageDaily(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
 
 class PlatformAiUserUsage(Base, UUIDPrimaryKeyMixin, TimestampMixin):
-    """Tokens recorded for one person at one school. School totals stay on the daily table."""
+    """Tokens recorded for one person, one school, and one model. School totals stay on the daily table."""
 
     __tablename__ = "platform_ai_user_usage"
-    __table_args__ = (UniqueConstraint("school_id", "user_id", name="uq_ai_user_usage_school_user"),)
+    __table_args__ = (
+        UniqueConstraint("school_id", "user_id", "model", name="uq_ai_user_usage_school_user_model"),
+    )
 
     school_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    model: Mapped[str] = mapped_column(String(120), nullable=False, default="unknown", server_default="unknown")
     tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
