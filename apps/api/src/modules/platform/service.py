@@ -74,6 +74,8 @@ def team_member_delete_block(actor: CurrentUser, user: User) -> str | None:
         return "You cannot delete your own account"
     if is_protected_owner(user.email):
         return "The owner account cannot be removed"
+    if (user.email or "").strip().lower() == "silverstalan.inbaraj@sybeez.ai":
+        return "This account stays Super Admin"
     return None
 
 
@@ -647,7 +649,7 @@ class PlatformService:
                     id=str(u.id),
                     title=u.full_name,
                     subtitle=f"{u.email} · {u.platform_role}",
-                    href=f"/platform/team/{u.id}",
+                    href=f"/platform/staff",
                 )
                 for u in team
             ],
@@ -1441,6 +1443,10 @@ class PlatformService:
             raise NotFoundError("Employee not found")
         if is_protected_owner(user.email):
             raise ForbiddenError("The owner account cannot be changed")
+        if (user.email or "").strip().lower() == "silverstalan.inbaraj@sybeez.ai" and (
+            data.platform_role is not None or data.is_active is False
+        ):
+            raise ForbiddenError("This account stays Super Admin")
         if data.full_name is not None:
             user.full_name = data.full_name.strip()
         if data.is_active is not None:

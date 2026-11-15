@@ -913,6 +913,11 @@ class StaffInviteIn(BaseModel):
     portals: list[str] = Field(default_factory=list)
     permissions: list[str] = Field(default_factory=list)
     expires_in_days: int = Field(default=7, ge=1, le=30)
+    platform_role: str | None = None
+
+
+class StaffRoleIn(BaseModel):
+    platform_role: str = Field(min_length=1, max_length=32)
 
 
 class StaffOut(BaseModel):
@@ -923,6 +928,7 @@ class StaffOut(BaseModel):
     status: str
     portals: list[str]
     permissions: list[str]
+    platform_role: str | None = None
 
 
 def _staff_out(row: dict) -> StaffOut:
@@ -1022,14 +1028,74 @@ async def invite_staff(
         portals=body.portals,
         permissions=body.permissions,
         expires_in_days=body.expires_in_days,
+        platform_role=body.platform_role,
     )
     return {
         "id": str(inv.id),
         "email": inv.email,
         "status": inv.status,
+        "platform_role": inv.platform_role,
         "expires_at": inv.expires_at.isoformat(),
         "invite_token": raw,
     }
+
+
+@router.get("/staff-invitations")
+async def list_staff_invitations(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _: Annotated[CurrentUser, Depends(require_super_admin)],
+):
+    rows = await StaffService(db).list_invitations()
+    return [
+        {
+            "id": str(row["id"]),
+            "email": row["email"],
+            "status": row["status"],
+            "platform_role": row["platform_role"],
+            "portals": row["portals"],
+            "expires_at": row["expires_at"].isoformat(),
+        }
+        for row in rows
+    ]
+
+
+@router.post("/staff-invitations/{invitation_id}/resend")
+async def resend_staff_invitation(
+    invitation_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_super_admin)],
+):
+    inv, raw = await StaffService(db).resend_invitation(user, invitation_id)
+    return {
+        "id": str(inv.id),
+        "email": inv.email,
+        "status": inv.status,
+        "platform_role": inv.platform_role,
+        "expires_at": inv.expires_at.isoformat(),
+        "invite_token": raw,
+    }
+
+
+@router.post("/staff-invitations/{invitation_id}/cancel")
+async def cancel_staff_invitation(
+    invitation_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_super_admin)],
+):
+    inv = await StaffService(db).cancel_invitation(user, invitation_id)
+    return {"id": str(inv.id), "email": inv.email, "status": inv.status}
+
+
+@router.patch("/staff/{staff_id}/role", response_model=StaffOut)
+async def set_staff_role(
+    staff_id: UUID,
+    body: StaffRoleIn,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_super_admin)],
+):
+    await StaffService(db).set_role(user, staff_id, body.platform_role)
+    rows = await StaffService(db).list_staff()
+    return _staff_out(next(row for row in rows if row["id"] == staff_id))
 
 
 @router.get("/route/accounts", response_model=list[RouteSchoolOut])
