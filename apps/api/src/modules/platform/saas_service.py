@@ -323,7 +323,10 @@ class PlatformSaasService:
         cost = float(sum(float(r.estimated_cost or 0) for r in rows))
         errors = sum(r.errors for r in rows)
         safety = sum(r.safety_blocks for r in rows)
-        schools = {r.school_id for r in rows if r.school_id}
+        from src.modules.platform.ai_consumption import list_school_tokens
+
+        listed = await list_school_tokens(self.db)
+        schools = {row["school_id"] for row in listed if int(row.get("tokens") or 0) > 0}
 
         by_provider: dict[str, int] = {}
         by_model: dict[str, int] = {}

@@ -184,16 +184,44 @@ async def person_month_tokens(db: AsyncSession, school_id: UUID, start: date | N
 
 
 async def model_choices(db: AsyncSession) -> list[str]:
+    """Models on an enabled provider. Unused names are not invented here."""
     row = (await db.execute(select(PlatformAiSettings).limit(1))).scalar_one_or_none()
+    if row is None:
+        return []
+    providers = row.providers_json or {}
+    enabled = {
+        name
+        for name, meta in providers.items()
+        if isinstance(meta, dict) and meta.get("enabled") is True
+    }
     found: list[str] = []
-    for item in (row.models_json if row is not None else None) or []:
+    for item in row.models_json or []:
         if isinstance(item, dict):
+            provider = str(item.get("provider") or "")
+            if enabled and provider and provider not in enabled:
+                continue
             name = _text(str(item.get("model") or ""))
         else:
             name = _text(str(item))
         if name and name not in found:
             found.append(name)
     return found
+
+
+def recorded_models(models: list[dict], allowed: list[str] | None) -> list[dict]:
+    """Keep models that have tokens and, when settings exist, are actually configured."""
+    allowed_set = set(allowed or [])
+    kept = []
+    for item in models or []:
+        count = int(item.get("tokens") or 0)
+        name = (item.get("model") or "").strip()
+        if count <= 0 or not name:
+            continue
+        if allowed_set and name not in allowed_set:
+            continue
+        kept.append({"model": name, "tokens": count})
+    kept.sort(key=lambda entry: (-entry["tokens"], entry["model"]))
+    return kept
 
 
 async def annotate_schools(db: AsyncSession, rows: list[dict]) -> dict:
@@ -221,19 +249,24 @@ async def annotate_schools(db: AsyncSession, rows: list[dict]) -> dict:
     for row in rows:
         school_id = row.get("school_id")
         policy = by_school.get(school_id)
+        models = recorded_models(row.get("models") or [], choices or None)
+        shown = sum(item["tokens"] for item in models)
         items.append(
             {
                 **row,
+                "models": models,
+                "tokens": shown if choices else int(row.get("tokens") or 0),
                 "month_tokens": month.get(school_id, 0),
                 "monthly_token_limit": None if policy is None else policy.monthly_token_limit,
                 "model": None if policy is None else policy.model,
             }
         )
-    return {"items": items, "model_choices": choices}
+    return {"items": items, "model_choices": choices, "active_schools": sum(1 for item in items if item["tokens"] > 0)}
 
 
 async def annotate_people(db: AsyncSession, detail: dict) -> dict:
     school_id = detail["school_id"]
+    choices = await model_choices(db)
     indexed = _index(await _limits(db, school_id))
     school = _row_dict(indexed["school"])
     groups = {name: _row_dict(indexed["groups"].get(name)) for name in GROUPS}
@@ -244,6 +277,10 @@ async def annotate_people(db: AsyncSession, detail: dict) -> dict:
         own = _row_dict(indexed["people"].get(person.get("user_id")))
         group = groups.get(group_for_role(person.get("role")))
         effective = effective_assignment(school, group, own)
+        models = recorded_models(person.get("models") or [], choices or None)
+        person["models"] = models
+        if choices:
+            person["tokens"] = sum(item["tokens"] for item in models)
         person["month_tokens"] = months.get(person.get("user_id"), 0)
         person["monthly_token_limit"] = effective["monthly_token_limit"]
         person["model"] = effective["model"]
@@ -263,7 +300,10 @@ async def annotate_people(db: AsyncSession, detail: dict) -> dict:
         }
         for name in GROUPS
     }
-    detail["model_choices"] = await model_choices(db)
+    detail["models"] = recorded_models(detail.get("models") or [], choices or None)
+    if choices:
+        detail["tokens"] = sum(item["tokens"] for item in detail["models"])
+    detail["model_choices"] = choices
     return detail
 
 
