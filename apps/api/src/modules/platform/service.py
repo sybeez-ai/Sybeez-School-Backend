@@ -74,8 +74,6 @@ def team_member_delete_block(actor: CurrentUser, user: User) -> str | None:
         return "You cannot delete your own account"
     if is_protected_owner(user.email):
         return "The owner account cannot be removed"
-    if (user.email or "").strip().lower() == "silverstalan.inbaraj@sybeez.ai":
-        return "This account stays Super Admin"
     return None
 
 

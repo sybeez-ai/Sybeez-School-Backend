@@ -135,7 +135,9 @@ class StaffService:
             staff = PlatformStaff(user_id=user.id, status="ACTIVE", invited_by=actor.id)
             self.db.add(staff)
             await self.db.flush()
-        await self._replace_access(actor, staff, portals, permissions, action="staff.grant")
+        # An empty portal list is "role only". Do not wipe portal rows that already exist.
+        if portals or permissions:
+            await self._replace_access(actor, staff, portals, permissions, action="staff.grant")
         return staff
 
     async def set_access(
@@ -149,11 +151,15 @@ class StaffService:
         staff = await self._staff(staff_id)
         if staff.status != "ACTIVE":
             raise ConflictError("Staff access is revoked")
+        cleaned_portals = _check_portals(portals) if portals else []
+        cleaned_permissions = _check_features(permissions) if permissions else []
+        if not cleaned_portals and not cleaned_permissions:
+            return staff
         await self._replace_access(
             actor,
             staff,
-            _check_portals(portals),
-            _check_features(permissions),
+            cleaned_portals,
+            cleaned_permissions,
             action="staff.grant",
         )
         return staff
@@ -355,7 +361,8 @@ class StaffService:
             membership_id=None,
             is_platform_admin=False,
         )
-        await self._replace_access(actor, staff, list(inv.portals), list(inv.permissions), action="staff.grant")
+        if list(inv.portals or []) or list(inv.permissions or []):
+            await self._replace_access(actor, staff, list(inv.portals), list(inv.permissions), action="staff.grant")
         inv.status = InvitationStatus.ACCEPTED.value
         inv.accepted_at = utcnow()
         await self.db.flush()
