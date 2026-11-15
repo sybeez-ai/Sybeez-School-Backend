@@ -825,7 +825,8 @@ def test_super_admin_staff_portals_are_audited_and_school_scoped(client: TestCli
     assert accepted.json()["role"] == "PLATFORM_STAFF"
 
 
-def test_only_the_bootstrapped_email_can_call_platform(client: TestClient, world):
+def test_a_platform_admin_without_a_role_can_sell_but_not_open_logs(client: TestClient, world):
+    """A console account with no stored role is Sales. They can list schools, not Logs."""
     suffix = world["suffix"]
     email = f"ops-{suffix}@example.com"
     conn = psycopg2.connect(DSN)
@@ -840,7 +841,8 @@ def test_only_the_bootstrapped_email_can_call_platform(client: TestClient, world
     )
     conn.close()
     other = _auth(client, email)
-    assert client.get("/api/v1/platform/schools", headers=other).status_code == 403
+    assert client.get("/api/v1/platform/schools", headers=other).status_code == 200
+    assert client.get("/api/v1/platform/audit", headers=other).status_code == 403
 
 
 def test_school_admin_role_change_applies_before_the_token_expires(client: TestClient, world):

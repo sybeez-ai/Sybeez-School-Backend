@@ -15,10 +15,12 @@ from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from src.api.dependencies import CurrentUser
+from src.api.dependencies import CurrentUser, get_current_user
 from src.core.config import get_settings
+from src.core.database import get_db
 from src.core.exceptions import UpstreamError
 from src.modules.access.deps import require_permission
+from src.modules.platform.ai_usage import AiUsageIn, record_usage
 
 router = APIRouter(prefix="/ai", tags=["ai-gateway"])
 _bearer = HTTPBearer(auto_error=False)
@@ -110,6 +112,29 @@ async def proxy_to_ai(
         media_type=content_type or None,
         headers=passthrough,
     )
+
+
+@router.get("/allowance")
+async def my_ai_allowance(
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Annotated[object, Depends(get_db)],
+):
+    """Whether this person can spend more AI tokens this month, and which model to use."""
+    from src.modules.fees.tenant import set_rls_bypass
+    from src.modules.platform.ai_limits import allowance_for_user
+
+    await set_rls_bypass(db, True)
+    return await allowance_for_user(db, user)
+
+
+@router.post("/usage")
+async def record_my_ai_usage(
+    body: AiUsageIn,
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Annotated[object, Depends(get_db)],
+):
+    """A signed-in person records their own AI tokens. Not a platform-admin route."""
+    return await record_usage(db, user, body)
 
 
 # One route per method so each has its own OpenAPI operationId (typed clients need unique ids).

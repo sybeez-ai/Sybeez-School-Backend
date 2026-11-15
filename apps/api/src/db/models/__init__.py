@@ -207,8 +207,10 @@ from src.db.models.whatsapp_assistant import (
 from src.db.models.admissions import AdmissionApplication, AdmissionDocument, AdmissionEnquiry, AdmissionStatusHistory
 from src.db.models.parent import Parent
 from src.db.models.platform_saas import (
+    PlatformAiLimit,
     PlatformAiSettings,
     PlatformAiUsageDaily,
+    PlatformAiUserMonth,
     PlatformAiUserUsage,
     PlatformPlan,
     PlatformSettings,
@@ -256,8 +258,10 @@ __all__ = [
     "Subscription",
     "PlatformPlan",
     "PlatformSettings",
+    "PlatformAiLimit",
     "PlatformAiSettings",
     "PlatformAiUsageDaily",
+    "PlatformAiUserMonth",
     "PlatformAiUserUsage",
     "AcademicYear",
     "Grade",

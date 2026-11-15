@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.api.dependencies import (
     CurrentUser,
     get_current_user,
+    require_console_member,
     require_platform_member,
     require_super_admin,
 )
@@ -706,7 +707,7 @@ async def get_school_trial(school_id: UUID, db: DB, _: Annotated[CurrentUser, De
 
 @router.put("/schools/{school_id}/trial", response_model=TrialOut)
 async def set_school_trial(
-    school_id: UUID, body: TrialIn, db: DB, actor: Annotated[CurrentUser, Depends(require_super_admin)]
+    school_id: UUID, body: TrialIn, db: DB, actor: Annotated[CurrentUser, Depends(require_console_member)]
 ):
     """Set or extend a school's free trial (e.g. grant another 30 days), or record that it has paid."""
     from src.modules.audit.service import AuditService  # noqa: F401

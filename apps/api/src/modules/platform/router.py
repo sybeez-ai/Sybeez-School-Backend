@@ -7,7 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import (
     CurrentUser,
-    require_admin_or_above,
+    get_current_user,
+    require_console_admin,
+    require_console_member,
     require_platform_member,
     require_roles,
     require_super_admin,
@@ -18,6 +20,7 @@ from src.modules.audit.schemas import AuditLogOut
 from src.modules.audit.service import AuditService
 from src.modules.fees.route_schemas import PlatformRouteUpdate, RouteSchoolOut
 from src.modules.fees.route_service import RouteService
+from src.modules.platform.ai_usage import AiUsageBackfillIn, AiUsageIn
 from src.modules.platform.saas_service import PlatformSaasService
 from src.modules.platform.schemas import (
     SchoolAdminLoginCreate,
@@ -132,7 +135,7 @@ async def platform_search(
 @router.get("/employees", response_model=list[PlatformEmployeeOut])
 async def list_employees(
     db: Annotated[AsyncSession, Depends(get_db)],
-    _: Annotated[CurrentUser, Depends(require_admin_or_above)],
+    _: Annotated[CurrentUser, Depends(require_console_admin)],
 ):
     return await PlatformService(db).list_employees()
 
@@ -141,7 +144,7 @@ async def list_employees(
 async def get_employee(
     employee_id: UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
-    _: Annotated[CurrentUser, Depends(require_admin_or_above)],
+    _: Annotated[CurrentUser, Depends(require_console_admin)],
 ):
     return await PlatformService(db).get_employee(employee_id)
 
@@ -150,7 +153,7 @@ async def get_employee(
 async def create_employee(
     body: PlatformEmployeeCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    actor: Annotated[CurrentUser, Depends(require_admin_or_above)],
+    actor: Annotated[CurrentUser, Depends(require_super_admin)],
 ):
     return await PlatformService(db).create_employee(body, await _actor_user(db, actor))
 
@@ -171,7 +174,7 @@ async def update_employee(
     employee_id: UUID,
     body: PlatformEmployeeUpdate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    actor: Annotated[CurrentUser, Depends(require_admin_or_above)],
+    actor: Annotated[CurrentUser, Depends(require_super_admin)],
 ):
     return await PlatformService(db).update_employee(employee_id, body, await _actor_user(db, actor))
 
@@ -219,7 +222,7 @@ async def delete_audit_log(
 @router.get("/schools", response_model=Page[SchoolOut])
 async def list_schools(
     db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_super_admin)],
+    user: Annotated[CurrentUser, Depends(require_console_member)],
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=100),
     q: str | None = Query(default=None),
@@ -274,7 +277,7 @@ async def suspend_school(
     school_id: UUID,
     body: SchoolLifecycleRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.PLATFORM_ADMIN))],
+    user: Annotated[CurrentUser, Depends(require_console_admin)],
 ):
     return await PlatformService(db).set_school_status(
         user, school_id, status=SchoolStatus.SUSPENDED.value, reason=body.reason, confirm_name=body.confirm_name
@@ -286,7 +289,7 @@ async def reactivate_school(
     school_id: UUID,
     body: SchoolLifecycleRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.PLATFORM_ADMIN))],
+    user: Annotated[CurrentUser, Depends(require_console_admin)],
 ):
     return await PlatformService(db).set_school_status(
         user, school_id, status=SchoolStatus.ACTIVE.value, reason=body.reason, confirm_name=body.confirm_name
@@ -298,7 +301,7 @@ async def archive_school(
     school_id: UUID,
     body: SchoolLifecycleRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.PLATFORM_ADMIN))],
+    user: Annotated[CurrentUser, Depends(require_console_admin)],
 ):
     return await PlatformService(db).set_school_status(
         user,
@@ -337,9 +340,9 @@ async def update_school_commercial(
     school_id: UUID,
     body: SchoolCommercialUpdate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    actor: Annotated[CurrentUser, Depends(require_super_admin)],
+    actor: Annotated[CurrentUser, Depends(require_console_admin)],
 ):
-    """Change the plan, per-student price, discount or renewal. Super admin only."""
+    """Change the plan, per-student price, discount or renewal. Sales cannot change prices."""
     from src.modules.fees.tenant import bind_tenant
     from src.modules.platform.commercial import apply_commercial
 
@@ -370,7 +373,7 @@ async def create_school_admin_login(
     school_id: UUID,
     body: SchoolAdminLoginCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    actor: Annotated[CurrentUser, Depends(require_admin_or_above)],
+    actor: Annotated[CurrentUser, Depends(require_console_member)],
 ):
     """Create a school-admin login (email + temporary password shown once) for a school."""
     return await PlatformService(db).create_school_admin_login(actor, school_id, body)
@@ -414,7 +417,7 @@ async def invite_admin(
     school_id: UUID,
     body: InvitationCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_super_admin)],
+    user: Annotated[CurrentUser, Depends(require_console_member)],
 ):
     inv, raw = await PlatformService(db).invite_school_admin(user, school_id, body)
     out = InvitationOut.model_validate(inv)
@@ -484,7 +487,7 @@ async def platform_activity(
 async def list_school_access(
     school_id: UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
-    actor: Annotated[CurrentUser, Depends(require_admin_or_above)],
+    actor: Annotated[CurrentUser, Depends(require_super_admin)],
 ):
     return await PlatformService(db).list_school_access(actor, school_id)
 
@@ -494,7 +497,7 @@ async def grant_school_access(
     school_id: UUID,
     user_id: UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
-    actor: Annotated[CurrentUser, Depends(require_admin_or_above)],
+    actor: Annotated[CurrentUser, Depends(require_super_admin)],
 ):
     await PlatformService(db).grant_school_access(actor, school_id, user_id)
     return Response(status_code=204)
@@ -505,7 +508,7 @@ async def revoke_school_access(
     school_id: UUID,
     user_id: UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
-    actor: Annotated[CurrentUser, Depends(require_admin_or_above)],
+    actor: Annotated[CurrentUser, Depends(require_super_admin)],
 ):
     await PlatformService(db).revoke_school_access(actor, school_id, user_id)
     return Response(status_code=204)
@@ -527,7 +530,7 @@ async def list_plans(
 async def create_plan(
     body: PlanCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    actor: Annotated[CurrentUser, Depends(require_roles(UserRole.PLATFORM_ADMIN))],
+    actor: Annotated[CurrentUser, Depends(require_console_admin)],
 ):
     return await PlatformSaasService(db).create_plan(actor, body)
 
@@ -546,7 +549,7 @@ async def update_plan(
     plan_id: UUID,
     body: PlanUpdate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    actor: Annotated[CurrentUser, Depends(require_roles(UserRole.PLATFORM_ADMIN))],
+    actor: Annotated[CurrentUser, Depends(require_console_admin)],
 ):
     return await PlatformSaasService(db).update_plan(actor, plan_id, body)
 
@@ -555,7 +558,7 @@ async def update_plan(
 async def delete_plan(
     plan_id: UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
-    actor: Annotated[CurrentUser, Depends(require_roles(UserRole.PLATFORM_ADMIN))],
+    actor: Annotated[CurrentUser, Depends(require_super_admin)],
 ):
     """Permanently delete a plan. Schools that used it are detached, not removed."""
     await PlatformSaasService(db).delete_plan(actor, plan_id)
@@ -630,28 +633,84 @@ async def update_settings(
 @router.get("/ai/consumption")
 async def ai_consumption_by_school(
     db: Annotated[AsyncSession, Depends(get_db)],
-    _: Annotated[CurrentUser, Depends(require_super_admin)],
+    _: Annotated[CurrentUser, Depends(require_console_member)],
 ):
-    """Token totals per school. Super admin only. No prices."""
+    """Token totals per school. No prices. Sales can view."""
     from src.modules.fees.tenant import set_rls_bypass
     from src.modules.platform.ai_consumption import list_school_tokens
 
     await set_rls_bypass(db, True)
-    return await list_school_tokens(db)
+    from src.modules.platform.ai_limits import annotate_schools
+
+    return await annotate_schools(db, await list_school_tokens(db))
 
 
 @router.get("/ai/consumption/{school_id}")
 async def ai_consumption_for_school(
     school_id: UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
-    _: Annotated[CurrentUser, Depends(require_super_admin)],
+    _: Annotated[CurrentUser, Depends(require_console_member)],
 ):
     """Students, teachers and other people in one school, with token counts only."""
     from src.modules.fees.tenant import set_rls_bypass
     from src.modules.platform.ai_consumption import school_people_tokens
 
     await set_rls_bypass(db, True)
-    return await school_people_tokens(db, school_id)
+    from src.modules.platform.ai_limits import annotate_people
+
+    return await annotate_people(db, await school_people_tokens(db, school_id))
+
+
+class AiLimitIn(BaseModel):
+    monthly_token_limit: int | None = Field(default=None, ge=0, le=2_000_000_000)
+    model: str | None = Field(default=None, max_length=120)
+
+
+@router.put("/ai/limits/schools/{school_id}")
+async def put_school_ai_limit(
+    school_id: UUID,
+    body: AiLimitIn,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_console_member)],
+):
+    """Set a school's monthly token cap and default model. Sales can do this."""
+    from src.modules.fees.tenant import set_rls_bypass
+    from src.modules.platform.ai_limits import LimitIn, save_school_limit
+
+    await set_rls_bypass(db, True)
+    return await save_school_limit(db, actor, school_id, LimitIn.model_validate(body.model_dump()))
+
+
+@router.put("/ai/limits/schools/{school_id}/groups/{group}")
+async def put_group_ai_limit(
+    school_id: UUID,
+    group: str,
+    body: AiLimitIn,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_console_member)],
+):
+    """Set the cap and model for every student, staff member, or parent, unless a person overrides it."""
+    from src.modules.fees.tenant import set_rls_bypass
+    from src.modules.platform.ai_limits import LimitIn, save_group_limit
+
+    await set_rls_bypass(db, True)
+    return await save_group_limit(db, actor, school_id, group, LimitIn.model_validate(body.model_dump()))
+
+
+@router.put("/ai/limits/schools/{school_id}/people/{user_id}")
+async def put_person_ai_limit(
+    school_id: UUID,
+    user_id: UUID,
+    body: AiLimitIn,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_console_member)],
+):
+    """Override one person's monthly token cap and model."""
+    from src.modules.fees.tenant import set_rls_bypass
+    from src.modules.platform.ai_limits import LimitIn, save_person_limit
+
+    await set_rls_bypass(db, True)
+    return await save_person_limit(db, actor, school_id, user_id, LimitIn.model_validate(body.model_dump()))
 
 
 @router.delete("/ai/consumption/{school_id}", status_code=204)
@@ -702,30 +761,81 @@ async def delete_person_ai_consumption(
     from src.modules.fees.tenant import set_rls_bypass
 
     await set_rls_bypass(db, True)
-    row = (
+    rows = (
         await db.execute(
             select(PlatformAiUserUsage).where(
                 PlatformAiUserUsage.school_id == school_id,
                 PlatformAiUserUsage.user_id == user_id,
             )
         )
-    ).scalar_one_or_none()
-    if row is None:
+    ).scalars().all()
+    if not rows:
         raise NotFoundError("Token record not found")
     person = await db.get(User, user_id)
     label = person.full_name if person else str(user_id)
-    await db.execute(sql_delete(PlatformAiUserUsage).where(PlatformAiUserUsage.id == row.id))
+    await db.execute(
+        sql_delete(PlatformAiUserUsage).where(
+            PlatformAiUserUsage.school_id == school_id,
+            PlatformAiUserUsage.user_id == user_id,
+        )
+    )
     await db.flush()
     await AuditRepository(db).write(
         action="platform.super_admin.delete",
         actor_id=actor.id,
         school_id=school_id,
         resource_type="ai_user_usage",
-        resource_id=str(row.id),
+        resource_id=str(rows[0].id),
         message=f"Super admin deleted AI token record for {label}",
-        details={"mode": "hard", "label": label, "user_id": str(user_id)},
+        details={"mode": "hard", "label": label, "user_id": str(user_id), "models": len(rows)},
     )
     return Response(status_code=204)
+
+
+@router.post("/ai/usage")
+async def post_ai_usage(
+    body: AiUsageIn,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_platform_member)],
+):
+    """Add today's tokens. Platform accounts only. School roles use POST /api/v1/ai/usage."""
+    from src.modules.platform.ai_usage import record_usage
+
+    return await record_usage(db, actor, body)
+
+
+@router.post("/ai/usage/backfill")
+async def post_ai_usage_backfill(
+    body: AiUsageBackfillIn,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_super_admin)],
+):
+    """Replay usage the AI service already recorded. Super admin only. Does not invent tokens."""
+    from src.modules.platform.ai_usage import backfill_ai_usage
+
+    return await backfill_ai_usage(db, actor, body.rows)
+
+
+@router.get("/reports/{kind}")
+async def platform_report(
+    kind: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_platform_member)],
+):
+    """CSV export. Schools, trials, renewals and AI tokens are for any platform member.
+
+    Billing, sign-ins and logs are super admin only. An empty report is a header row, not a 404.
+    """
+    from src.modules.platform.reports import assert_report_access, render_report
+
+    assert_report_access(kind, user)
+    filename = f"{kind.strip().lower()}.csv"
+    content = await render_report(db, kind)
+    return Response(
+        content=content,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/ai", response_model=PlatformAiOverview)
@@ -739,7 +849,7 @@ async def ai_overview(
 @router.get("/ai/settings", response_model=PlatformAiSettingsOut)
 async def get_ai_settings(
     db: Annotated[AsyncSession, Depends(get_db)],
-    _: Annotated[CurrentUser, Depends(require_roles(UserRole.PLATFORM_ADMIN))],
+    _: Annotated[CurrentUser, Depends(require_console_admin)],
 ):
     row = await PlatformSaasService(db).get_ai_settings()
     await db.commit()
@@ -750,7 +860,7 @@ async def get_ai_settings(
 async def update_ai_settings(
     body: PlatformAiSettingsUpdate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    actor: Annotated[CurrentUser, Depends(require_roles(UserRole.PLATFORM_ADMIN))],
+    actor: Annotated[CurrentUser, Depends(require_console_admin)],
 ):
     return await PlatformSaasService(db).update_ai_settings(actor, body)
 
@@ -758,7 +868,7 @@ async def update_ai_settings(
 @router.get("/ai/providers")
 async def ai_providers(
     db: Annotated[AsyncSession, Depends(get_db)],
-    _: Annotated[CurrentUser, Depends(require_roles(UserRole.PLATFORM_ADMIN))],
+    _: Annotated[CurrentUser, Depends(require_console_admin)],
 ):
     settings = await PlatformSaasService(db).get_ai_settings()
     await db.commit()
@@ -773,7 +883,7 @@ async def ai_providers(
 @router.get("/ai/models")
 async def ai_models(
     db: Annotated[AsyncSession, Depends(get_db)],
-    _: Annotated[CurrentUser, Depends(require_roles(UserRole.PLATFORM_ADMIN))],
+    _: Annotated[CurrentUser, Depends(require_console_admin)],
 ):
     settings = await PlatformSaasService(db).get_ai_settings()
     await db.commit()
@@ -790,6 +900,7 @@ class StaffCreateIn(BaseModel):
     password: str = Field(min_length=8, max_length=200)
     portals: list[str] = Field(default_factory=list)
     permissions: list[str] = Field(default_factory=list)
+    platform_role: str | None = None
 
 
 class StaffAccessIn(BaseModel):
@@ -839,6 +950,7 @@ async def create_staff(
         password=body.password,
         portals=body.portals,
         permissions=body.permissions,
+        platform_role=body.platform_role,
     )
     rows = await StaffService(db).list_staff()
     match = next(row for row in rows if row["id"] == staff.id)

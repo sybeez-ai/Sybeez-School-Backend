@@ -228,24 +228,83 @@ def _perm_satisfies(perms: set[str], code: str) -> bool:
     return False
 
 
-def superadmin_allowlist() -> frozenset[str]:
-    """Emails that may exercise Super Admin powers. Configurable via SUPERADMIN_EMAILS."""
-    from src.core.config import get_settings
+OWNER_EMAIL = "admin@sybeez.ai"
+SILVER_EMAIL = "silverstalan.inbaraj@sybeez.ai"
+EMPLOYEE_ROLES = frozenset({"SUPER_ADMIN", "ADMIN", "SALES"})
+# Older department labels become Admin. USER becomes Sales. Super Admin stays.
+_LEGACY_ADMIN_ROLES = frozenset(
+    {
+        "PLATFORM_ADMIN",
+        "SUPPORT",
+        "BILLING",
+        "OPERATIONS",
+        "MARKETING",
+        "ENGINEERING",
+        "PRODUCT",
+        "FINANCE",
+        "HR",
+        "ANALYST",
+    }
+)
 
-    raw = get_settings().superadmin_emails or ""
-    emails = frozenset(part.strip().lower() for part in raw.split(",") if part.strip())
-    if emails:
-        return emails
-    return frozenset({"admin@sybeez.ai", "silverstalan.inbaraj@sybeez.ai"})
+
+def superadmin_allowlist() -> frozenset[str]:
+    """The protected owner and the account that stays Super Admin. Not the only Super Admins."""
+    return frozenset({OWNER_EMAIL, SILVER_EMAIL})
+
+
+def normalize_platform_role(role: str | None) -> str:
+    """Compare platform roles independent of case, spaces, and hyphens."""
+    import re
+
+    text = (role or "").strip().upper()
+    text = re.sub(r"[\s\-]+", "_", text)
+    text = re.sub(r"_+", "_", text).strip("_")
+    return text
+
+
+def account_email(user: CurrentUser | None) -> str:
+    return (getattr(user, "email", None) or "").strip().lower()
+
+
+def is_protected_owner(email: str | None) -> bool:
+    """admin@sybeez.ai cannot be removed, demoted, or deleted by anyone else."""
+    return (email or "").strip().lower() == OWNER_EMAIL
+
+
+def console_role(user: CurrentUser) -> str | None:
+    """One of SUPER_ADMIN, ADMIN, SALES, or None when this account is not on the console.
+
+    The owner email is always Super Admin. silverstalan.inbaraj@sybeez.ai stays Super Admin.
+    Any other platform admin with role SUPER_ADMIN is a Super Admin too.
+    """
+    email = account_email(user)
+    if email == OWNER_EMAIL or email == SILVER_EMAIL:
+        return PlatformRole.SUPER_ADMIN.value
+    if not user.is_platform_admin:
+        return None
+    role = normalize_platform_role(user.platform_role)
+    if role == PlatformRole.SUPER_ADMIN.value:
+        return PlatformRole.SUPER_ADMIN.value
+    if role == PlatformRole.SALES.value:
+        return PlatformRole.SALES.value
+    if role == PlatformRole.ADMIN.value:
+        return PlatformRole.ADMIN.value
+    if role in _LEGACY_ADMIN_ROLES:
+        return PlatformRole.ADMIN.value
+    if role in {"", "USER"}:
+        return PlatformRole.SALES.value
+    return PlatformRole.ADMIN.value
 
 
 def is_super_admin(user: CurrentUser) -> bool:
-    """Super Admin requires the role and an allowlisted email. Other SUPER_ADMIN rows keep the label but not the powers."""
-    if not user.is_platform_admin:
-        return False
-    if (user.platform_role or "") != PlatformRole.SUPER_ADMIN.value:
-        return False
-    return user.email.lower() in superadmin_allowlist()
+    """Full console power, including deletes and employee access."""
+    return console_role(user) == PlatformRole.SUPER_ADMIN.value
+
+
+def is_console_admin(user: CurrentUser) -> bool:
+    """Admin or Super Admin. Sales is not included."""
+    return console_role(user) in {PlatformRole.SUPER_ADMIN.value, PlatformRole.ADMIN.value}
 
 
 def require_roles(*roles: UserRole):
@@ -291,6 +350,24 @@ def require_roles(*roles: UserRole):
 
 
 get_scoped_user = get_current_user
+
+
+def require_console_member(
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+) -> CurrentUser:
+    """Super Admin, Admin, or Sales. School roles are refused."""
+    if console_role(user) is None:
+        raise ForbiddenError("Platform console only")
+    return user
+
+
+def require_console_admin(
+    user: Annotated[CurrentUser, Depends(require_console_member)],
+) -> CurrentUser:
+    """Admin and Super Admin. Sales cannot change prices, plans, or provider settings."""
+    if console_role(user) == PlatformRole.SALES.value:
+        raise ForbiddenError("Sales cannot change plans, prices, or provider settings")
+    return user
 
 
 def require_super_admin(

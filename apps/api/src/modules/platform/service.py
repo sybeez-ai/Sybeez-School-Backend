@@ -67,15 +67,13 @@ def _name_key(name: str) -> str:
 
 
 def team_member_delete_block(actor: CurrentUser, user: User) -> str | None:
-    """Why a Super Admin cannot remove this platform team account, or None when removal is allowed."""
-    from src.api.dependencies import superadmin_allowlist
+    """Why this team account cannot be removed, or None when removal is allowed."""
+    from src.api.dependencies import is_protected_owner
 
     if user.id == actor.id:
         return "You cannot delete your own account"
-    if (user.email or "").lower() in superadmin_allowlist():
-        return "The super admin account cannot be deleted"
-    if (user.platform_role or "") == PlatformRole.SUPER_ADMIN.value:
-        return "The super admin account cannot be deleted"
+    if is_protected_owner(user.email):
+        return "The owner account cannot be removed"
     return None
 
 
@@ -815,6 +813,7 @@ class PlatformService:
 
         from src.modules.fees.tenant import set_rls_bypass
 
+        await set_rls_bypass(self.db, True)
         school = await self.repo.get_school(school_id)
         if school is None:
             raise NotFoundError("School not found")
@@ -822,7 +821,6 @@ class PlatformService:
             raise ValidationError("Type the school name exactly to confirm deletion")
         await self._assert_school_access(actor, school)
         name = school.name
-        await set_rls_bypass(self.db, True)
         await self.audit.write(
             action="platform.super_admin.delete",
             actor_id=actor.id,
@@ -1174,30 +1172,20 @@ class PlatformService:
     async def create_employee(self, data: PlatformEmployeeCreate, actor: User) -> PlatformEmployeeOut:
         from src.core.security import hash_password
 
-        if actor.platform_role not in {
-            PlatformRole.SUPER_ADMIN.value,
-            PlatformRole.ADMIN.value,
-            PlatformRole.PLATFORM_ADMIN.value,
-        }:
-            raise ForbiddenError("Admin only")
+        from src.api.dependencies import EMPLOYEE_ROLES, is_protected_owner, is_super_admin
+
+        if not is_super_admin(actor):
+            raise ForbiddenError("Only a Super Admin can grant employee access")
         email = data.email.lower().strip()
+        if is_protected_owner(email):
+            raise ForbiddenError("The owner account cannot be changed")
         existing = await self.db.execute(select(User).where(User.email == email))
         if existing.scalar_one_or_none() is not None:
             raise ConflictError("User with this email already exists")
 
-        requested_role = (data.platform_role or PlatformRole.USER.value).strip().upper()
-        allowed = {r.value for r in PlatformRole} - {PlatformRole.SUPER_ADMIN.value}
-        if requested_role not in allowed:
-            raise ConflictError("Invalid platform role")
-        if actor.platform_role in {PlatformRole.ADMIN.value, PlatformRole.PLATFORM_ADMIN.value} and requested_role not in {
-            PlatformRole.USER.value,
-            PlatformRole.SUPPORT.value,
-            PlatformRole.ANALYST.value,
-            PlatformRole.SALES.value,
-        }:
-            raise ForbiddenError("Admins can only create limited platform roles")
-        if requested_role == PlatformRole.SUPER_ADMIN.value:
-            raise ForbiddenError("Cannot create another SUPER_ADMIN via invite")
+        requested_role = (data.platform_role or PlatformRole.SALES.value).strip().upper().replace(" ", "_")
+        if requested_role not in EMPLOYEE_ROLES:
+            raise ConflictError("Role must be Super Admin, Admin, or Sales")
 
         cognito_sub: str | None = None
         password_hash: str | None = None
@@ -1248,27 +1236,18 @@ class PlatformService:
     async def update_employee(
         self, employee_id: UUID, data: PlatformEmployeeUpdate, actor: User
     ) -> PlatformEmployeeOut:
-        if actor.platform_role not in {
-            PlatformRole.SUPER_ADMIN.value,
-            PlatformRole.ADMIN.value,
-            PlatformRole.PLATFORM_ADMIN.value,
-        }:
-            raise ForbiddenError("Admin only")
+        from src.api.dependencies import EMPLOYEE_ROLES, is_protected_owner, is_super_admin
+
+        if not is_super_admin(actor):
+            raise ForbiddenError("Only a Super Admin can change employee access")
         result = await self.db.execute(
             select(User).where(User.id == employee_id, User.is_platform_admin.is_(True))
         )
         user = result.scalar_one_or_none()
         if user is None:
             raise NotFoundError("Employee not found")
-        if user.platform_role == PlatformRole.SUPER_ADMIN.value:
-            raise ForbiddenError("Cannot modify the super admin account")
-        if actor.platform_role in {PlatformRole.ADMIN.value, PlatformRole.PLATFORM_ADMIN.value} and user.platform_role not in {
-            PlatformRole.USER.value,
-            PlatformRole.SUPPORT.value,
-            PlatformRole.ANALYST.value,
-            PlatformRole.SALES.value,
-        }:
-            raise ForbiddenError("Admins can only modify limited platform roles")
+        if is_protected_owner(user.email):
+            raise ForbiddenError("The owner account cannot be changed")
         if data.full_name is not None:
             user.full_name = data.full_name.strip()
         if data.is_active is not None:
@@ -1276,12 +1255,9 @@ class PlatformService:
             if user.cognito_sub and cognito_svc.cognito_configured():
                 cognito_svc.admin_set_enabled(email=user.email, enabled=data.is_active)
         if data.platform_role is not None:
-            if actor.platform_role != PlatformRole.SUPER_ADMIN.value:
-                raise ForbiddenError("Only super admin can change platform roles")
-            next_role = data.platform_role.strip().upper()
-            allowed = {r.value for r in PlatformRole} - {PlatformRole.SUPER_ADMIN.value}
-            if next_role not in allowed:
-                raise ConflictError("Invalid platform role")
+            next_role = data.platform_role.strip().upper().replace(" ", "_")
+            if next_role not in EMPLOYEE_ROLES:
+                raise ConflictError("Role must be Super Admin, Admin, or Sales")
             user.platform_role = next_role
         await self.db.flush()
         await self.audit.write(
@@ -1308,9 +1284,13 @@ class PlatformService:
         result = await self.db.execute(
             select(User).where(User.id == employee_id, User.is_platform_admin.is_(True))
         )
+        from src.api.dependencies import is_super_admin
+
         user = result.scalar_one_or_none()
         if user is None:
             raise NotFoundError("Employee not found")
+        if not is_super_admin(actor):
+            raise ForbiddenError("Only a Super Admin can remove employee access")
         blocked = team_member_delete_block(actor, user)
         if blocked:
             raise ForbiddenError(blocked)

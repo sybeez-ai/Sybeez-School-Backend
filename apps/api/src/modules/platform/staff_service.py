@@ -76,10 +76,16 @@ class StaffService:
         password: str,
         portals: list[str],
         permissions: list[str],
+        platform_role: str | None = None,
     ) -> PlatformStaff:
+        from src.api.dependencies import EMPLOYEE_ROLES, is_protected_owner
+
         email = email.lower().strip()
-        if email == get_settings().superadmin_email.lower():
-            raise ForbiddenError("The super admin account cannot be assigned as staff")
+        if is_protected_owner(email) or email == get_settings().superadmin_email.lower():
+            raise ForbiddenError("The owner account cannot be changed")
+        role = (platform_role or "").strip().upper().replace(" ", "_") or None
+        if role is not None and role not in EMPLOYEE_ROLES:
+            raise ConflictError("Role must be Super Admin, Admin, or Sales")
         portals = _check_portals(portals)
         permissions = _check_features(permissions)
         user = await self._user_by_email(email)
@@ -88,14 +94,18 @@ class StaffService:
                 email=email,
                 full_name=full_name,
                 password_hash=hash_password(password),
-                is_platform_admin=False,
+                is_platform_admin=role is not None,
+                platform_role=role,
                 is_active=True,
                 status="ACTIVE",
             )
             self.db.add(user)
             await self.db.flush()
-        elif user.is_platform_admin:
-            raise ForbiddenError("The super admin account cannot be assigned as staff")
+        elif is_protected_owner(user.email):
+            raise ForbiddenError("The owner account cannot be changed")
+        elif role is not None:
+            user.is_platform_admin = True
+            user.platform_role = role
         existing = (
             await self.db.execute(select(PlatformStaff).where(PlatformStaff.user_id == user.id))
         ).scalar_one_or_none()

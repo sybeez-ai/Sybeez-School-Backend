@@ -8,7 +8,13 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.dependencies import CurrentUser, get_current_user, require_roles
+from src.api.dependencies import (
+    CurrentUser,
+    get_current_user,
+    require_console_admin,
+    require_console_member,
+    require_roles,
+)
 from src.core.database import get_db
 from src.core.exceptions import ForbiddenError, NotFoundError, ValidationError
 from src.db.models import (
@@ -19,7 +25,6 @@ from src.db.models import (
     SchoolMembership,
 )
 from src.modules.access.audit import write_audit
-from src.modules.access.deps import require_super_admin
 from src.modules.features import service
 from src.modules.features.catalog import FEATURES, is_known_key, label_for
 from src.shared.enums import UserRole
@@ -160,13 +165,13 @@ class RuleOut(BaseModel):
 
 
 @platform_router.get("", response_model=list[RuleOut])
-async def list_rules(db: DB, _: Annotated[CurrentUser, Depends(require_super_admin())]):
+async def list_rules(db: DB, _: Annotated[CurrentUser, Depends(require_console_member)]):
     rows = (await db.execute(select(PlatformFeatureRule))).scalars().all()
     return [RuleOut(feature_key=r.feature_key, school_id=r.school_id, enabled=r.enabled, reason=r.reason) for r in rows]
 
 
 @platform_router.get("/catalog")
-async def catalog(_: Annotated[CurrentUser, Depends(require_super_admin())]):
+async def catalog(_: Annotated[CurrentUser, Depends(require_console_member)]):
     return [{"key": k, "label": m["label"], "portal": m["portal"]} for k, m in FEATURES.items()]
 
 
@@ -206,19 +211,19 @@ async def _put_rule(db: AsyncSession, user: CurrentUser, key: str, school_id: UU
 
 
 @platform_router.put("/global/{key}", response_model=RuleOut)
-async def put_global(key: str, body: RuleIn, db: DB, user: Annotated[CurrentUser, Depends(require_super_admin())]):
+async def put_global(key: str, body: RuleIn, db: DB, user: Annotated[CurrentUser, Depends(require_console_admin)]):
     return await _put_rule(db, user, key, None, body)
 
 
 @platform_router.put("/schools/{school_id}/{key}", response_model=RuleOut)
 async def put_school_rule(
-    school_id: UUID, key: str, body: RuleIn, db: DB, user: Annotated[CurrentUser, Depends(require_super_admin())]
+    school_id: UUID, key: str, body: RuleIn, db: DB, user: Annotated[CurrentUser, Depends(require_console_member)]
 ):
     return await _put_rule(db, user, key, school_id, body)
 
 
 @platform_router.get("/schools/{school_id}", response_model=list[FeatureState])
-async def school_view(school_id: UUID, db: DB, _: Annotated[CurrentUser, Depends(require_super_admin())]):
+async def school_view(school_id: UUID, db: DB, _: Annotated[CurrentUser, Depends(require_console_member)]):
     """Effective state for a school as its admin would see it (platform locks plus the school's own switches)."""
     if await db.get(School, school_id) is None:
         raise NotFoundError("School not found")
