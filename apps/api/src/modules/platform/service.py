@@ -1335,7 +1335,6 @@ class PlatformService:
             ),
             {"uid": user_id},
         )
-        self.db.expire_all()
         status = (
             await self.db.execute(
                 text("SELECT status FROM school_memberships WHERE id = :id"),
