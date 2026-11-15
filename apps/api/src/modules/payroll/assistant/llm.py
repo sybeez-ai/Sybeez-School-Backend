@@ -5,8 +5,6 @@ from __future__ import annotations
 import json
 import logging
 
-import httpx
-
 from src.core.config import Settings, get_settings
 from src.modules.payroll.assistant.catalog import NAV_TOOLS, READ_TOOLS, WRITE_TOOLS
 from src.modules.payroll.assistant.planner import ToolCall
@@ -137,17 +135,13 @@ def reset_secret_cache() -> None:
 
 
 async def plan_with_model(messages: list[dict], resolved: dict) -> list[ToolCall] | None:
-    """Return tool calls from the model. None means the caller should use the local planner."""
+    """Return tool calls from Bedrock. None means the caller should use the local planner."""
     provider = resolved["provider"]
     if provider == "local":
         return None
-    if provider == "openai":
-        message = await _openai(messages, resolved, tools=True)
+    if provider in {"openai", "bedrock", "ai_service"}:
+        message = await _bedrock(messages, tools=True)
         return _tool_calls(message) or []
-    if provider == "ai_service":
-        message = await _ai_service(messages, resolved)
-        calls = _tool_calls(message)
-        return calls
     raise ValueError(f"Unknown payroll assistant provider {provider}")
 
 
@@ -162,10 +156,8 @@ async def phrase_with_model(messages: list[dict], outcomes: list[dict], resolved
         }
     ]
     try:
-        if resolved["provider"] == "openai":
-            message = await _openai(prompt, resolved, tools=False)
-        elif resolved["provider"] == "ai_service":
-            message = await _ai_service(prompt, resolved)
+        if resolved["provider"] in {"openai", "bedrock", "ai_service"}:
+            message = await _bedrock(prompt, tools=False)
         else:
             return fallback
     except Exception as exc:  # noqa: BLE001
@@ -175,46 +167,98 @@ async def phrase_with_model(messages: list[dict], outcomes: list[dict], resolved
     return text or fallback
 
 
-async def _openai(messages: list[dict], resolved: dict, *, tools: bool) -> dict:
-    if not resolved.get("api_key"):
-        raise ValueError("missing api key")
-    body: dict = {"model": resolved["model"], "messages": _safe_messages(messages)}
-    if tools:
-        body["tools"] = tool_specs()
-        body["tool_choice"] = "auto"
-    async with httpx.AsyncClient(timeout=httpx.Timeout(45.0, connect=10.0)) as client:
-        response = await client.post(
-            f"{resolved['base_url']}/chat/completions",
-            headers={"Authorization": f"Bearer {resolved['api_key']}", "Content-Type": "application/json"},
-            json=body,
-        )
-    if response.status_code >= 400:
-        logger.warning("payroll assistant model status %s", response.status_code)
-        raise ValueError("model request failed")
-    data = response.json()
-    return ((data.get("choices") or [{}])[0].get("message") or {})
+def _nova_model(region: str) -> str:
+    name = (region or "ap-south-1").strip()
+    if name.startswith("eu-"):
+        return "eu.amazon.nova-lite-v1:0"
+    if name.startswith("us-"):
+        return "us.amazon.nova-lite-v1:0"
+    return "apac.amazon.nova-lite-v1:0"
 
 
-async def _ai_service(messages: list[dict], resolved: dict) -> dict:
-    """Reuse the platform AI service chat route. Tool calls are honored only when that service returns them."""
+_runtime: dict[str, object] = {}
+
+
+def _runtime_client(region: str):
+    cached = _runtime.get(region)
+    if cached is None:
+        import boto3
+
+        cached = boto3.client("bedrock-runtime", region_name=region)
+        _runtime[region] = cached
+    return cached
+
+
+async def _bedrock(messages: list[dict], *, tools: bool) -> dict:
+    """Nova Lite through the ECS task role. No API key and no other model host."""
+    import asyncio
+
+    from botocore.exceptions import BotoCoreError, ClientError
+
     settings = get_settings()
-    url = f"{settings.ai_service_url.rstrip('/')}/api/v1/ai/chat"
-    headers = {"Content-Type": "application/json"}
-    token = (settings.ai_service_token or "").strip()
-    if token:
-        headers["X-Internal-Token"] = token
-    async with httpx.AsyncClient(timeout=httpx.Timeout(45.0, connect=10.0)) as client:
-        response = await client.post(url, headers=headers, json={"messages": _safe_messages(messages), "tools": tool_specs()})
-    if response.status_code >= 400:
-        logger.warning("payroll assistant ai service status %s", response.status_code)
-        raise ValueError("ai service request failed")
-    data = response.json()
-    if isinstance(data, dict) and "choices" in data:
-        return (data.get("choices") or [{}])[0].get("message") or {}
-    if isinstance(data, dict):
-        text = data.get("message") or data.get("content") or data.get("summary") or ""
-        return {"content": text}
-    return {"content": ""}
+    region = (settings.aws_region or "").strip() or "ap-south-1"
+    converse_messages = []
+    for item in _safe_messages(messages):
+        text = item["content"].strip()
+        if not text:
+            continue
+        role = "assistant" if item["role"] == "assistant" else "user"
+        converse_messages.append({"role": role, "content": [{"text": text}]})
+    if not converse_messages:
+        converse_messages = [{"role": "user", "content": [{"text": "Hello"}]}]
+    payload: dict = {
+        "modelId": _nova_model(region),
+        "messages": converse_messages,
+        "inferenceConfig": {"maxTokens": 800, "temperature": 0.2},
+    }
+    if tools:
+        specs = []
+        for spec in tool_specs():
+            function = spec.get("function") or {}
+            name = str(function.get("name") or "")
+            if not name:
+                continue
+            specs.append({
+                "toolSpec": {
+                    "name": name,
+                    "description": str(function.get("description") or name)[:600],
+                    "inputSchema": {"json": function.get("parameters") or {"type": "object", "properties": {}}},
+                }
+            })
+        if specs:
+            payload["toolConfig"] = {"tools": specs}
+
+    def call() -> dict:
+        try:
+            return _runtime_client(region).converse(**payload)
+        except ClientError as exc:
+            code = str((exc.response.get("Error") or {}).get("Code") or type(exc).__name__)
+            logger.warning("payroll bedrock failed: %s", code)
+            raise ValueError("model request failed") from None
+        except BotoCoreError as exc:
+            logger.warning("payroll bedrock failed: %s", type(exc).__name__)
+            raise ValueError("model request failed") from None
+
+    response = await asyncio.to_thread(call)
+    content = ((response.get("output") or {}).get("message") or {}).get("content") or []
+    text = " ".join(str(block.get("text") or "").strip() for block in content if block.get("text")).strip()
+    calls = []
+    for block in content:
+        tool = block.get("toolUse") or {}
+        if not tool.get("name"):
+            continue
+        calls.append({
+            "id": str(tool.get("toolUseId") or "")[:64],
+            "type": "function",
+            "function": {
+                "name": str(tool["name"])[:64],
+                "arguments": json.dumps(tool.get("input") or {}, ensure_ascii=False)[:4000],
+            },
+        })
+    message: dict = {"content": text}
+    if calls:
+        message["tool_calls"] = calls
+    return message
 
 
 def _safe_messages(messages: list[dict]) -> list[dict]:
@@ -262,10 +306,8 @@ async def map_headers_with_model(headers: list[str], allow: list[str], resolved:
         }
     ]
     try:
-        if resolved["provider"] == "openai":
-            message = await _openai(messages, resolved, tools=False)
-        elif resolved["provider"] == "ai_service":
-            message = await _ai_service(messages, resolved)
+        if resolved["provider"] in {"openai", "bedrock", "ai_service"}:
+            message = await _bedrock(messages, tools=False)
         else:
             return {}
     except Exception as exc:  # noqa: BLE001

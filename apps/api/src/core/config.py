@@ -147,8 +147,7 @@ class Settings(BaseSettings):
     virus_scan_fail_closed: bool = True
     payroll_rate_limit_per_minute: int = 120
     # Payroll assistant. local answers from the payroll tools without an outbound model.
-    # openai uses an OpenAI-compatible chat API. ai_service reuses AI_SERVICE_URL.
-    # PAYROLL_ASSISTANT_SECRET_ID may hold {"provider","api_key","model","base_url"} in Secrets Manager.
+    # Any other provider value uses Amazon Nova Lite on Bedrock through the ECS task role.
     payroll_assistant_provider: str = "local"
     payroll_assistant_model: str = "gpt-4o-mini"
     payroll_assistant_api_key: str = ""
@@ -220,12 +219,6 @@ class Settings(BaseSettings):
             problems.append("JOBS_BACKEND must be redis or sqs")
         if backend == "sqs" and not (self.sqs_queue_url or "").strip():
             problems.append("SQS_QUEUE_URL")
-        assistant = (self.payroll_assistant_provider or "local").lower()
-        if assistant == "openai" and not (
-            (self.payroll_assistant_api_key or "").strip() or (self.payroll_assistant_secret_id or "").strip()
-        ):
-            problems.append("PAYROLL_ASSISTANT_API_KEY or PAYROLL_ASSISTANT_SECRET_ID")
-
         # School session tokens are HS256. Cognito is optional unless the task
         # asks for it. The default auth mode is "both", and the region default
         # is us-east-1, so neither of those means a pool was configured.
