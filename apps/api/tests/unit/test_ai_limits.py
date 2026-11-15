@@ -4,6 +4,7 @@ from src.modules.platform.ai_limits import (
     allowance_for,
     effective_assignment,
     group_for_role,
+    recorded_models,
 )
 
 
@@ -50,6 +51,18 @@ def test_a_reached_school_cap_stops_before_a_personal_cap():
     )
     assert open_cap["allowed"] is True
     assert open_cap["model"] == "gemini"
+
+
+def test_only_configured_models_with_tokens_are_shown():
+    rows = recorded_models(
+        [
+            {"model": "qwen3.8-flash", "tokens": 120},
+            {"model": "echo", "tokens": 40},
+            {"model": "qwen3.8-flash", "tokens": 0},
+        ],
+        ["qwen3.8-flash"],
+    )
+    assert rows == [{"model": "qwen3.8-flash", "tokens": 120}]
 
 
 def test_role_groups():

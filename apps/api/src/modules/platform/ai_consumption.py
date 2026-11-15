@@ -93,9 +93,32 @@ async def list_school_tokens(db: AsyncSession) -> list[dict]:
             )
         )
     ).all()
-    return school_token_rows(
+    daily = school_token_rows(
         [(school_id, name, model, int(tokens or 0)) for school_id, name, model, tokens in rows]
     )
+    people = (
+        await db.execute(
+            select(
+                PlatformAiUserUsage.school_id,
+                School.name,
+                PlatformAiUserUsage.model,
+                func.sum(PlatformAiUserUsage.tokens),
+            )
+            .join(School, School.id == PlatformAiUserUsage.school_id)
+            .group_by(PlatformAiUserUsage.school_id, School.name, PlatformAiUserUsage.model)
+        )
+    ).all()
+    by_person = school_token_rows(
+        [(school_id, name, model, int(tokens or 0)) for school_id, name, model, tokens in people]
+    )
+    person_by_school = {row["school_id"]: row for row in by_person}
+    for row in daily:
+        extra = person_by_school.get(row["school_id"])
+        if extra is None or int(row.get("tokens") or 0) > 0:
+            continue
+        row["tokens"] = extra["tokens"]
+        row["models"] = extra["models"]
+    return daily
 
 
 async def school_people_tokens(db: AsyncSession, school_id: UUID) -> dict:
@@ -218,6 +241,15 @@ async def school_people_tokens(db: AsyncSession, school_id: UUID) -> dict:
             .group_by(PlatformAiUsageDaily.model)
         )
     ).all()
+    if school_tokens <= 0 and assigned > 0:
+        school_tokens = assigned
+        rolled: dict[str, int] = {}
+        for _user_id, model, tokens in usage_rows:
+            name = (model or "").strip()
+            if not name:
+                continue
+            rolled[name] = rolled.get(name, 0) + int(tokens or 0)
+        model_rows = list(rolled.items())
 
     def with_models(person: dict) -> dict:
         models = model_breakdown(by_user.get(person["user_id"], []))
