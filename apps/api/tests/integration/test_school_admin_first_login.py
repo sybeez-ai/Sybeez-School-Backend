@@ -48,7 +48,7 @@ async def test_create_then_first_login_then_new_password_then_relogin(api, db_se
                 from src.core.exceptions import UnauthorizedError
 
                 raise UnauthorizedError("Invalid email or password")
-            return CognitoNewPasswordChallenge(session="sess-1", email=address)
+            return CognitoNewPasswordChallenge(session="session-cognito-1", email=address)
         if password != state["permanent"]:
             from src.core.exceptions import UnauthorizedError
 
@@ -62,7 +62,7 @@ async def test_create_then_first_login_then_new_password_then_relogin(api, db_se
         )
 
     def complete_new_password(*, email, session, new_password, full_name=None):
-        assert session == "sess-1"
+        assert session == "session-cognito-1"
         state["permanent"] = new_password
         return authenticate(email, new_password)
 
