@@ -1,12 +1,14 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import CurrentUser, require_roles
 from src.core.database import get_db
-from src.core.exceptions import ForbiddenError
+from src.core.exceptions import AppError, ForbiddenError
+from src.modules.admissions.form import honeypot_tripped, missing_required, public_fields
+from src.modules.admissions.ratelimit import allow_public_enquiry
 from src.modules.admissions.schemas import (
     AdmissionApplicationCreate,
     AdmissionApplicationOut,
@@ -14,6 +16,10 @@ from src.modules.admissions.schemas import (
     AdmissionEnquiryCreate,
     AdmissionEnquiryOut,
     AdmissionEnquiryUpdate,
+    AdmissionFormOut,
+    PublicAdmissionOut,
+    PublicEnquiryIn,
+    PublicEnquiryOut,
     AdmissionStatusChangeIn,
     AdmissionStatusHistoryOut,
     AdmitApplicationIn,
@@ -23,6 +29,7 @@ from src.modules.admissions.service import AdmissionsService
 from src.modules.students.schemas import StudentOut
 from src.shared.enums import UserRole
 from src.modules.access.deps import public
+from src.modules.fees.tenant import bind_tenant, set_rls_bypass
 
 router = APIRouter(tags=["admissions"])
 
@@ -37,6 +44,88 @@ def _sid(u: CurrentUser) -> UUID:
 @public
 async def admissions_health():
     return {"module": "admissions", "status": "ok"}
+
+
+def _client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()[:64]
+    if request.client is None:
+        return ""
+    return request.client.host
+
+
+@router.get("/admissions/form", response_model=AdmissionFormOut)
+async def get_admission_form(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+):
+    from src.db.models import School
+
+    school = await db.get(School, _sid(user))
+    if school is None:
+        raise ForbiddenError("School context required")
+    return await AdmissionsService(db).form_for(school)
+
+
+@router.put("/admissions/form", response_model=AdmissionFormOut)
+async def save_admission_form(
+    body: AdmissionFormOut,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+):
+    return await AdmissionsService(db).save_form(_sid(user), body.model_dump())
+
+
+@router.get("/admissions/public/{slug}", response_model=PublicAdmissionOut)
+@public
+async def public_admission_form(slug: str, db: Annotated[AsyncSession, Depends(get_db)]):
+    service = AdmissionsService(db)
+    await set_rls_bypass(db, True)
+    school = await service.school_by_slug(slug)
+    await set_rls_bypass(db, False)
+    form = await service.form_for(school)
+    return PublicAdmissionOut(school_name=school.name, intro=form["intro"], fields=public_fields(form))
+
+
+@router.post("/admissions/public/{slug}", response_model=PublicEnquiryOut, status_code=201)
+@public
+async def public_admission_submit(
+    slug: str,
+    body: PublicEnquiryIn,
+    request: Request,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    if not await allow_public_enquiry(_client_ip(request), slug.strip().lower()):
+        raise AppError("Please wait a few minutes and try again.", code="rate_limited", status_code=429)
+    if honeypot_tripped(body.company_website):
+        return PublicEnquiryOut(ok=True)
+    service = AdmissionsService(db)
+    await set_rls_bypass(db, True)
+    school = await service.school_by_slug(slug)
+    await set_rls_bypass(db, False)
+    await bind_tenant(db, school.id, role="PUBLIC")
+    form = await service.form_for(school)
+    payload = body.model_dump()
+    missing = missing_required(form, payload)
+    if missing:
+        raise AppError(f"Add {missing[0]}.", code="incomplete", status_code=422)
+    email = (body.email or "").strip()
+    if email and ("@" not in email or email.startswith("@") or email.endswith("@")):
+        raise AppError("Enter a valid email.", code="invalid_email", status_code=422)
+    enabled = {field["key"] for field in form["fields"] if field["enabled"]}
+    await service.create_enquiry(
+        school.id,
+        None,
+        AdmissionEnquiryCreate(
+            student_name=body.student_name.strip(),
+            parent_name=body.parent_name if "parent_name" in enabled else None,
+            phone=body.phone if "phone" in enabled else None,
+            email=email or None if "email" in enabled else None,
+            notes=body.notes if "notes" in enabled else None,
+        ),
+    )
+    return PublicEnquiryOut(ok=True)
 
 
 # ── Enquiries ────────────────────────────────────────────────

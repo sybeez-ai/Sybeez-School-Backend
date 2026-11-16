@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from uuid import UUID, uuid4
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.exceptions import AppError, NotFoundError
-from src.db.models import AdmissionApplication, AdmissionEnquiry, AdmissionStatusHistory
+from src.db.models import AdmissionApplication, AdmissionEnquiry, AdmissionStatusHistory, School
+from src.modules.admissions.form import normalize_form
 from src.modules.admissions.schemas import (
     AdmissionApplicationCreate,
     AdmissionApplicationOut,
@@ -35,7 +36,9 @@ class AdmissionsService:
 
     # ── Enquiries ─────────────────────────────────────────────
 
-    async def create_enquiry(self, school_id: UUID, user_id: UUID, data: AdmissionEnquiryCreate) -> AdmissionEnquiryOut:
+    async def create_enquiry(
+        self, school_id: UUID, user_id: UUID | None, data: AdmissionEnquiryCreate
+    ) -> AdmissionEnquiryOut:
         row = AdmissionEnquiry(
             id=uuid4(),
             school_id=school_id,
@@ -334,4 +337,24 @@ class AdmissionsService:
         )
         await self.db.flush()
         return AdmissionApplicationOut.model_validate(app), student
+
+    async def school_by_slug(self, slug: str) -> School:
+        row = (
+            await self.db.execute(select(School).where(func.lower(School.slug) == slug.strip().lower()))
+        ).scalar_one_or_none()
+        if row is None or row.status != "ACTIVE":
+            raise NotFoundError("School not found")
+        return row
+
+    async def form_for(self, school: School) -> dict:
+        return normalize_form(school.admission_form if isinstance(school.admission_form, dict) else None)
+
+    async def save_form(self, school_id: UUID, raw: dict) -> dict:
+        school = await self.db.get(School, school_id)
+        if school is None:
+            raise NotFoundError("School not found")
+        form = normalize_form(raw)
+        school.admission_form = form
+        await self.db.flush()
+        return form
 
