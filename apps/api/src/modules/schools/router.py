@@ -96,3 +96,22 @@ async def upload_my_school_logo(
         details={"logo_url": school.logo_url},
     )
     return school
+
+
+@router.delete("/me/logo", response_model=SchoolProfile)
+async def clear_my_school_logo(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_school_scope)],
+):
+    if user.role != UserRole.SCHOOL_ADMIN:
+        raise ForbiddenError("School admin only")
+    school = await SchoolsService(db).clear_my_school_logo(user.school_id)
+    await AuditRepository(db).write(
+        action="school.logo.remove",
+        actor_id=user.id,
+        school_id=school.id,
+        resource_type="school",
+        resource_id=str(school.id),
+        message="School logo removed",
+    )
+    return school

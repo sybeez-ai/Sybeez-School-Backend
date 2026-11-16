@@ -442,6 +442,15 @@ async def upload_school_logo(
     return await PlatformService(db).upload_school_logo(actor, school_id, file)
 
 
+@router.delete("/schools/{school_id}/logo", response_model=SchoolOut)
+async def clear_school_logo(
+    school_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_roles(UserRole.PLATFORM_ADMIN))],
+):
+    return await PlatformService(db).clear_school_logo(actor, school_id)
+
+
 @router.post("/schools/{school_id}/invitations", response_model=InvitationOut, status_code=201)
 async def invite_admin(
     school_id: UUID,

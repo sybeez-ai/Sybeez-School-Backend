@@ -1033,25 +1033,11 @@ class PlatformService:
         await self._assert_school_access(actor, school)
         await open_platform_school(self.db, school.id)
 
-        content_type = (file.content_type or "").lower()
-        ext_map = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}
-        ext = ext_map.get(content_type)
-        if not ext:
-            raise ConflictError("Logo must be PNG, JPG, or WEBP")
+        from src.modules.schools.logo import logo_payload, store_school_logo
 
         data = await file.read()
-        if not data:
-            raise ConflictError("Empty upload")
-        if len(data) > 2_000_000:
-            raise ConflictError("Logo too large (max 2MB)")
-
-        from src.core.storage import put_object
-
-        school.logo_url = put_object(
-            key=f"school-logos/{school.id}{ext}",
-            data=data,
-            content_type=content_type,
-        )
+        content_type, ext = logo_payload(file.content_type, data)
+        school.logo_url = store_school_logo(school.id, data, content_type, ext)
         await self.db.flush()
         await self.audit.write(
             action="platform.school.logo.update",
@@ -1061,6 +1047,27 @@ class PlatformService:
             resource_id=str(school.id),
             message="School logo updated",
             details={"logo_url": school.logo_url},
+        )
+        return await self._to_school_out(school)
+
+    async def clear_school_logo(self, actor: CurrentUser, school_id: UUID) -> SchoolOut:
+        from src.modules.schools.logo import clear_school_logo
+
+        school = await self.repo.get_school(school_id)
+        if school is None:
+            raise NotFoundError("School not found")
+        await self._assert_school_access(actor, school)
+        await open_platform_school(self.db, school.id)
+        clear_school_logo(school.id)
+        school.logo_url = None
+        await self.db.flush()
+        await self.audit.write(
+            action="platform.school.logo.remove",
+            actor_id=actor.id,
+            school_id=school.id,
+            resource_type="school",
+            resource_id=str(school.id),
+            message="School logo removed",
         )
         return await self._to_school_out(school)
 

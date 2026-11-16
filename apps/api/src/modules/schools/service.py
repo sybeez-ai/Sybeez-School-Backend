@@ -4,7 +4,7 @@ from fastapi import UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.exceptions import ConflictError, ForbiddenError, NotFoundError
+from src.core.exceptions import ForbiddenError, NotFoundError
 from src.db.models import EmployeeStatutoryProfile, School, SchoolHoliday, WeeklyOffRule
 from src.modules.payroll.reports import distinct_branches
 
@@ -48,24 +48,20 @@ class SchoolsService:
         return school
 
     async def upload_my_school_logo(self, school_id: UUID | None, file: UploadFile) -> School:
+        from src.modules.schools.logo import logo_payload, store_school_logo
+
         school = await self.get_my_school(school_id)
-        content_type = (file.content_type or "").lower()
-        ext_map = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}
-        ext = ext_map.get(content_type)
-        if not ext:
-            raise ConflictError("Logo must be PNG, JPG, or WEBP")
         data = await file.read()
-        if not data:
-            raise ConflictError("Empty upload")
-        if len(data) > 2_000_000:
-            raise ConflictError("Logo too large (max 2MB)")
+        content_type, ext = logo_payload(file.content_type, data)
+        school.logo_url = store_school_logo(school.id, data, content_type, ext)
+        await self.db.flush()
+        return school
 
-        from src.core.storage import put_object
+    async def clear_my_school_logo(self, school_id: UUID | None) -> School:
+        from src.modules.schools.logo import clear_school_logo
 
-        school.logo_url = put_object(
-            key=f"school-logos/{school.id}{ext}",
-            data=data,
-            content_type=content_type,
-        )
+        school = await self.get_my_school(school_id)
+        clear_school_logo(school.id)
+        school.logo_url = None
         await self.db.flush()
         return school
