@@ -10,7 +10,7 @@ from src.modules.access.deps import public
 
 router = APIRouter(prefix="/public", tags=["public"])
 
-_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".webp": "image/webp", ".svg": "image/svg+xml"}
+_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".webp": "image/webp"}
 
 
 @router.get("/school-logos/{school_id}")
@@ -21,8 +21,9 @@ async def school_logo(school_id: UUID) -> Response:
             data = read_object(f"school-logos/{school_id}{ext}")
         except (FileNotFoundError, ValueError):
             continue
-        headers = {"Cache-Control": "public, max-age=300", "X-Content-Type-Options": "nosniff"}
-        if media_type == "image/svg+xml":
-            headers["Content-Security-Policy"] = "default-src 'none'; style-src 'unsafe-inline'"
-        return Response(content=data, media_type=media_type, headers=headers)
+        return Response(
+            content=data,
+            media_type=media_type,
+            headers={"Cache-Control": "public, max-age=300", "X-Content-Type-Options": "nosniff"},
+        )
     raise NotFoundError("Logo not found")
