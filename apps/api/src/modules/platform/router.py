@@ -1,3 +1,4 @@
+from datetime import date
 from typing import Annotated
 from uuid import UUID
 
@@ -972,6 +973,79 @@ async def list_staff(
     _: Annotated[CurrentUser, Depends(require_super_admin)],
 ):
     return [_staff_out(row) for row in await StaffService(db).list_staff()]
+
+
+@router.get("/staff/{staff_id}/profile")
+async def staff_profile(
+    staff_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _: Annotated[CurrentUser, Depends(require_console_admin)],
+):
+    """Profile for one employee. Admin and Super Admin. Sales cannot open it."""
+    from src.modules.platform.console import _read_scope
+    from src.modules.platform.employee_detail import employee_profile
+
+    await _read_scope(db)
+    return await employee_profile(db, staff_id)
+
+
+@router.get("/staff/{staff_id}/activity")
+async def staff_activity(
+    staff_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _: Annotated[CurrentUser, Depends(require_console_admin)],
+    kind: str = Query("all", pattern="^(all|sign-ins|activity)$"),
+    action: str | None = Query(None, max_length=64),
+    q: str | None = Query(None, max_length=200),
+    date_from: date | None = Query(None),
+    date_to: date | None = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(25, ge=1, le=100),
+):
+    from src.modules.platform.employee_detail import employee_activity
+
+    return await employee_activity(
+        db,
+        staff_id,
+        kind=kind,
+        action=action,
+        q=q,
+        date_from=date_from,
+        date_to=date_to,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.get("/staff/{staff_id}/activity.csv")
+async def staff_activity_csv(
+    staff_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    _: Annotated[CurrentUser, Depends(require_console_admin)],
+    kind: str = Query("all", pattern="^(all|sign-ins|activity)$"),
+    action: str | None = Query(None, max_length=64),
+    q: str | None = Query(None, max_length=200),
+    date_from: date | None = Query(None),
+    date_to: date | None = Query(None),
+):
+    from src.modules.platform.employee_detail import activity_csv, employee_activity
+
+    data = await employee_activity(
+        db,
+        staff_id,
+        kind=kind,
+        action=action,
+        q=q,
+        date_from=date_from,
+        date_to=date_to,
+        page=1,
+        page_size=5000,
+    )
+    return Response(
+        content=activity_csv(data["items"]),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="employee-activity.csv"'},
+    )
 
 
 @router.post("/staff", response_model=StaffOut, status_code=201)

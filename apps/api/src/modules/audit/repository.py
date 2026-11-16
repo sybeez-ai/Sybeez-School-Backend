@@ -34,6 +34,11 @@ class AuditRepository:
                 from src.modules.fees.tenant import open_platform_school
 
                 await open_platform_school(self.db, school_id)
+        from src.core.middleware import audit_via
+
+        via = audit_via.get()
+        if via:
+            details = {**(details or {}), "via": via}
         log = AuditLog(
             actor_id=actor_id,
             school_id=school_id,
