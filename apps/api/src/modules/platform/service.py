@@ -1482,6 +1482,43 @@ class PlatformService:
             last_login_at=user.last_login_at,
         )
 
+    async def restore_employee(self, employee_id: UUID, actor_user: User, platform_role: str | None = None) -> PlatformEmployeeOut:
+        """Turn a revoked platform login back on. The person keeps or receives a console role."""
+        from src.api.dependencies import EMPLOYEE_ROLES
+
+        result = await self.db.execute(select(User).where(User.id == employee_id))
+        user = result.scalar_one_or_none()
+        if user is None:
+            raise NotFoundError("Employee not found")
+        role = (platform_role or user.platform_role or "SALES").strip().upper().replace(" ", "_")
+        if role not in EMPLOYEE_ROLES:
+            raise ConflictError("Role must be Super Admin, Admin, or Sales")
+        user.is_active = True
+        user.status = "ACTIVE"
+        user.is_platform_admin = True
+        user.platform_role = role
+        if user.cognito_sub and cognito_svc.cognito_configured():
+            cognito_svc.admin_set_enabled(email=user.email, enabled=True)
+        await self.db.flush()
+        await self.audit.write(
+            action="platform.employee.restore",
+            actor_id=actor_user.id,
+            school_id=None,
+            resource_type="user",
+            resource_id=str(user.id),
+            message=f"Platform access restored: {user.email}",
+            details={"platform_role": role},
+        )
+        return PlatformEmployeeOut(
+            id=user.id,
+            email=user.email,
+            full_name=user.full_name,
+            platform_role=user.platform_role or role,
+            is_active=user.is_active,
+            created_at=user.created_at,
+            last_login_at=user.last_login_at,
+        )
+
     async def delete_employee(self, employee_id: UUID, actor: CurrentUser) -> None:
         """Remove a platform team login. The user row stays so audit history is not broken."""
         result = await self.db.execute(

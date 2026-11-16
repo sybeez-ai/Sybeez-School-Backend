@@ -233,6 +233,15 @@ class StaffService:
         await self._audit(actor, staff, "staff.revoke", "Revoked staff access", {"status": "REVOKED"})
         return staff
 
+    async def restore(self, actor: CurrentUser, staff_id: UUID) -> PlatformStaff:
+        staff = await self._staff(staff_id)
+        staff.status = "ACTIVE"
+        user = (await self.db.execute(select(User).where(User.id == staff.user_id))).scalar_one()
+        user.is_active = True
+        await self.db.flush()
+        await self._audit(actor, staff, "staff.restore", "Restored staff access", {"status": "ACTIVE"})
+        return staff
+
     async def list_staff(self) -> list[dict]:
         rows = (await self.db.execute(select(PlatformStaff).order_by(PlatformStaff.created_at.desc()))).scalars().all()
         out = []
