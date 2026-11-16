@@ -210,7 +210,11 @@ async def model_choices(db: AsyncSession) -> list[str]:
 
 
 def recorded_models(models: list[dict], allowed: list[str] | None) -> list[dict]:
-    """Keep models that have tokens and, when settings exist, are actually configured."""
+    """Keep Qwen and Gemini counts even when the settings row lists something else.
+
+    The settings row is not the router. A stale default of Gemini must not hide
+    qwen3.8-flash or Gemini Live usage. Other names still follow the settings list.
+    """
     allowed_set = set(allowed or [])
     kept = []
     for item in models or []:
@@ -218,7 +222,8 @@ def recorded_models(models: list[dict], allowed: list[str] | None) -> list[dict]
         name = (item.get("model") or "").strip()
         if count <= 0 or not name:
             continue
-        if allowed_set and name not in allowed_set:
+        key = name.lower()
+        if "qwen" not in key and "gemini" not in key and allowed_set and name not in allowed_set:
             continue
         kept.append({"model": name, "tokens": count})
     kept.sort(key=lambda entry: (-entry["tokens"], entry["model"]))
@@ -251,12 +256,11 @@ async def annotate_schools(db: AsyncSession, rows: list[dict]) -> dict:
         school_id = row.get("school_id")
         policy = by_school.get(school_id)
         models = recorded_models(row.get("models") or [], choices or None)
-        shown = sum(item["tokens"] for item in models)
         items.append(
             {
                 **row,
                 "models": models,
-                "tokens": shown if choices else int(row.get("tokens") or 0),
+                "tokens": int(row.get("tokens") or 0),
                 "month_tokens": month.get(school_id, 0),
                 "monthly_token_limit": None if policy is None else policy.monthly_token_limit,
                 "model": None if policy is None else policy.model,
@@ -280,8 +284,6 @@ async def annotate_people(db: AsyncSession, detail: dict) -> dict:
         effective = effective_assignment(school, group, own)
         models = recorded_models(person.get("models") or [], choices or None)
         person["models"] = models
-        if choices:
-            person["tokens"] = sum(item["tokens"] for item in models)
         person["month_tokens"] = months.get(person.get("user_id"), 0)
         person["monthly_token_limit"] = effective["monthly_token_limit"]
         person["model"] = effective["model"]
@@ -302,8 +304,6 @@ async def annotate_people(db: AsyncSession, detail: dict) -> dict:
         for name in GROUPS
     }
     detail["models"] = recorded_models(detail.get("models") or [], choices or None)
-    if choices:
-        detail["tokens"] = sum(item["tokens"] for item in detail["models"])
     detail["model_choices"] = choices
     return detail
 
