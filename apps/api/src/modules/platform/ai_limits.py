@@ -28,6 +28,7 @@ from src.db.models import (
     User,
 )
 from src.modules.audit.repository import AuditRepository
+from src.modules.platform.ai_usage import counted_tokens
 
 SCHOOL_STOP = "This school's monthly AI token limit has been reached. A platform admin can raise it."
 PERSON_STOP = "Your monthly AI token limit has been reached. A platform admin can raise it."
@@ -158,7 +159,7 @@ async def school_month_tokens(db: AsyncSession, school_id: UUID, start: date | N
         await db.execute(
             select(
                 func.coalesce(
-                    func.sum(PlatformAiUsageDaily.input_tokens + PlatformAiUsageDaily.output_tokens),
+                    func.sum(counted_tokens()),
                     0,
                 )
             ).where(
@@ -236,7 +237,7 @@ async def annotate_schools(db: AsyncSession, rows: list[dict]) -> dict:
             select(
                 PlatformAiUsageDaily.school_id,
                 func.coalesce(
-                    func.sum(PlatformAiUsageDaily.input_tokens + PlatformAiUsageDaily.output_tokens),
+                    func.sum(counted_tokens()),
                     0,
                 ),
             )

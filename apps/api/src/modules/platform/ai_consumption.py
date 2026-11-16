@@ -20,6 +20,7 @@ from src.db.models import (
     Teacher,
     User,
 )
+from src.modules.platform.ai_usage import counted_tokens
 from src.shared.enums import EnrollmentStatus, MembershipStatus, PersonStatus, UserRole
 
 
@@ -81,7 +82,7 @@ async def list_school_tokens(db: AsyncSession) -> list[dict]:
         select(
             PlatformAiUsageDaily.school_id.label("school_id"),
             PlatformAiUsageDaily.model.label("model"),
-            func.sum(PlatformAiUsageDaily.input_tokens + PlatformAiUsageDaily.output_tokens).label("tokens"),
+            func.sum(counted_tokens()).label("tokens"),
         )
         .group_by(PlatformAiUsageDaily.school_id, PlatformAiUsageDaily.model)
         .subquery()
@@ -96,6 +97,19 @@ async def list_school_tokens(db: AsyncSession) -> list[dict]:
     daily = school_token_rows(
         [(school_id, name, model, int(tokens or 0)) for school_id, name, model, tokens in rows]
     )
+    platform = (
+        await db.execute(
+            select(PlatformAiUsageDaily.model, func.sum(counted_tokens()))
+            .where(PlatformAiUsageDaily.school_id.is_(None))
+            .group_by(PlatformAiUsageDaily.model)
+        )
+    ).all()
+    if any(int(tokens or 0) > 0 for _model, tokens in platform):
+        daily.extend(
+            school_token_rows(
+                [(None, "Platform console", model, int(tokens or 0)) for model, tokens in platform]
+            )
+        )
     people = (
         await db.execute(
             select(
@@ -131,7 +145,7 @@ async def school_people_tokens(db: AsyncSession, school_id: UUID) -> dict:
     school_tokens = int(
         (
             await db.execute(
-                select(func.coalesce(func.sum(PlatformAiUsageDaily.input_tokens + PlatformAiUsageDaily.output_tokens), 0)).where(
+                select(func.coalesce(func.sum(counted_tokens()), 0)).where(
                     PlatformAiUsageDaily.school_id == school_id
                 )
             )
@@ -235,7 +249,7 @@ async def school_people_tokens(db: AsyncSession, school_id: UUID) -> dict:
         await db.execute(
             select(
                 PlatformAiUsageDaily.model,
-                func.sum(PlatformAiUsageDaily.input_tokens + PlatformAiUsageDaily.output_tokens),
+                func.sum(counted_tokens()),
             )
             .where(PlatformAiUsageDaily.school_id == school_id)
             .group_by(PlatformAiUsageDaily.model)

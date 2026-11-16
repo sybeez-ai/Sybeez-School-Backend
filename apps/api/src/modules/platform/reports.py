@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.api.dependencies import CurrentUser, is_super_admin
 from src.core.exceptions import ForbiddenError, NotFoundError
 from src.db.models import AuditLog, PlatformAiUsageDaily, PlatformAiUserUsage, School, Subscription, User
+from src.modules.platform.ai_usage import counted_tokens
 from src.modules.platform.console import category_of
 
 MEMBER_REPORTS = frozenset({"schools", "trials", "renewals", "ai-tokens"})
@@ -140,7 +141,7 @@ async def _ai_tokens(db: AsyncSession) -> list[dict]:
             select(
                 School.name,
                 PlatformAiUsageDaily.model,
-                func.sum(PlatformAiUsageDaily.input_tokens + PlatformAiUsageDaily.output_tokens),
+                func.sum(counted_tokens()),
             )
             .outerjoin(School, School.id == PlatformAiUsageDaily.school_id)
             .group_by(School.name, PlatformAiUsageDaily.model)
