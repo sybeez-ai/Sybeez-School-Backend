@@ -148,7 +148,14 @@ def authenticate(email: str, password: str) -> CognitoAuthResult | CognitoNewPas
             resp = None
 
     if resp is None:
-        raise UnauthorizedError("Invalid email or password") from last_exc
+        code = ""
+        if isinstance(last_exc, ClientError):
+            code = last_exc.response.get("Error", {}).get("Code", "") or ""
+        # The message stays generic. The code is for the platform login log only.
+        raise UnauthorizedError(
+            "Invalid email or password",
+            code=f"cognito_{code.lower()}" if code else "unauthorized",
+        ) from last_exc
 
     if resp.get("ChallengeName") == "NEW_PASSWORD_REQUIRED":
         session = resp.get("Session") or ""
@@ -626,6 +633,31 @@ def groups_for_roles(roles) -> set[str]:
     return {GROUP_FOR_ROLE[str(r)] for r in roles if str(r) in GROUP_FOR_ROLE}
 
 
+def sync_school_identity(*, email: str, school_id: str, role: str) -> None:
+    """Store the school and role on the pool user when the pool defines those attributes.
+
+    Groups are updated either way. A pool without custom:school_id still provisions the login.
+    """
+    if not cognito_configured():
+        return
+    s = get_settings()
+    username = _resolve_username(email)
+    try:
+        _client().admin_update_user_attributes(
+            UserPoolId=s.cognito_user_pool_id,
+            Username=username,
+            UserAttributes=[
+                {"Name": "custom:school_id", "Value": str(school_id)},
+                {"Name": "custom:role", "Value": str(role)},
+            ],
+        )
+    except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code", "")
+        if code not in {"InvalidParameterException", "UserNotFoundException"}:
+            logger.warning("Cognito school attributes not saved (%s)", code)
+    sync_user_groups(email=email, roles={role})
+
+
 def sync_user_groups(*, email: str, roles) -> bool:
     """Make the pool user's managed groups equal the groups for ``roles``. Best effort: never raises.
 
@@ -651,7 +683,17 @@ def sync_user_groups(*, email: str, roles) -> bool:
             if not token:
                 break
         for g in sorted(want - have):
-            client.admin_add_user_to_group(UserPoolId=s.cognito_user_pool_id, Username=username, GroupName=g)
+            try:
+                client.admin_add_user_to_group(UserPoolId=s.cognito_user_pool_id, Username=username, GroupName=g)
+            except ClientError as exc:
+                if exc.response.get("Error", {}).get("Code") != "ResourceNotFoundException":
+                    raise
+                client.create_group(
+                    UserPoolId=s.cognito_user_pool_id,
+                    GroupName=g,
+                    Description="Sybeez school role",
+                )
+                client.admin_add_user_to_group(UserPoolId=s.cognito_user_pool_id, Username=username, GroupName=g)
         for g in sorted((have & MANAGED_GROUPS) - want):
             client.admin_remove_user_from_group(UserPoolId=s.cognito_user_pool_id, Username=username, GroupName=g)
         return True

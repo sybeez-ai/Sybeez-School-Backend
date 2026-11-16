@@ -207,6 +207,7 @@ async def create_school_user(
         # An admin-issued password is temporary: the person must choose their own at first login.
         user.must_change_password = True
     await sync_cognito_groups(db, user)
+    cognito_svc.sync_school_identity(email=user.email, school_id=str(school_id), role=role.value)
     return user, membership, temp
 
 
@@ -223,6 +224,10 @@ async def issue_temporary_password(
 
     from src.db.models import RefreshToken
 
+    # One reset at a time. A second click waits, then replaces the password.
+    # The screen must show only the password from the request that finished last.
+    await db.execute(select(User).where(User.id == user.id).with_for_update())
+    await db.refresh(user)
     temp = temporary_password or cognito_svc.generate_temporary_password()
     done = False
     if cognito_svc.cognito_configured() and user.cognito_sub:
