@@ -167,6 +167,22 @@ async def create_employee(
     return await PlatformService(db).create_employee(body, await _actor_user(db, actor))
 
 
+class EmployeeRestoreIn(BaseModel):
+    platform_role: str | None = None
+
+
+@router.post("/employees/{employee_id}/restore", response_model=PlatformEmployeeOut)
+async def restore_employee(
+    employee_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_super_admin)],
+    body: EmployeeRestoreIn | None = None,
+):
+    return await PlatformService(db).restore_employee(
+        employee_id, await _actor_user(db, actor), (body.platform_role if body else None)
+    )
+
+
 @router.delete("/employees/{employee_id}", status_code=204)
 async def delete_employee(
     employee_id: UUID,
@@ -986,6 +1002,17 @@ async def set_staff_access(
     user: Annotated[CurrentUser, Depends(require_super_admin)],
 ):
     await StaffService(db).set_access(user, staff_id, portals=body.portals, permissions=body.permissions)
+    rows = await StaffService(db).list_staff()
+    return _staff_out(next(row for row in rows if row["id"] == staff_id))
+
+
+@router.post("/staff/{staff_id}/restore", response_model=StaffOut)
+async def restore_staff(
+    staff_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_super_admin)],
+):
+    await StaffService(db).restore(user, staff_id)
     rows = await StaffService(db).list_staff()
     return _staff_out(next(row for row in rows if row["id"] == staff_id))
 
