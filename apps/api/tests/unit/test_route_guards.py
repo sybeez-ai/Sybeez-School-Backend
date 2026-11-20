@@ -81,6 +81,8 @@ def test_public_routes_are_only_health_and_auth_entry():
     assert public == [
         "/",
         "/api/v1/admissions/health",
+        "/api/v1/admissions/public/{slug}",
+        "/api/v1/admissions/public/{slug}",
         "/api/v1/ai-reports/health",
         "/api/v1/assignments/health",
         "/api/v1/attendance/health",
