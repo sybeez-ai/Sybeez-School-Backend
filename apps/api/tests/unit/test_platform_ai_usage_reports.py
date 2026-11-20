@@ -98,6 +98,27 @@ def test_normalize_usage_keeps_posted_tokens_and_defaults_the_caller():
     assert posted.model == "qwen"
     assert posted.tokens == 1
 
+    exact = normalize_usage(
+        AiUsageIn(
+            role="SUPER_ADMIN",
+            model="qwen3.8-flash",
+            provider="qwen",
+            input_tokens=128,
+            output_tokens=37,
+            total_tokens=165,
+            input_audio_tokens=0,
+            output_audio_tokens=0,
+        ),
+        _user(school_id=None, role=UserRole.PLATFORM_ADMIN, is_platform_admin=True),
+    )
+    assert exact.input_tokens == 128
+    assert exact.output_tokens == 37
+    assert exact.total_tokens == 165
+    assert exact.tokens == 165
+    assert exact.school_id is None
+    assert exact.role == "SUPER_ADMIN"
+    assert exact.model == "qwen3.8-flash"
+
 
 def test_school_user_cannot_record_someone_elses_usage():
     school_id = uuid4()

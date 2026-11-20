@@ -63,6 +63,11 @@ def test_only_configured_models_with_tokens_are_shown():
         ["qwen3.8-flash"],
     )
     assert rows == [{"model": "qwen3.8-flash", "tokens": 120}]
+    kept = recorded_models(
+        [{"model": "gemini-3.8-live", "tokens": 15}, {"model": "echo", "tokens": 4}],
+        ["qwen3.8-flash"],
+    )
+    assert kept == [{"model": "gemini-3.8-live", "tokens": 15}]
 
 
 def test_role_groups():

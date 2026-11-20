@@ -84,20 +84,25 @@ class PlatformAiUsageDaily(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     requests: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
+    input_audio_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
+    input_text_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
+    output_audio_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
+    output_text_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
     estimated_cost: Mapped[float] = mapped_column(Numeric(12, 6), nullable=False, default=0)
     errors: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     safety_blocks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
 
 class PlatformAiUserUsage(Base, UUIDPrimaryKeyMixin, TimestampMixin):
-    """Tokens recorded for one person, one school, and one model. School totals stay on the daily table."""
+    """Tokens for one person and one model. A null school is the Platform console."""
 
     __tablename__ = "platform_ai_user_usage"
     __table_args__ = (
         UniqueConstraint("school_id", "user_id", "model", name="uq_ai_user_usage_school_user_model"),
     )
 
-    school_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    school_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
     model: Mapped[str] = mapped_column(String(120), nullable=False, default="unknown", server_default="unknown")
     tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)

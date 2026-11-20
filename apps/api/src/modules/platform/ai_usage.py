@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
-from sqlalchemy import func, text
+from sqlalchemy import case, func, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,6 +28,11 @@ class AiUsageIn(BaseModel):
     capability: str = Field(default="CHAT", max_length=64)
     input_tokens: int = Field(default=0, ge=0, le=2_000_000_000)
     output_tokens: int = Field(default=0, ge=0, le=2_000_000_000)
+    total_tokens: int = Field(default=0, ge=0, le=2_000_000_000)
+    input_audio_tokens: int = Field(default=0, ge=0, le=2_000_000_000)
+    input_text_tokens: int = Field(default=0, ge=0, le=2_000_000_000)
+    output_audio_tokens: int = Field(default=0, ge=0, le=2_000_000_000)
+    output_text_tokens: int = Field(default=0, ge=0, le=2_000_000_000)
 
 
 class AiUsageBackfillIn(BaseModel):
@@ -44,10 +49,26 @@ class UsageWrite:
     capability: str
     input_tokens: int
     output_tokens: int
+    total_tokens: int = 0
+    input_audio_tokens: int = 0
+    input_text_tokens: int = 0
+    output_audio_tokens: int = 0
+    output_text_tokens: int = 0
 
     @property
     def tokens(self) -> int:
+        """Provider total when the response included one. Otherwise prompt plus completion."""
+        if self.total_tokens > 0:
+            return self.total_tokens
         return self.input_tokens + self.output_tokens
+
+
+def counted_tokens():
+    """Daily display and caps use the provider total. Older rows, stored before that column, keep input plus output."""
+    return case(
+        (PlatformAiUsageDaily.total_tokens > 0, PlatformAiUsageDaily.total_tokens),
+        else_=PlatformAiUsageDaily.input_tokens + PlatformAiUsageDaily.output_tokens,
+    )
 
 
 def usage_day(now: datetime | None = None) -> datetime:
@@ -86,6 +107,11 @@ def normalize_usage(row: AiUsageIn, actor: CurrentUser) -> UsageWrite:
         capability=_clip(row.capability, "CHAT", 64),
         input_tokens=int(row.input_tokens or 0),
         output_tokens=int(row.output_tokens or 0),
+        total_tokens=int(row.total_tokens or 0),
+        input_audio_tokens=int(row.input_audio_tokens or 0),
+        input_text_tokens=int(row.input_text_tokens or 0),
+        output_audio_tokens=int(row.output_audio_tokens or 0),
+        output_text_tokens=int(row.output_text_tokens or 0),
     )
 
 
@@ -104,6 +130,11 @@ async def apply_usage(db: AsyncSession, actor: CurrentUser, row: AiUsageIn, *, w
         requests=1,
         input_tokens=usage.input_tokens,
         output_tokens=usage.output_tokens,
+        total_tokens=usage.tokens,
+        input_audio_tokens=usage.input_audio_tokens,
+        input_text_tokens=usage.input_text_tokens,
+        output_audio_tokens=usage.output_audio_tokens,
+        output_text_tokens=usage.output_text_tokens,
         estimated_cost=0,
         errors=0,
         safety_blocks=0,
@@ -112,6 +143,11 @@ async def apply_usage(db: AsyncSession, actor: CurrentUser, row: AiUsageIn, *, w
         "requests": PlatformAiUsageDaily.requests + daily.excluded.requests,
         "input_tokens": PlatformAiUsageDaily.input_tokens + daily.excluded.input_tokens,
         "output_tokens": PlatformAiUsageDaily.output_tokens + daily.excluded.output_tokens,
+        "total_tokens": PlatformAiUsageDaily.total_tokens + daily.excluded.total_tokens,
+        "input_audio_tokens": PlatformAiUsageDaily.input_audio_tokens + daily.excluded.input_audio_tokens,
+        "input_text_tokens": PlatformAiUsageDaily.input_text_tokens + daily.excluded.input_text_tokens,
+        "output_audio_tokens": PlatformAiUsageDaily.output_audio_tokens + daily.excluded.output_audio_tokens,
+        "output_text_tokens": PlatformAiUsageDaily.output_text_tokens + daily.excluded.output_text_tokens,
         "updated_at": func.now(),
     }
     if usage.school_id is None:
@@ -124,22 +160,30 @@ async def apply_usage(db: AsyncSession, actor: CurrentUser, row: AiUsageIn, *, w
         daily = daily.on_conflict_do_update(constraint="uq_ai_usage_daily", set_=added)
     await db.execute(daily)
 
-    if usage.school_id is not None:
-        person = pg_insert(PlatformAiUserUsage).values(
-            id=uuid4(),
-            school_id=usage.school_id,
-            user_id=usage.user_id,
-            model=usage.model,
-            tokens=usage.tokens,
+    person = pg_insert(PlatformAiUserUsage).values(
+        id=uuid4(),
+        school_id=usage.school_id,
+        user_id=usage.user_id,
+        model=usage.model,
+        tokens=usage.tokens,
+    )
+    person_added = {
+        "tokens": PlatformAiUserUsage.tokens + person.excluded.tokens,
+        "updated_at": func.now(),
+    }
+    if usage.school_id is None:
+        person = person.on_conflict_do_update(
+            index_elements=["user_id", "model"],
+            index_where=text("school_id IS NULL"),
+            set_=person_added,
         )
+    else:
         person = person.on_conflict_do_update(
             constraint="uq_ai_user_usage_school_user_model",
-            set_={
-                "tokens": PlatformAiUserUsage.tokens + person.excluded.tokens,
-                "updated_at": func.now(),
-            },
+            set_=person_added,
         )
-        await db.execute(person)
+    await db.execute(person)
+    if usage.school_id is not None:
         from src.modules.platform.ai_limits import add_person_month
 
         await add_person_month(
