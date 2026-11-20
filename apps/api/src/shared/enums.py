@@ -5,15 +5,22 @@ from enum import StrEnum
 
 class UserRole(StrEnum):
     PLATFORM_ADMIN = "PLATFORM_ADMIN"
+    PLATFORM_STAFF = "PLATFORM_STAFF"
     SCHOOL_ADMIN = "SCHOOL_ADMIN"
     PAYROLL_ADMIN = "PAYROLL_ADMIN"
     HR_MANAGER = "HR_MANAGER"
     ACCOUNTANT = "ACCOUNTANT"
+    CASHIER = "CASHIER"
     PAYROLL_APPROVER = "PAYROLL_APPROVER"
     AUDITOR = "AUDITOR"
     TEACHER = "TEACHER"
     STUDENT = "STUDENT"
     PARENT = "PARENT"
+    # Platform-branch role names. Release payroll and finance use the roles above.
+    FINANCE = "FINANCE"
+    HR = "HR"
+    # Non-teaching employee: HR self-service only (own leave, letters, and files).
+    STAFF = "STAFF"
 
 
 class PlatformRole(StrEnum):
@@ -166,6 +173,7 @@ class NotificationChannel(StrEnum):
 class NotificationType(StrEnum):
     ATTENDANCE_ABSENCE = "ATTENDANCE_ABSENCE"
     ATTENDANCE_LATE = "ATTENDANCE_LATE"
+    ATTENDANCE_WEEKLY = "ATTENDANCE_WEEKLY"
     LEAVE_SUBMITTED = "LEAVE_SUBMITTED"
     LEAVE_APPROVED = "LEAVE_APPROVED"
     LEAVE_REJECTED = "LEAVE_REJECTED"
@@ -174,6 +182,10 @@ class NotificationType(StrEnum):
     HOMEWORK_RETURNED = "HOMEWORK_RETURNED"
     EXAM_PUBLISHED = "EXAM_PUBLISHED"
     RESULT_PUBLISHED = "RESULT_PUBLISHED"
+    ONLINE_TEST_PUBLISHED = "ONLINE_TEST_PUBLISHED"
+    ONLINE_TEST_REMINDER = "ONLINE_TEST_REMINDER"
+    ONLINE_TEST_RESULT = "ONLINE_TEST_RESULT"
+    ONLINE_TEST_FLAGGED = "ONLINE_TEST_FLAGGED"
     ANNOUNCEMENT = "ANNOUNCEMENT"
     MESSAGE_RECEIVED = "MESSAGE_RECEIVED"
     SYSTEM = "SYSTEM"
@@ -185,6 +197,8 @@ class NotificationType(StrEnum):
     FEE_RECEIPT_READY = "FEE_RECEIPT_READY"
     FEE_REFUND = "FEE_REFUND"
     PAYSLIP_PUBLISHED = "PAYSLIP_PUBLISHED"
+    PAY_RUN_APPROVED = "PAY_RUN_APPROVED"
+    LOP_UPDATE = "LOP_UPDATE"
 
 
 class NotificationPriority(StrEnum):
@@ -266,8 +280,11 @@ class PaymentMethod(StrEnum):
     CASH = "CASH"
     BANK_TRANSFER = "BANK_TRANSFER"
     CHEQUE = "CHEQUE"
+    DD = "DD"
     UPI = "UPI"
     CARD = "CARD"
+    NEFT = "NEFT"
+    SPLIT = "SPLIT"
     OTHER = "OTHER"
 
 
@@ -279,5 +296,78 @@ class LateFeeCalcType(StrEnum):
 
 class RefundStatus(StrEnum):
     PENDING = "PENDING"
+    PENDING_APPROVAL = "PENDING_APPROVAL"
+    PROCESSING = "PROCESSING"
     SUCCESS = "SUCCESS"
     FAILED = "FAILED"
+    REJECTED = "REJECTED"
+
+
+class StudentFeeCategory(StrEnum):
+    GENERAL = "GENERAL"
+    RTE = "RTE"
+    STAFF_WARD = "STAFF_WARD"
+    SIBLING = "SIBLING"
+
+
+class ConcessionRuleType(StrEnum):
+    SIBLING = "SIBLING"
+    STAFF_WARD = "STAFF_WARD"
+    RTE = "RTE"
+    SCHOLARSHIP = "SCHOLARSHIP"
+    ADHOC = "ADHOC"
+
+
+class ConcessionValueType(StrEnum):
+    PERCENT = "PERCENT"
+    FLAT = "FLAT"
+
+
+class ApprovalStatus(StrEnum):
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+
+
+class ReceiptStatus(StrEnum):
+    ACTIVE = "ACTIVE"
+    CANCELLED = "CANCELLED"
+    REVERSED = "REVERSED"
+    PARTIALLY_REVERSED = "PARTIALLY_REVERSED"
+
+
+class InstrumentStatus(StrEnum):
+    RECEIVED = "RECEIVED"
+    DEPOSITED = "DEPOSITED"
+    CLEARED = "CLEARED"
+    BOUNCED = "BOUNCED"
+    SETTLED = "SETTLED"
+
+
+class LedgerEntryType(StrEnum):
+    DEMAND = "DEMAND"
+    PAYMENT = "PAYMENT"
+    CONCESSION = "CONCESSION"
+    FINE = "FINE"
+    WAIVER = "WAIVER"
+    REVERSAL = "REVERSAL"
+    REFUND = "REFUND"
+    BOUNCE = "BOUNCE"
+
+
+class FinancialYearStatus(StrEnum):
+    OPEN = "OPEN"
+    CLOSED = "CLOSED"
+
+
+class DayCloseStatus(StrEnum):
+    SUBMITTED = "SUBMITTED"
+    VERIFIED = "VERIFIED"
+    REJECTED = "REJECTED"
+
+
+class FinanceApprovalType(StrEnum):
+    CONCESSION = "CONCESSION"
+    REFUND = "REFUND"
+    RECEIPT_CANCEL = "RECEIPT_CANCEL"
+    FINE_WAIVER = "FINE_WAIVER"

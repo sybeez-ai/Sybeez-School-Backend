@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
 
 from datetime import date, datetime, time
 
@@ -54,10 +55,9 @@ SUPER_ADMIN_COGNITO_SUB = "245844c8-d0e1-7029-ecfe-acbcc636dae9"
 # Local-password demo accounts — used by frontend Dev login + manual credential login
 DEV_PASSWORD = "DevLogin123!"
 
-# Primary Dev Login Super Admin (local password — keep in sync with frontend DEV_LOGIN_ACCOUNTS)
+# Primary Dev Login Super Admin. The password is DEMO_PLATFORM_PASSWORD, never a literal.
 PLATFORM_SUPER_ADMIN_EMAIL = "admin@sybeez.ai"
 PLATFORM_SUPER_ADMIN_NAME = "Sybeez Super Admin"
-PLATFORM_SUPER_ADMIN_PASSWORD = "Silver@1999"
 
 PLATFORM_DEV_EMAIL = "platform.dev@sybeez.ai"
 PLATFORM_DEV_NAME = "Sybeez Platform Dev"
@@ -68,7 +68,7 @@ SCHOOL_ADMIN_PASSWORD = DEV_PASSWORD  # DevLogin123! — same as other portal De
 TEACHER_EMAIL = "teacher@greenvalley.edu"
 STUDENT_EMAIL = "student@greenvalley.edu"
 DEMO_STUDENT_EMAIL = "demo@sybeez.ai"
-DEMO_STUDENT_PASSWORD = "Silver@1999"
+DEMO_STUDENT_PASSWORD = DEV_PASSWORD
 PARENT_EMAIL = "parent@greenvalley.edu"
 
 APP_ENV = (os.getenv("APP_ENV") or "development").lower().strip()
@@ -78,6 +78,10 @@ def _assert_safe_to_seed() -> None:
     # Seeding creates known-password accounts intended for local development only.
     if APP_ENV == "production":
         raise RuntimeError("Refusing to seed in APP_ENV=production. Use migrations + real provisioning.")
+
+
+def _enabled() -> bool:
+    return os.environ.get("SEED_DEMO_DATA", "").strip().lower() in {"1", "true", "yes"}
 
 
 async def ensure_schema() -> None:
@@ -185,6 +189,16 @@ async def ensure_membership(db, *, user_id, school_id, role: UserRole) -> School
 
 
 async def seed() -> None:
+    global SCHOOL_ADMIN_PASSWORD
+    if not _enabled():
+        raise SystemExit("Refusing to seed without SEED_DEMO_DATA=true")
+    platform_password = os.environ.get("DEMO_PLATFORM_PASSWORD", "").strip()
+    school_password = os.environ.get("DEMO_SCHOOL_ADMIN_PASSWORD", "").strip()
+    if not platform_password:
+        raise SystemExit("DEMO_PLATFORM_PASSWORD is required")
+    if not school_password:
+        raise SystemExit("DEMO_SCHOOL_ADMIN_PASSWORD is required")
+    SCHOOL_ADMIN_PASSWORD = school_password
     _assert_safe_to_seed()
     await ensure_schema()
 
@@ -196,7 +210,7 @@ async def seed() -> None:
             db,
             email=PLATFORM_SUPER_ADMIN_EMAIL,
             full_name=PLATFORM_SUPER_ADMIN_NAME,
-            password=PLATFORM_SUPER_ADMIN_PASSWORD,
+            password=platform_password,
             is_platform_admin=True,
             platform_role=PlatformRole.SUPER_ADMIN.value,
         )
@@ -581,7 +595,7 @@ async def seed() -> None:
         print(f"  School              : Green Valley School ({SCHOOL_SLUG})")
         print(f"  School id           : {school.id}")
         if APP_ENV == "development":
-            print(f"  Platform Super Admin: {PLATFORM_SUPER_ADMIN_EMAIL} / {PLATFORM_SUPER_ADMIN_PASSWORD}")
+            print(f"  Platform Super Admin: {PLATFORM_SUPER_ADMIN_EMAIL}")
             print(f"  Platform (dev)      : {PLATFORM_DEV_EMAIL} / {DEV_PASSWORD}")
             print(f"  School admin        : {SCHOOL_ADMIN_EMAIL} / {SCHOOL_ADMIN_PASSWORD}")
             print(f"  Teacher             : {TEACHER_EMAIL} / {DEV_PASSWORD}")
@@ -591,4 +605,8 @@ async def seed() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(seed())
+    try:
+        asyncio.run(seed())
+    except SystemExit as exc:
+        print(exc, file=sys.stderr)
+        raise

@@ -50,6 +50,9 @@ class SyllabusTopic(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
     __tablename__ = "syllabus_topics"
 
+    school_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     syllabus_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("syllabus.id", ondelete="CASCADE"), nullable=False, index=True
     )

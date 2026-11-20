@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import Boolean, DateTime, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, Date, DateTime, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -84,6 +84,51 @@ class PlatformAiUsageDaily(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     requests: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
+    input_audio_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
+    input_text_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
+    output_audio_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
+    output_text_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
     estimated_cost: Mapped[float] = mapped_column(Numeric(12, 6), nullable=False, default=0)
     errors: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     safety_blocks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
+class PlatformAiUserUsage(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """Tokens for one person and one model. A null school is the Platform console."""
+
+    __tablename__ = "platform_ai_user_usage"
+    __table_args__ = (
+        UniqueConstraint("school_id", "user_id", "model", name="uq_ai_user_usage_school_user_model"),
+    )
+
+    school_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    model: Mapped[str] = mapped_column(String(120), nullable=False, default="unknown", server_default="unknown")
+    tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+
+
+class PlatformAiLimit(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """Monthly token cap and assigned model for a school, a role group, or one person."""
+
+    __tablename__ = "platform_ai_limits"
+
+    school_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    scope: Mapped[str] = mapped_column(String(16), nullable=False)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
+    monthly_token_limit: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    model: Mapped[str | None] = mapped_column(String(120), nullable=True)
+
+
+class PlatformAiUserMonth(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """Tokens one person used in one school during a calendar month (UTC)."""
+
+    __tablename__ = "platform_ai_user_month"
+    __table_args__ = (
+        UniqueConstraint("school_id", "user_id", "month_start", name="uq_ai_user_month"),
+    )
+
+    school_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    month_start: Mapped[date] = mapped_column(Date, nullable=False)
+    tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)

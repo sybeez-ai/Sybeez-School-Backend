@@ -1,7 +1,7 @@
 import uuid
 
-from sqlalchemy import ForeignKey, String, Text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import ForeignKey, Integer, String, Text, text
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -9,8 +9,16 @@ from src.shared.enums import SchoolStatus
 
 
 class School(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """One row per school. The database assigns `id` when the portal inserts a school."""
+
     __tablename__ = "schools"
 
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=text("gen_random_uuid()"),
+    )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     slug: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True)
     code: Mapped[str | None] = mapped_column(String(32), unique=True, nullable=True)
@@ -25,7 +33,11 @@ class School(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     website: Mapped[str | None] = mapped_column(Text, nullable=True)
     timezone: Mapped[str] = mapped_column(String(64), default="UTC", nullable=False)
     currency: Mapped[str] = mapped_column(String(8), default="INR", nullable=False)
+    # Empty means "use the platform default" when a free trial is started.
+    trial_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     logo_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Public enquiry form: intro text and which of the fixed fields are shown.
+    admission_form: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_by_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),

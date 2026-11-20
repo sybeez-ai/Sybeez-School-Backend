@@ -1,20 +1,23 @@
 import re
 import secrets
 from datetime import timedelta
-from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import UploadFile
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.exceptions import ConflictError, ForbiddenError, NotFoundError
+from src.core.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationError
 from src.api.dependencies import CurrentUser
+from src.core.config import get_settings
 from src.db.models import (
+    Employee,
+    Enrollment,
     Invitation,
     Parent,
     PlatformSchoolAccess,
+    PlatformStaff,
     School,
     SchoolMembership,
     Student,
@@ -24,9 +27,12 @@ from src.db.models import (
 )
 from src.modules.auth import cognito as cognito_svc
 from src.modules.auth.repository import hash_token
+from src.modules.fees.tenant import bind_tenant, open_platform_school
 from src.modules.audit.repository import AuditRepository
 from src.modules.platform.repository import PlatformRepository
 from src.modules.platform.schemas import (
+    SchoolAdminLoginCreate,
+    SchoolAdminLoginOut,
     InvitationCreate,
     PlatformEmployeeCreate,
     PlatformEmployeeOut,
@@ -37,13 +43,38 @@ from src.modules.platform.schemas import (
     SchoolUpdate,
 )
 from src.modules.schools.provisioning import create_school_user
-from src.shared.enums import InvitationStatus, MembershipStatus, PlatformRole, SchoolStatus, SubscriptionStatus, UserRole
+from src.shared.enums import (
+    EnrollmentStatus,
+    InvitationStatus,
+    MembershipStatus,
+    PersonStatus,
+    PlatformRole,
+    SchoolStatus,
+    SubscriptionStatus,
+    UserRole,
+)
 from src.shared.utils import generate_token, utcnow
 
 
 def _slugify(name: str) -> str:
     base = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:60]
     return base or f"school-{secrets.token_hex(3)}"
+
+
+def _name_key(name: str) -> str:
+    """Normalise a school name for duplicate checks: 'St. Marry' == 'st marry'."""
+    return re.sub(r"[^a-z0-9]+", "", (name or "").lower())
+
+
+def team_member_delete_block(actor: CurrentUser, user: User) -> str | None:
+    """Why this team account cannot be removed, or None when removal is allowed."""
+    from src.api.dependencies import is_protected_owner
+
+    if user.id == actor.id:
+        return "You cannot delete your own account"
+    if is_protected_owner(user.email):
+        return "The owner account cannot be removed"
+    return None
 
 
 def _is_admin_or_above(platform_role: str | None) -> bool:
@@ -121,7 +152,12 @@ class PlatformService:
 
     async def _people_counts(self, school_id: UUID) -> tuple[int, int]:
         students = (
-            await self.db.execute(select(func.count()).select_from(Student).where(Student.school_id == school_id))
+            await self.db.execute(
+                select(func.count())
+                .select_from(Student)
+                .join(User, User.id == Student.user_id)
+                .where(Student.school_id == school_id, User.status != "DELETED")
+            )
         ).scalar_one()
         teachers = (
             await self.db.execute(select(func.count()).select_from(Teacher).where(Teacher.school_id == school_id))
@@ -129,9 +165,15 @@ class PlatformService:
         return students, teachers
 
     async def _to_school_out(self, school: School) -> SchoolOut:
+        # Subscriptions and memberships are tenant tables under forced RLS; the platform
+        # session carries no school, so bind this school before reading them.
+        await bind_tenant(self.db, school.id)
+        from src.modules.platform.commercial import default_trial_days, effective_trial_days
+
         plan, sub_status = await self._plan_for_school(school.id)
         admin_email, admin_user_id, admin_name = await self._primary_admin(school.id)
         students, teachers = await self._people_counts(school.id)
+        platform_days = await default_trial_days(self.db)
         return SchoolOut(
             id=school.id,
             name=school.name,
@@ -148,6 +190,8 @@ class PlatformService:
             website=getattr(school, "website", None),
             timezone=school.timezone,
             currency=getattr(school, "currency", None) or "INR",
+            trial_days=getattr(school, "trial_days", None),
+            effective_trial_days=effective_trial_days(getattr(school, "trial_days", None), platform_days),
             logo_url=school.logo_url,
             plan_code=plan,
             subscription_status=sub_status,
@@ -159,12 +203,41 @@ class PlatformService:
             admin_name=admin_name,
         )
 
+    async def _similar_school(self, name: str) -> School | None:
+        key = _name_key(name)
+        if not key:
+            return None
+        rows = (await self.db.execute(select(School).where(School.status != SchoolStatus.ARCHIVED.value))).scalars().all()
+        return next((row for row in rows if _name_key(row.name) == key), None)
+
     async def create_school(self, actor: CurrentUser, data: SchoolCreate) -> SchoolOut:
+        name = data.name.strip()
+        if len(name) < 2:
+            raise ValidationError("School name must be at least 2 characters")
+        data.name = name
+        if data.slug and await self.repo.get_by_slug(data.slug):
+            raise ConflictError(f"The URL slug '{data.slug}' is already used by another school")
+        if not data.allow_duplicate_name:
+            twin = await self._similar_school(name)
+            if twin is not None:
+                raise ConflictError(
+                    f"A school named '{twin.name}' already exists (slug {twin.slug}). "
+                    "Open that school instead, or confirm to create another one."
+                )
+        if not data.admin.password:
+            data.admin.password = cognito_svc.generate_temporary_password()
         base_slug = data.slug or _slugify(data.name)
         slug = await self._unique_slug(base_slug)
         code = await self._unique_school_code()
 
+        # Tenant tables (subscriptions, memberships, audit) enforce
+        # school_id = app.school_id under forced RLS. The platform admin's token
+        # carries no school, so bind the new school's id before any insert.
+        school_id = uuid4()
+        await open_platform_school(self.db, school_id)
+
         school = School(
+            id=school_id,
             name=data.name,
             slug=slug,
             code=code,
@@ -182,12 +255,18 @@ class PlatformService:
             created_by_id=actor.id,
         )
         await self.repo.create_school(school)
+        from src.modules.platform.commercial import default_trial_days
+
+        trial_days = await default_trial_days(self.db)
+        started = utcnow()
         self.db.add(
             Subscription(
                 school_id=school.id,
                 plan_code=data.plan_code,
                 status=SubscriptionStatus.TRIAL.value,
-                starts_at=utcnow(),
+                starts_at=started,
+                trial_started_at=started,
+                trial_ends_at=started + timedelta(days=trial_days),
             )
         )
         await self.db.flush()
@@ -223,28 +302,38 @@ class PlatformService:
         if school is None:
             raise NotFoundError("School not found")
         await self._assert_school_access(actor, school)
+        await open_platform_school(self.db, school.id)
         payload = data.model_dump(exclude_unset=True)
+        previous_trial_days = school.trial_days
         plan_code = payload.pop("plan_code", None)
         for k, v in payload.items():
             setattr(school, k, v)
         if plan_code:
-            self.db.add(
-                Subscription(
-                    school_id=school.id,
-                    plan_code=plan_code,
-                    status=SubscriptionStatus.ACTIVE.value,
-                    starts_at=utcnow(),
+            from src.modules.platform.commercial import latest_subscription
+
+            current = await latest_subscription(self.db, school.id)
+            changed = current is None or current.plan_code != plan_code
+            if current is None:
+                self.db.add(
+                    Subscription(
+                        school_id=school.id,
+                        plan_code=plan_code,
+                        status=SubscriptionStatus.ACTIVE.value,
+                        starts_at=utcnow(),
+                    )
                 )
-            )
-            await self.audit.write(
-                action="platform.subscription.changed",
-                actor_id=actor.id,
-                school_id=school.id,
-                resource_type="subscription",
-                resource_id=str(school.id),
-                message=f"Plan changed to {plan_code}",
-                details={"plan_code": plan_code},
-            )
+            elif changed:
+                current.plan_code = plan_code
+            if changed:
+                await self.audit.write(
+                    action="platform.subscription.changed",
+                    actor_id=actor.id,
+                    school_id=school.id,
+                    resource_type="subscription",
+                    resource_id=str(school.id),
+                    message=f"Plan changed to {plan_code}",
+                    details={"plan_code": plan_code},
+                )
         await self.db.flush()
         await self.audit.write(
             action="platform.school.update",
@@ -253,7 +342,14 @@ class PlatformService:
             resource_type="school",
             resource_id=str(school.id),
             message=f"School updated: {school.name}",
-            details={"fields": list(data.model_dump(exclude_unset=True).keys())},
+            details={
+                "fields": list(data.model_dump(exclude_unset=True).keys()),
+                **(
+                    {"trial_days": {"before": previous_trial_days, "after": school.trial_days}}
+                    if "trial_days" in data.model_fields_set
+                    else {}
+                ),
+            },
         )
         return await self._to_school_out(school)
 
@@ -270,9 +366,10 @@ class PlatformService:
         if school is None:
             raise NotFoundError("School not found")
         await self._assert_school_access(actor, school)
-        if status == SchoolStatus.ARCHIVED.value:
-            if confirm_name and confirm_name.strip() != school.name:
-                raise ForbiddenError("Confirmation name does not match school name")
+        await open_platform_school(self.db, school.id)
+        if status in {SchoolStatus.ARCHIVED.value, SchoolStatus.SUSPENDED.value, SchoolStatus.ACTIVE.value}:
+            if (confirm_name or "").strip() != (school.name or "").strip():
+                raise ValidationError("Type the school name exactly to confirm this change")
         school.status = status
         await self.db.flush()
         action = {
@@ -323,9 +420,15 @@ class PlatformService:
             "teacher_added": base.teachers_count > 0,
             "student_added": base.students_count > 0,
         }
+        from src.modules.platform.commercial import commercial_view
+
         plan, sub_status = await self._plan_for_school(school_id)
+        commercial = await commercial_view(self.db, school)
+        creator = await self.db.get(User, school.created_by_id) if school.created_by_id else None
         return SchoolDetailOut(
             **base.model_dump(),
+            created_by_id=school.created_by_id,
+            created_by_name=creator.full_name if creator else None,
             parents_count=parents,
             admins_count=admins,
             entitlements=entitlements,
@@ -336,9 +439,13 @@ class PlatformService:
                 "parents": parents,
             },
             subscription={
-                "plan_code": plan,
-                "status": sub_status,
+                "plan_code": commercial["plan_code"] or plan,
+                "plan_name": commercial["plan_name"],
+                "status": commercial["billing_status"] or sub_status,
+                "subscription_status": sub_status,
+                **commercial,
             },
+            commercial=commercial,
         )
 
     async def list_schools(
@@ -383,7 +490,10 @@ class PlatformService:
             select(User, SchoolMembership, School)
             .join(SchoolMembership, SchoolMembership.user_id == User.id)
             .join(School, School.id == SchoolMembership.school_id)
-            .where(SchoolMembership.role == UserRole.SCHOOL_ADMIN.value)
+            .where(
+                SchoolMembership.role == UserRole.SCHOOL_ADMIN.value,
+                SchoolMembership.status == MembershipStatus.ACTIVE.value,
+            )
             .order_by(User.created_at.desc())
         )
         if school_id:
@@ -427,6 +537,7 @@ class PlatformService:
             .where(
                 User.id == admin_id,
                 SchoolMembership.role == UserRole.SCHOOL_ADMIN.value,
+                SchoolMembership.status == MembershipStatus.ACTIVE.value,
             )
             .order_by(School.name.asc())
         )
@@ -474,6 +585,7 @@ class PlatformService:
                 .join(School, School.id == SchoolMembership.school_id)
                 .where(
                     SchoolMembership.role == UserRole.SCHOOL_ADMIN.value,
+                    SchoolMembership.status == MembershipStatus.ACTIVE.value,
                     or_(
                         func.lower(User.email).like(like),
                         func.lower(User.full_name).like(like),
@@ -535,7 +647,7 @@ class PlatformService:
                     id=str(u.id),
                     title=u.full_name,
                     subtitle=f"{u.email} · {u.platform_role}",
-                    href=f"/platform/team/{u.id}",
+                    href=f"/platform/staff",
                 )
                 for u in team
             ],
@@ -558,6 +670,7 @@ class PlatformService:
         if school is None:
             raise NotFoundError("School not found")
         await self._assert_school_access(actor, school)
+        await open_platform_school(self.db, school.id)
         raw = generate_token(24)
         inv = Invitation(
             school_id=school_id,
@@ -582,16 +695,29 @@ class PlatformService:
         return inv, raw
 
     async def reset_school_admin_password(
-        self, actor: CurrentUser, school_id: UUID, *, temporary_password: str
+        self, actor: CurrentUser, school_id: UUID, *, temporary_password: str | None = None
     ) -> tuple[str, str]:
         school = await self.repo.get_school(school_id)
         if school is None:
             raise NotFoundError("School not found")
         await self._assert_school_access(actor, school)
+        await open_platform_school(self.db, school.id)
         admin_email, _, _ = await self._primary_admin(school_id)
         if not admin_email:
             raise NotFoundError("School admin not found")
-        cognito_svc.admin_set_temporary_password(email=admin_email, temporary_password=temporary_password)
+        from src.modules.schools.provisioning import issue_temporary_password
+
+        user = (
+            await self.db.execute(
+                select(User).where(func.lower(User.email) == admin_email.lower().strip())
+            )
+        ).scalar_one_or_none()
+        if user is None:
+            raise NotFoundError("User not found")
+        # Cognito (or local fallback), sessions revoked, password change forced at next sign-in.
+        temporary_password = await issue_temporary_password(
+            self.db, user=user, temporary_password=temporary_password
+        )
         await self.audit.write(
             action="platform.school.admin.reset_password",
             actor_id=actor.id,
@@ -603,11 +729,76 @@ class PlatformService:
         )
         return admin_email, temporary_password
 
+    async def create_school_admin_login(self, actor: CurrentUser, school_id: UUID, data: SchoolAdminLoginCreate) -> SchoolAdminLoginOut:
+
+        school = await self.repo.get_school(school_id)
+        if school is None:
+            raise NotFoundError("School not found")
+        await self._assert_school_access(actor, school)
+        email = str(data.email).lower().strip()
+        existing = (await self.db.execute(select(User).where(User.email == email))).scalar_one_or_none()
+        if existing is not None:
+            # Never reset someone else's password through this path.
+            raise ConflictError("An account with this email already exists. Use a different email.")
+        await open_platform_school(self.db, school.id)
+        password = data.password or cognito_svc.generate_temporary_password()
+        user, _, temp = await create_school_user(
+            self.db,
+            school_id=school.id,
+            email=email,
+            full_name=data.full_name.strip(),
+            password=password,
+            role=UserRole.SCHOOL_ADMIN,
+            actor_id=actor.id,
+        )
+        await self.audit.write(
+            action="platform.school.admin.create",
+            actor_id=actor.id,
+            school_id=school.id,
+            resource_type="user",
+            resource_id=str(user.id),
+            message=f"School admin login created: {user.email}",
+            details={"admin_email": user.email},
+        )
+        return SchoolAdminLoginOut(
+            user_id=user.id,
+            admin_email=user.email,
+            full_name=user.full_name,
+            temporary_password=temp or password,
+        )
+
+    async def _reset_password(self, email: str, temporary_password: str) -> None:
+        """Reset via Cognito when allowed; otherwise switch the account to a local hash.
+
+        The API task role may lack Cognito admin permissions (AccessDeniedException).
+        In that case (or when Cognito is not configured) the user signs in with the
+        local password hash, which login prefers when cognito_sub is empty.
+        """
+        from src.core.security import hash_password
+
+        user = (
+            await self.db.execute(select(User).where(User.email == email.lower().strip()))
+        ).scalar_one_or_none()
+        if user is None:
+            raise NotFoundError("User not found")
+        if cognito_svc.cognito_configured() and user.cognito_sub:
+            try:
+                cognito_svc.admin_set_temporary_password(email=email, temporary_password=temporary_password)
+                return
+            except ConflictError as exc:
+                if "AccessDenied" not in str(exc) or (get_settings().auth_mode or "both").lower() == "cognito":
+                    raise
+        user.password_hash = hash_password(temporary_password)
+        user.cognito_sub = None
+        user.is_active = True
+        await self.db.flush()
+
     async def clear_school_admin_mfa(self, actor: CurrentUser, school_id: UUID) -> str:
         school = await self.repo.get_school(school_id)
         if school is None:
             raise NotFoundError("School not found")
         await self._assert_school_access(actor, school)
+        await open_platform_school(self.db, school.id)
         admin_email, _, _ = await self._primary_admin(school_id)
         if not admin_email:
             raise NotFoundError("School admin not found")
@@ -623,26 +814,224 @@ class PlatformService:
         )
         return admin_email
 
-    async def delete_school(self, actor: CurrentUser, school_id: UUID) -> None:
+    async def delete_school(self, actor: CurrentUser, school_id: UUID, confirm_name: str) -> None:
+        """Erase the school and every row stored against it. The audit entry is kept."""
+        from sqlalchemy import text
+
+        from src.modules.fees.tenant import open_platform_school
+
+        await open_platform_school(self.db, school_id)
         school = await self.repo.get_school(school_id)
         if school is None:
             raise NotFoundError("School not found")
+        if (confirm_name or "").strip() != (school.name or "").strip():
+            raise ValidationError("Type the school name exactly to confirm deletion")
+        await self._assert_school_access(actor, school)
+        name = school.name
         await self.audit.write(
-            action="platform.school.delete",
+            action="platform.super_admin.delete",
             actor_id=actor.id,
-            school_id=school.id,
+            school_id=None,
             resource_type="school",
-            resource_id=str(school.id),
-            message=f"School deleted: {school.name}",
+            resource_id=str(school_id),
+            message=f"Super admin deleted school: {name}",
+            details={"mode": "hard", "label": name, "confirm_name": confirm_name.strip(), "school_id": str(school_id)},
         )
-        await self.db.delete(school)
         await self.db.flush()
+        from src.modules.platform.purge import ForeignKey, missing_from_purge, purge_steps
+
+        school_tables = {
+            row[0]
+            for row in (
+                await self.db.execute(
+                    text(
+                        """
+                        SELECT c.table_name
+                        FROM information_schema.columns c
+                        JOIN information_schema.tables t
+                          ON t.table_schema = c.table_schema AND t.table_name = c.table_name
+                        WHERE c.table_schema = 'public'
+                          AND c.column_name = 'school_id'
+                          AND t.table_type = 'BASE TABLE'
+                        """
+                    )
+                )
+            ).all()
+            if str(row[0]).replace("_", "").isalnum()
+        }
+        foreign_keys = [
+            ForeignKey(
+                child=str(child),
+                parent=str(parent),
+                child_cols=tuple(str(col) for col in child_cols),
+                parent_cols=tuple(str(col) for col in parent_cols),
+            )
+            for child, parent, child_cols, parent_cols in (
+                await self.db.execute(
+                    text(
+                        """
+                        SELECT child.relname,
+                               parent.relname,
+                               array_agg(child_att.attname ORDER BY u.ord),
+                               array_agg(parent_att.attname ORDER BY u.ord)
+                        FROM pg_constraint fk
+                        JOIN pg_class child ON child.oid = fk.conrelid
+                        JOIN pg_class parent ON parent.oid = fk.confrelid
+                        JOIN pg_namespace ns ON ns.oid = child.relnamespace
+                        JOIN LATERAL unnest(fk.conkey, fk.confkey)
+                          WITH ORDINALITY AS u(child_num, parent_num, ord) ON true
+                        JOIN pg_attribute child_att
+                          ON child_att.attrelid = child.oid AND child_att.attnum = u.child_num
+                        JOIN pg_attribute parent_att
+                          ON parent_att.attrelid = parent.oid AND parent_att.attnum = u.parent_num
+                        WHERE fk.contype = 'f' AND ns.nspname = 'public'
+                        GROUP BY fk.oid, child.relname, parent.relname
+                        """
+                    )
+                )
+            ).all()
+        ]
+        steps = purge_steps(school_tables, foreign_keys)
+        planned = {step.table for step in steps}
+        missing = missing_from_purge(school_tables, foreign_keys, planned)
+        if missing:
+            raise ConflictError(
+                "Could not delete the school because these tables are not in the purge: "
+                + ", ".join(missing[:8])
+            )
+        await self._delete_school_objects(school_id, school_tables, school.logo_url)
+        people = [
+            row[0]
+            for row in (
+                await self.db.execute(
+                    text(
+                        """
+                        SELECT user_id FROM students WHERE school_id = :sid
+                        UNION
+                        SELECT user_id FROM teachers WHERE school_id = :sid
+                        UNION
+                        SELECT user_id FROM school_memberships WHERE school_id = :sid
+                        """
+                    ),
+                    {"sid": school_id},
+                )
+            ).all()
+        ]
+        last_error: Exception | None = None
+        pending = list(steps)
+        for _ in range(6):
+            if not pending:
+                break
+            stuck: list = []
+            for step in pending:
+                try:
+                    async with self.db.begin_nested():
+                        await self.db.execute(text(step.sql), {"sid": school_id})
+                    left = (
+                        await self.db.execute(
+                            text(f'SELECT count(*) FROM "{step.table}" WHERE {step.where}'),
+                            {"sid": school_id},
+                        )
+                    ).scalar_one()
+                    if int(left or 0) > 0:
+                        stuck.append(step)
+                except Exception as exc:
+                    last_error = exc
+                    stuck.append(step)
+            if not stuck:
+                pending = []
+                break
+            if [step.table for step in stuck] == [step.table for step in pending]:
+                pending = stuck
+                break
+            pending = stuck
+        try:
+            async with self.db.begin_nested():
+                deleted = (
+                    await self.db.execute(
+                        text("DELETE FROM schools WHERE id = :sid RETURNING id"),
+                        {"sid": school_id},
+                    )
+                ).first()
+            if deleted is None:
+                raise ConflictError("The school was not deleted. No school row changed.")
+            # Fire deferred foreign keys now, inside this request, not in get_db()'s commit.
+            await self.db.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
+        except ConflictError:
+            raise
+        except Exception as exc:
+            left = ", ".join(step.table for step in pending[:8]) or "unknown"
+            detail = str(getattr(exc, "orig", exc) or last_error or exc).splitlines()[0][:180]
+            raise ConflictError(
+                f"Could not delete the school because related rows remain ({left}). {detail}"
+            ) from (last_error or exc)
+        for person_id in people:
+            if person_id == actor.id:
+                continue
+            try:
+                async with self.db.begin_nested():
+                    await self.db.execute(
+                        text(
+                            """
+                            DELETE FROM users
+                            WHERE id = :uid
+                              AND COALESCE(is_platform_admin, false) = false
+                              AND NOT EXISTS (
+                                SELECT 1 FROM school_memberships m
+                                WHERE m.user_id = users.id AND m.status = 'ACTIVE'
+                              )
+                            """
+                        ),
+                        {"uid": person_id},
+                    )
+            except Exception:
+                continue
+        await self.db.flush()
+
+    async def _delete_school_objects(self, school_id: UUID, school_tables: set[str], logo_url: str | None) -> None:
+        """Remove stored files for this school before the rows that name them are deleted."""
+        from sqlalchemy import text
+
+        from src.core.storage import delete_object
+
+        delete_object(logo_url)
+        names = sorted(table for table in school_tables if table != "schools" and table.replace("_", "").isalnum())
+        if not names:
+            return
+        columns = ("file_key", "object_key", "logo_url", "logo_object_key", "pdf_object_key", "photo_url")
+        found = (
+            await self.db.execute(
+                text(
+                    """
+                    SELECT c.table_name, c.column_name
+                    FROM information_schema.columns c
+                    WHERE c.table_schema = 'public'
+                      AND c.column_name = ANY(:columns)
+                      AND c.table_name = ANY(:tables)
+                    """
+                ),
+                {"columns": list(columns), "tables": names},
+            )
+        ).all()
+        for table, column in found:
+            if not str(table).replace("_", "").isalnum() or not str(column).replace("_", "").isalnum():
+                continue
+            keys = (
+                await self.db.execute(
+                    text(f'SELECT "{column}" FROM "{table}" WHERE school_id = :sid'),
+                    {"sid": school_id},
+                )
+            ).all()
+            for (key,) in keys:
+                if isinstance(key, str) and key:
+                    delete_object(key)
 
     async def upload_school_logo(self, actor: CurrentUser, school_id: UUID, file: UploadFile) -> SchoolOut:
         school = await self.repo.get_school(school_id)
         if school is None:
             raise NotFoundError("School not found")
         await self._assert_school_access(actor, school)
+        await open_platform_school(self.db, school.id)
 
         content_type = (file.content_type or "").lower()
         ext_map = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}
@@ -656,15 +1045,13 @@ class PlatformService:
         if len(data) > 2_000_000:
             raise ConflictError("Logo too large (max 2MB)")
 
-        media_dir = Path(__file__).resolve().parents[3] / "media"
-        logo_dir = media_dir / "school-logos"
-        logo_dir.mkdir(parents=True, exist_ok=True)
+        from src.core.storage import put_object
 
-        filename = f"{school.id}{ext}"
-        path = logo_dir / filename
-        path.write_bytes(data)
-
-        school.logo_url = f"/media/school-logos/{filename}"
+        school.logo_url = put_object(
+            key=f"school-logos/{school.id}{ext}",
+            data=data,
+            content_type=content_type,
+        )
         await self.db.flush()
         await self.audit.write(
             action="platform.school.logo.update",
@@ -679,6 +1066,111 @@ class PlatformService:
 
     async def dashboard(self):
         return await self.repo.dashboard_counts()
+
+    async def home_analytics(self) -> dict:
+        """Real platform totals for the home page. No estimated money."""
+        from datetime import timedelta
+
+        from sqlalchemy import text
+
+        from src.modules.fees.tenant import set_rls_bypass
+        from src.shared.utils import utcnow
+
+        await set_rls_bypass(self.db, True)
+        now = utcnow()
+        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        soon = now + timedelta(days=14)
+        by_status = (
+            await self.db.execute(select(School.status, func.count()).group_by(School.status))
+        ).all()
+        students = (await self.db.execute(select(func.count()).select_from(Student))).scalar_one()
+        teachers = (await self.db.execute(select(func.count()).select_from(Teacher))).scalar_one()
+        recent = (
+            await self.db.execute(select(School).order_by(School.created_at.desc()).limit(8))
+        ).scalars().all()
+        trials = (
+            await self.db.execute(
+                text(
+                    """
+                    SELECT s.id, s.name, sub.trial_ends_at
+                    FROM schools s
+                    JOIN subscriptions sub ON sub.school_id = s.id
+                    WHERE sub.trial_ends_at IS NOT NULL
+                      AND sub.trial_ends_at >= :now
+                      AND sub.trial_ends_at <= :soon
+                    ORDER BY sub.trial_ends_at
+                    LIMIT 12
+                    """
+                ),
+                {"now": now, "soon": soon},
+            )
+        ).all()
+        renewals = (
+            await self.db.execute(
+                text(
+                    """
+                    SELECT s.id, s.name, sub.renewal_at
+                    FROM schools s
+                    JOIN subscriptions sub ON sub.school_id = s.id
+                    WHERE sub.renewal_at IS NOT NULL
+                      AND sub.renewal_at >= :now
+                      AND sub.renewal_at <= :soon
+                    ORDER BY sub.renewal_at
+                    LIMIT 12
+                    """
+                ),
+                {"now": now, "soon": soon},
+            )
+        ).all()
+        tokens = (
+            await self.db.execute(
+                text(
+                    """
+                    SELECT s.id, s.name, COALESCE(SUM(u.input_tokens + u.output_tokens), 0) AS tokens
+                    FROM platform_ai_usage_daily u
+                    JOIN schools s ON s.id = u.school_id
+                    WHERE u.usage_date >= :start
+                    GROUP BY s.id, s.name
+                    ORDER BY tokens DESC
+                    LIMIT 12
+                    """
+                ),
+                {"start": month_start},
+            )
+        ).all()
+        signups = (
+            await self.db.execute(
+                text(
+                    """
+                    SELECT to_char(date_trunc('month', created_at), 'YYYY-MM') AS month, COUNT(*)
+                    FROM schools
+                    WHERE created_at >= :start
+                    GROUP BY 1
+                    ORDER BY 1
+                    """
+                ),
+                {"start": now - timedelta(days=180)},
+            )
+        ).all()
+        return {
+            "schools_by_status": [{"status": status, "count": int(count)} for status, count in by_status],
+            "students_total": int(students or 0),
+            "teachers_total": int(teachers or 0),
+            "signups_by_month": [{"month": month, "count": int(count)} for month, count in signups],
+            "trials_expiring": [
+                {"school_id": row[0], "school_name": row[1], "trial_ends_at": row[2]} for row in trials
+            ],
+            "renewals_due": [
+                {"school_id": row[0], "school_name": row[1], "renewal_at": row[2]} for row in renewals
+            ],
+            "ai_tokens_this_month": [
+                {"school_id": row[0], "school_name": row[1], "tokens": int(row[2] or 0)} for row in tokens
+            ],
+            "recent_schools": [
+                {"school_id": school.id, "school_name": school.name, "status": school.status, "created_at": school.created_at}
+                for school in recent
+            ],
+        }
 
     async def list_employees(self) -> list[PlatformEmployeeOut]:
         result = await self.db.execute(
@@ -797,33 +1289,104 @@ class PlatformService:
             message="Revoked school access",
         )
 
+    async def remove_school_admin(self, actor: CurrentUser, school_id: UUID, user_id: UUID) -> None:
+        """Revoke a school admin: membership, sessions, and role access."""
+        from sqlalchemy import text
+
+        from src.modules.fees.tenant import open_platform_school
+
+        await open_platform_school(self.db, school_id)
+        school = await self.repo.get_school(school_id)
+        if school is None:
+            raise NotFoundError("School not found")
+        membership = (
+            await self.db.execute(
+                select(SchoolMembership).where(
+                    SchoolMembership.school_id == school_id,
+                    SchoolMembership.user_id == user_id,
+                    SchoolMembership.role == UserRole.SCHOOL_ADMIN.value,
+                )
+            )
+        ).scalar_one_or_none()
+        if membership is None:
+            raise NotFoundError("School admin not found")
+        person = await self.db.get(User, user_id)
+        stored = (
+            await self.db.execute(
+                text("SELECT status FROM school_memberships WHERE id = :id"),
+                {"id": membership.id},
+            )
+        ).scalar_one()
+        if stored != MembershipStatus.LEFT.value:
+            changed = (
+                await self.db.execute(
+                    text(
+                        """
+                        UPDATE school_memberships
+                        SET status = 'LEFT'
+                        WHERE id = :id AND status IS DISTINCT FROM 'LEFT'
+                        RETURNING id
+                        """
+                    ),
+                    {"id": membership.id},
+                )
+            ).all()
+            if len(changed) != 1:
+                raise ConflictError("The admin was not removed. No membership changed.")
+        await self.db.execute(
+            text(
+                """
+                UPDATE refresh_tokens
+                SET revoked = true
+                WHERE user_id = :uid AND revoked IS NOT TRUE
+                """
+            ),
+            {"uid": user_id},
+        )
+        status = (
+            await self.db.execute(
+                text("SELECT status FROM school_memberships WHERE id = :id"),
+                {"id": membership.id},
+            )
+        ).scalar_one()
+        if status != MembershipStatus.LEFT.value:
+            raise ConflictError("The admin is still active. The membership update did not stick.")
+        open_sessions = (
+            await self.db.execute(
+                text("SELECT count(*) FROM refresh_tokens WHERE user_id = :uid AND revoked IS NOT TRUE"),
+                {"uid": user_id},
+            )
+        ).scalar_one()
+        if int(open_sessions or 0) > 0:
+            raise ConflictError("The admin's sessions were not revoked.")
+        await self.db.flush()
+        await self.audit.write(
+            action="platform.super_admin.delete",
+            actor_id=actor.id,
+            school_id=school_id,
+            resource_type="school_admin",
+            resource_id=str(user_id),
+            message=f"Super admin removed school admin: {person.full_name if person else user_id}",
+            details={"mode": "revoke", "email": person.email if person else None, "label": school.name},
+        )
+
     async def create_employee(self, data: PlatformEmployeeCreate, actor: User) -> PlatformEmployeeOut:
         from src.core.security import hash_password
 
-        if actor.platform_role not in {
-            PlatformRole.SUPER_ADMIN.value,
-            PlatformRole.ADMIN.value,
-            PlatformRole.PLATFORM_ADMIN.value,
-        }:
-            raise ForbiddenError("Admin only")
+        from src.api.dependencies import EMPLOYEE_ROLES, is_protected_owner, is_super_admin
+
+        if not is_super_admin(actor):
+            raise ForbiddenError("Only a Super Admin can grant employee access")
         email = data.email.lower().strip()
+        if is_protected_owner(email):
+            raise ForbiddenError("The owner account cannot be changed")
         existing = await self.db.execute(select(User).where(User.email == email))
         if existing.scalar_one_or_none() is not None:
             raise ConflictError("User with this email already exists")
 
-        requested_role = (data.platform_role or PlatformRole.USER.value).strip().upper()
-        allowed = {r.value for r in PlatformRole} - {PlatformRole.SUPER_ADMIN.value}
-        if requested_role not in allowed:
-            raise ConflictError("Invalid platform role")
-        if actor.platform_role in {PlatformRole.ADMIN.value, PlatformRole.PLATFORM_ADMIN.value} and requested_role not in {
-            PlatformRole.USER.value,
-            PlatformRole.SUPPORT.value,
-            PlatformRole.ANALYST.value,
-            PlatformRole.SALES.value,
-        }:
-            raise ForbiddenError("Admins can only create limited platform roles")
-        if requested_role == PlatformRole.SUPER_ADMIN.value:
-            raise ForbiddenError("Cannot create another SUPER_ADMIN via invite")
+        requested_role = (data.platform_role or PlatformRole.SALES.value).strip().upper().replace(" ", "_")
+        if requested_role not in EMPLOYEE_ROLES:
+            raise ConflictError("Role must be Super Admin, Admin, or Sales")
 
         cognito_sub: str | None = None
         password_hash: str | None = None
@@ -874,27 +1437,22 @@ class PlatformService:
     async def update_employee(
         self, employee_id: UUID, data: PlatformEmployeeUpdate, actor: User
     ) -> PlatformEmployeeOut:
-        if actor.platform_role not in {
-            PlatformRole.SUPER_ADMIN.value,
-            PlatformRole.ADMIN.value,
-            PlatformRole.PLATFORM_ADMIN.value,
-        }:
-            raise ForbiddenError("Admin only")
+        from src.api.dependencies import EMPLOYEE_ROLES, is_protected_owner, is_super_admin
+
+        if not is_super_admin(actor):
+            raise ForbiddenError("Only a Super Admin can change employee access")
         result = await self.db.execute(
             select(User).where(User.id == employee_id, User.is_platform_admin.is_(True))
         )
         user = result.scalar_one_or_none()
         if user is None:
             raise NotFoundError("Employee not found")
-        if user.platform_role == PlatformRole.SUPER_ADMIN.value:
-            raise ForbiddenError("Cannot modify the super admin account")
-        if actor.platform_role in {PlatformRole.ADMIN.value, PlatformRole.PLATFORM_ADMIN.value} and user.platform_role not in {
-            PlatformRole.USER.value,
-            PlatformRole.SUPPORT.value,
-            PlatformRole.ANALYST.value,
-            PlatformRole.SALES.value,
-        }:
-            raise ForbiddenError("Admins can only modify limited platform roles")
+        if is_protected_owner(user.email):
+            raise ForbiddenError("The owner account cannot be changed")
+        if (user.email or "").strip().lower() == "silverstalan.inbaraj@sybeez.ai" and (
+            data.platform_role is not None or data.is_active is False
+        ):
+            raise ForbiddenError("This account stays Super Admin")
         if data.full_name is not None:
             user.full_name = data.full_name.strip()
         if data.is_active is not None:
@@ -902,12 +1460,9 @@ class PlatformService:
             if user.cognito_sub and cognito_svc.cognito_configured():
                 cognito_svc.admin_set_enabled(email=user.email, enabled=data.is_active)
         if data.platform_role is not None:
-            if actor.platform_role != PlatformRole.SUPER_ADMIN.value:
-                raise ForbiddenError("Only super admin can change platform roles")
-            next_role = data.platform_role.strip().upper()
-            allowed = {r.value for r in PlatformRole} - {PlatformRole.SUPER_ADMIN.value}
-            if next_role not in allowed:
-                raise ConflictError("Invalid platform role")
+            next_role = data.platform_role.strip().upper().replace(" ", "_")
+            if next_role not in EMPLOYEE_ROLES:
+                raise ConflictError("Role must be Super Admin, Admin, or Sales")
             user.platform_role = next_role
         await self.db.flush()
         await self.audit.write(
@@ -927,4 +1482,80 @@ class PlatformService:
             is_active=user.is_active,
             created_at=user.created_at,
             last_login_at=user.last_login_at,
+        )
+
+    async def restore_employee(self, employee_id: UUID, actor_user: User, platform_role: str | None = None) -> PlatformEmployeeOut:
+        """Turn a revoked platform login back on. The person keeps or receives a console role."""
+        from src.api.dependencies import EMPLOYEE_ROLES
+
+        result = await self.db.execute(select(User).where(User.id == employee_id))
+        user = result.scalar_one_or_none()
+        if user is None:
+            raise NotFoundError("Employee not found")
+        role = (platform_role or user.platform_role or "SALES").strip().upper().replace(" ", "_")
+        if role not in EMPLOYEE_ROLES:
+            raise ConflictError("Role must be Super Admin, Admin, or Sales")
+        user.is_active = True
+        user.status = "ACTIVE"
+        user.is_platform_admin = True
+        user.platform_role = role
+        if user.cognito_sub and cognito_svc.cognito_configured():
+            cognito_svc.admin_set_enabled(email=user.email, enabled=True)
+        await self.db.flush()
+        await self.audit.write(
+            action="platform.employee.restore",
+            actor_id=actor_user.id,
+            school_id=None,
+            resource_type="user",
+            resource_id=str(user.id),
+            message=f"Platform access restored: {user.email}",
+            details={"platform_role": role},
+        )
+        return PlatformEmployeeOut(
+            id=user.id,
+            email=user.email,
+            full_name=user.full_name,
+            platform_role=user.platform_role or role,
+            is_active=user.is_active,
+            created_at=user.created_at,
+            last_login_at=user.last_login_at,
+        )
+
+    async def delete_employee(self, employee_id: UUID, actor: CurrentUser) -> None:
+        """Remove a platform team login. The user row stays so audit history is not broken."""
+        result = await self.db.execute(
+            select(User).where(User.id == employee_id, User.is_platform_admin.is_(True))
+        )
+        from src.api.dependencies import is_super_admin
+
+        user = result.scalar_one_or_none()
+        if user is None:
+            raise NotFoundError("Employee not found")
+        if not is_super_admin(actor):
+            raise ForbiddenError("Only a Super Admin can remove employee access")
+        blocked = team_member_delete_block(actor, user)
+        if blocked:
+            raise ForbiddenError(blocked)
+        label = user.full_name
+        email = user.email
+        user.is_active = False
+        user.status = "DISABLED"
+        user.is_platform_admin = False
+        user.platform_role = None
+        staff_rows = (
+            await self.db.execute(select(PlatformStaff).where(PlatformStaff.user_id == user.id))
+        ).scalars().all()
+        for staff in staff_rows:
+            staff.status = "REVOKED"
+        if user.cognito_sub and cognito_svc.cognito_configured():
+            cognito_svc.admin_set_enabled(email=email, enabled=False)
+        await self.db.flush()
+        await self.audit.write(
+            action="platform.super_admin.delete",
+            actor_id=actor.id,
+            school_id=None,
+            resource_type="user",
+            resource_id=str(user.id),
+            message=f"Super admin removed team member: {label}",
+            details={"mode": "soft", "label": label, "email": email},
         )

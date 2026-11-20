@@ -10,6 +10,7 @@ from src.core.exceptions import ForbiddenError
 from src.modules.diary.schemas import DiaryEntryCreate, DiaryEntryOut, DiaryEntryUpdate
 from src.modules.diary.service import DiaryService
 from src.shared.enums import UserRole
+from src.modules.access.deps import public
 
 router = APIRouter(prefix="/diary", tags=["diary"])
 
@@ -21,6 +22,7 @@ def _sid(u: CurrentUser) -> UUID:
 
 
 @router.get("/health")
+@public
 async def diary_health():
     return {"module": "diary", "status": "ok"}
 

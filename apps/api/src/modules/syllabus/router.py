@@ -25,15 +25,33 @@ def _sid(u: CurrentUser) -> UUID:
     return u.school_id
 
 
+async def _visible(svc: SyllabusService, user: CurrentUser, syllabus_id: UUID) -> None:
+    """Students and parents only open a syllabus for their own class."""
+    if user.role == UserRole.STUDENT:
+        allowed = {row.id for row in await svc.list_for_student(_sid(user), user.id)}
+        if syllabus_id not in allowed:
+            raise ForbiddenError("Not your class syllabus")
+    elif user.role == UserRole.PARENT:
+        allowed = {row.id for row in await svc.list_for_parent(_sid(user), user.id)}
+        if syllabus_id not in allowed:
+            raise ForbiddenError("Not a linked child's syllabus")
+
+
 @router.get("", response_model=list[SyllabusOut])
 async def list_syllabus(
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[
         CurrentUser,
-        Depends(require_roles(UserRole.SCHOOL_ADMIN, UserRole.TEACHER, UserRole.STUDENT)),
+        Depends(require_roles(UserRole.SCHOOL_ADMIN, UserRole.TEACHER, UserRole.STUDENT, UserRole.PARENT)),
     ],
 ):
-    return await SyllabusService(db).list(_sid(user))
+    svc = SyllabusService(db)
+    school_id = _sid(user)
+    if user.role == UserRole.STUDENT:
+        return await svc.list_for_student(school_id, user.id)
+    if user.role == UserRole.PARENT:
+        return await svc.list_for_parent(school_id, user.id)
+    return await svc.list(school_id)
 
 
 @router.get("/mine", response_model=list[SyllabusOut])
@@ -59,10 +77,12 @@ async def get_syllabus(
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[
         CurrentUser,
-        Depends(require_roles(UserRole.SCHOOL_ADMIN, UserRole.TEACHER, UserRole.STUDENT)),
+        Depends(require_roles(UserRole.SCHOOL_ADMIN, UserRole.TEACHER, UserRole.STUDENT, UserRole.PARENT)),
     ],
 ):
-    return await SyllabusService(db).get(_sid(user), syllabus_id)
+    svc = SyllabusService(db)
+    await _visible(svc, user, syllabus_id)
+    return await svc.get(_sid(user), syllabus_id)
 
 
 @router.get("/{syllabus_id}/topics", response_model=list[SyllabusTopicOut])
@@ -71,10 +91,12 @@ async def list_topics(
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[
         CurrentUser,
-        Depends(require_roles(UserRole.SCHOOL_ADMIN, UserRole.TEACHER, UserRole.STUDENT)),
+        Depends(require_roles(UserRole.SCHOOL_ADMIN, UserRole.TEACHER, UserRole.STUDENT, UserRole.PARENT)),
     ],
 ):
-    return await SyllabusService(db).list_topics(_sid(user), syllabus_id)
+    svc = SyllabusService(db)
+    await _visible(svc, user, syllabus_id)
+    return await svc.list_topics(_sid(user), syllabus_id)
 
 
 @router.post("/{syllabus_id}/topics", response_model=SyllabusTopicOut, status_code=201)

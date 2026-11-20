@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import UTC, datetime
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -86,9 +86,9 @@ class HrRequestService:
         previous = req.status
         req.status = "CANCELLED"
         req.cancelled_at = datetime.now(UTC)
-        self._event(req, user_id, "CANCELLED", previous, "CANCELLED", None)
+        ev = self._event(req, user_id, "CANCELLED", previous, "CANCELLED", None)
         await self.db.flush()
-        await self._notify(req, user_id, "CANCELLED")
+        await self._notify(req, user_id, "CANCELLED", event_id=ev)
         return await self._detail(school_id, req)
 
     async def comment_own(
@@ -174,11 +174,11 @@ class HrRequestService:
             req.decided_at = datetime.now(UTC)
             req.decided_by = user_id
             req.decision_note = data.note or None
-        self._event(
+        ev = self._event(
             req, user_id, "STATUS_CHANGED", previous, data.status, data.note or None
         )
         await self.db.flush()
-        await self._notify(req, user_id, "STATUS_CHANGED", data.note)
+        await self._notify(req, user_id, "STATUS_CHANGED", data.note, event_id=ev)
         return await self._detail(school_id, req)
 
     async def comment(
@@ -226,23 +226,29 @@ class HrRequestService:
         )
         self.db.add(req)
         await self.db.flush()
-        self._event(req, user_id, "SUBMITTED", None, "PENDING", None)
+        ev = self._event(req, user_id, "SUBMITTED", None, "PENDING", None)
         await self.db.flush()
-        await self._notify(req, user_id, "SUBMITTED")
+        await self._notify(req, user_id, "SUBMITTED", event_id=ev)
         return await self._detail(school_id, req)
 
     async def _comment(
         self, school_id: UUID, req: HrRequest, user_id: UUID, data: RequestComment
     ) -> RequestOut:
         self._assert_open(req, "commented on")
-        self._event(req, user_id, "COMMENT", None, None, data.message)
+        ev = self._event(req, user_id, "COMMENT", None, None, data.message)
         req.updated_at = datetime.now(UTC)
         await self.db.flush()
-        await self._notify(req, user_id, "COMMENT", data.message)
+        await self._notify(req, user_id, "COMMENT", data.message, event_id=ev)
         return await self._detail(school_id, req)
 
     async def _notify(
-        self, req: HrRequest, actor: UUID, event: str, message: str | None = None
+        self,
+        req: HrRequest,
+        actor: UUID,
+        event: str,
+        message: str | None = None,
+        *,
+        event_id: UUID,
     ) -> None:
         emp = await get_employee_brief(self.db, req.school_id, req.employee_id)
         by_employee = bool(emp.user_id and actor == emp.user_id)
@@ -252,6 +258,7 @@ class HrRequestService:
             "kind": "request",
             "category": HR_REQUEST,
             "entity_id": req.id,
+            "event": f"{event.lower()}:{event_id}",
             "actor": actor,
         }
         if by_employee:
@@ -283,9 +290,11 @@ class HrRequestService:
         from_status: str | None,
         to_status: str | None,
         message: str | None,
-    ) -> None:
+    ) -> UUID:
+        event_id = uuid4()
         self.db.add(
             HrRequestEvent(
+                id=event_id,
                 school_id=req.school_id,
                 request_id=req.id,
                 actor_user_id=user_id,
@@ -296,6 +305,7 @@ class HrRequestService:
                 created_at=datetime.now(UTC),
             )
         )
+        return event_id
 
     @staticmethod
     def _assert_open(req: HrRequest, verb: str) -> None:

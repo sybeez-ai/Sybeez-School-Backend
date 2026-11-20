@@ -106,7 +106,7 @@ def _lines(payload: dict, template: str) -> list[str]:
             ]
         )
     if payload.get("show_bank_last4"):
-        identity.append(f"Account: {payload.get('account_last4') or '-'}")
+        identity.append(f"Account: {payload.get('account_last4') or 'Not on file'}")
     body = ["Earnings"]
     for line in payload.get("earnings") or []:
         body.append(f"  {line['name']}: INR {line['amount']}")
@@ -124,7 +124,7 @@ def _lines(payload: dict, template: str) -> list[str]:
         )
     totals = [
         f"Gross: INR {payload.get('gross')}",
-        f"Deductions: INR {payload.get('deductions')}",
+        f"Deductions: INR {payload.get('deductions_amount')}",
         f"Net pay: INR {payload.get('net')}",
         f"Status: {payload.get('status')}",
     ]

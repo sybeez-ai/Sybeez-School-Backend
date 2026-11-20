@@ -1,7 +1,7 @@
 from hashlib import sha256
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.db.models import Invitation, RefreshToken, SchoolMembership, User
@@ -14,6 +14,19 @@ def hash_token(raw: str) -> str:
 class AuthRepository:
     def __init__(self, db: AsyncSession):
         self.db = db
+
+    async def _bind_user(self, user_id: UUID) -> None:
+        """Scope membership reads to this user under RLS.
+
+        Login, refresh and portal checks run before an access token exists, so the
+        session has no app.user_id and school_memberships (USING user_id = app.user_id)
+        returned nothing: every school user got 403 "No school membership". Callers have
+        already authenticated user_id (password, Cognito, or refresh token).
+        """
+        tenant = self.db.info.get("rls_tenant")
+        if isinstance(tenant, dict) and not tenant.get("user_id"):
+            tenant["user_id"] = str(user_id)
+        await self.db.execute(text("SELECT set_config('app.user_id', :v, true)"), {"v": str(user_id)})
 
     async def get_user_by_email(self, email: str) -> User | None:
         result = await self.db.execute(select(User).where(User.email == email.lower()))
@@ -29,6 +42,7 @@ class AuthRepository:
         return user
 
     async def get_membership(self, user_id: UUID, school_id: UUID | None = None) -> SchoolMembership | None:
+        await self._bind_user(user_id)
         q = select(SchoolMembership).where(SchoolMembership.user_id == user_id)
         if school_id:
             q = q.where(SchoolMembership.school_id == school_id)
@@ -45,6 +59,7 @@ class AuthRepository:
         school_id: UUID | None = None,
     ) -> SchoolMembership | None:
         """Prefer membership matching the login portal role (teacher/student/…)."""
+        await self._bind_user(user_id)
         q = select(SchoolMembership).where(
             SchoolMembership.user_id == user_id,
             SchoolMembership.role == role,
@@ -55,6 +70,7 @@ class AuthRepository:
         return result.scalar_one_or_none()
 
     async def list_memberships(self, user_id: UUID) -> list[SchoolMembership]:
+        await self._bind_user(user_id)
         result = await self.db.execute(select(SchoolMembership).where(SchoolMembership.user_id == user_id))
         return list(result.scalars().all())
 

@@ -9,7 +9,7 @@ class UserStatusUpdate(BaseModel):
 
 class SchoolUserOut(BaseModel):
     id: UUID
-    email: EmailStr
+    email: str
     full_name: str
     is_active: bool
     role: str | None = None

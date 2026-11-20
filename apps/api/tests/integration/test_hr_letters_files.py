@@ -186,7 +186,7 @@ async def test_letter_validation_and_filters(api, hr_world):
     emp = await _employee_id(api, w.teacher_a, w.admin_a)
     bad = [
         {"employee_id": str(uuid4()), "letter_type": "OFFER"},
-        {"employee_id": emp, "letter_type": "PROMOTION"},
+        {"employee_id": emp, "letter_type": "BONUS"},
         {"employee_id": emp, "letter_type": "OFFER", "title": "x" * 201},
     ]
     codes = [

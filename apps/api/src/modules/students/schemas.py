@@ -94,6 +94,11 @@ class EnrollmentBrief(BaseModel):
     left_at: datetime | None = None
 
 
+class ParentCredential(BaseModel):
+    email: str
+    temporary_password: str
+
+
 class StudentOut(BaseModel):
     id: UUID
     school_id: UUID
@@ -134,6 +139,8 @@ class StudentOut(BaseModel):
     parents: list[StudentParentBrief] = []
     enrollments: list[EnrollmentBrief] = []
     temporary_password: str | None = None
+    # Logins created for new parents in the same request (temporary passwords shown once).
+    parent_credentials: list[ParentCredential] = []
 
     model_config = {"from_attributes": True}
 

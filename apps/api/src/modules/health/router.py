@@ -5,16 +5,39 @@ from sqlalchemy import text
 from src.core.config import get_settings
 from src.core.database import engine
 from src.core.redis import get_redis
+from src.modules.access.deps import public
 
 router = APIRouter(tags=["health"])
 
 
+@router.get("/")
+@public
+async def root():
+    """Load balancer default checks often use GET /."""
+    return await health()
+
+
 @router.get("/health")
+@public
 async def health():
-    return {"status": "ok", "service": "sybeez-api"}
+    """Liveness. Redis being down is degraded, not a failed health check."""
+    redis_ok = False
+    try:
+        redis = await get_redis()
+        redis_ok = bool(await redis.ping())
+    except Exception:
+        redis_ok = False
+    return {
+        "status": "ok" if redis_ok else "degraded",
+        "service": "sybeez-api",
+        "dependencies": {
+            "redis": {"ok": redis_ok},
+        },
+    }
 
 
 @router.get("/ready")
+@public
 async def ready():
     settings = get_settings()
 

@@ -1,0 +1,2018 @@
+[
+ {
+  "client": "mobile",
+  "method": "POST",
+  "path": "/auth/login",
+  "source": "providers/AuthProvider.tsx:100"
+ },
+ {
+  "client": "mobile",
+  "method": "POST",
+  "path": "/auth/logout",
+  "source": "providers/AuthProvider.tsx:133"
+ },
+ {
+  "client": "mobile",
+  "method": "GET",
+  "path": "/auth/me",
+  "source": "providers/AuthProvider.tsx:56"
+ },
+ {
+  "client": "mobile",
+  "method": "GET",
+  "path": "/homework/mine",
+  "source": "features/homework/api.ts:20"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/academic-years",
+  "source": "features/school/api/structure.api.ts:45"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/academic-years",
+  "source": "features/school/api/structure.api.ts:54"
+ },
+ {
+  "client": "web",
+  "method": "PATCH",
+  "path": "/academic-years/X",
+  "source": "features/school/api/structure.api.ts:69"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/access/memberships",
+  "source": "features/school/components/PortalAccessView.tsx:50"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/access/memberships/X/permissions",
+  "source": "features/school/components/PortalAccessView.tsx:187"
+ },
+ {
+  "client": "web",
+  "method": "PUT",
+  "path": "/access/memberships/X/permissions",
+  "source": "features/school/components/PortalAccessView.tsx:72"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/access/memberships/X/revoke",
+  "source": "features/school/components/PortalAccessView.tsx:89"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/access/memberships/X/role",
+  "source": "features/school/components/PortalAccessView.tsx:85"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/access/permissions",
+  "source": "features/school/components/PortalAccessView.tsx:56"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/admissions/applications",
+  "source": "features/admissions/api/admissions.api.ts:43"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/admissions/applications/X",
+  "source": "features/admissions/api/admissions.api.ts:47"
+ },
+ {
+  "client": "web",
+  "method": "PATCH",
+  "path": "/admissions/applications/X",
+  "source": "features/admissions/api/admissions.api.ts:52"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/admissions/applications/X/admit",
+  "source": "features/admissions/api/admissions.api.ts:82"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/admissions/applications/X/history",
+  "source": "features/admissions/api/admissions.api.ts:66"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/admissions/applications/X/status",
+  "source": "features/admissions/api/admissions.api.ts:59"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/admissions/enquiries",
+  "source": "features/admissions/api/admissions.api.ts:17"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/admissions/enquiries",
+  "source": "features/admissions/api/admissions.api.ts:29"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/admissions/enquiries/X/convert",
+  "source": "features/admissions/api/admissions.api.ts:36"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/ai-reports/X",
+  "source": "features/ai-reports/api/ai-reports.api.ts:20"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/ai-reports/generate",
+  "source": "features/ai-reports/api/ai-reports.api.ts:7"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/ai-reports/me",
+  "source": "features/ai-reports/api/ai-reports.api.ts:15"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/ai/evaluation",
+  "source": "features/ai-practice/api/practice.api.ts:49"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/ai/practice",
+  "source": "features/ai-practice/api/practice.api.ts:15"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/analytics/academic",
+  "source": "features/reports/api/reports.api.ts:19"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/analytics/attendance",
+  "source": "features/reports/api/reports.api.ts:23"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/analytics/classes",
+  "source": "features/reports/api/reports.api.ts:43"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/analytics/classes/X",
+  "source": "app/(teacher)/teacher/analytics/classes/detail/page.tsx:30"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/analytics/communication",
+  "source": "features/reports/api/reports.api.ts:39"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/analytics/exams",
+  "source": "features/reports/api/reports.api.ts:31"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/analytics/fees",
+  "source": "features/reports/api/reports.api.ts:35"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/analytics/homework",
+  "source": "features/reports/api/reports.api.ts:27"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/analytics/me",
+  "source": "features/reports/api/reports.api.ts:51"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/analytics/overview",
+  "source": "features/reports/api/reports.api.ts:15"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/analytics/students",
+  "source": "features/reports/api/reports.api.ts:47"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/analytics/students/X",
+  "source": "features/reports/api/reports.api.ts:55"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/attendance/alerts",
+  "source": "features/attendance/api/attendance.api.ts:169"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/attendance/children",
+  "source": "features/attendance/api/attendance.api.ts:121"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/attendance/leave-requests",
+  "source": "features/attendance/api/attendance.api.ts:129"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/attendance/leave-requests",
+  "source": "features/attendance/api/attendance.api.ts:141"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/attendance/leave-requests/X/cancel",
+  "source": "features/attendance/api/attendance.api.ts:159"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/attendance/leave-requests/X/decide",
+  "source": "features/attendance/api/attendance.api.ts:152"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/attendance/mark",
+  "source": "features/attendance/api/attendance.api.ts:86"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/attendance/me",
+  "source": "features/attendance/api/attendance.api.ts:93"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/attendance/me/monthly",
+  "source": "features/attendance/api/attendance.api.ts:97"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/attendance/overview",
+  "source": "features/attendance/api/attendance.api.ts:165"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/attendance/reports/classes",
+  "source": "features/attendance/api/attendance.api.ts:180"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/attendance/reports/students",
+  "source": "features/attendance/api/attendance.api.ts:175"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/attendance/roster",
+  "source": "features/attendance/api/attendance.api.ts:68"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/attendance/settings",
+  "source": "features/attendance/api/attendance.api.ts:184"
+ },
+ {
+  "client": "web",
+  "method": "PATCH",
+  "path": "/attendance/settings",
+  "source": "features/attendance/api/attendance.api.ts:188"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/attendance/student/X",
+  "source": "features/attendance/api/attendance.api.ts:111"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/attendance/student/X/audit",
+  "source": "features/attendance/api/attendance.api.ts:117"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/attendance/student/X/monthly",
+  "source": "features/attendance/api/attendance.api.ts:101"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/attendance/summary",
+  "source": "features/attendance/api/attendance.api.ts:73"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/auth/cognito/result",
+  "source": "providers/AuthProvider.tsx:307"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/auth/complete-new-password",
+  "source": "providers/AuthProvider.tsx:291"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/auth/confirm-forgot-password",
+  "source": "app/(auth)/reset-password/page.tsx:34"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/auth/forgot-password",
+  "source": "app/(auth)/forgot-password/page.tsx:22"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/auth/login",
+  "source": "providers/AuthProvider.tsx:268"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/auth/logout",
+  "source": "providers/AuthProvider.tsx:178"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/auth/me",
+  "source": "providers/AuthProvider.tsx:161"
+ },
+ {
+  "client": "web",
+  "method": "PATCH",
+  "path": "/auth/me",
+  "source": "providers/AuthProvider.tsx:329"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/auth/refresh",
+  "source": "providers/AuthProvider.tsx:168"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/bookstore/items",
+  "source": "features/bookstore/api/bookstore.api.ts:15"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/bookstore/items",
+  "source": "features/bookstore/api/bookstore.api.ts:51"
+ },
+ {
+  "client": "web",
+  "method": "DELETE",
+  "path": "/bookstore/items/X",
+  "source": "features/bookstore/api/bookstore.api.ts:65"
+ },
+ {
+  "client": "web",
+  "method": "PATCH",
+  "path": "/bookstore/items/X",
+  "source": "features/bookstore/api/bookstore.api.ts:58"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/bookstore/orders",
+  "source": "features/bookstore/api/bookstore.api.ts:69"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/bookstore/orders",
+  "source": "features/bookstore/api/bookstore.api.ts:30"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/bookstore/orders/mine",
+  "source": "features/bookstore/api/bookstore.api.ts:37"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/bookstore/wishlist",
+  "source": "features/bookstore/api/bookstore.api.ts:19"
+ },
+ {
+  "client": "web",
+  "method": "PUT",
+  "path": "/bookstore/wishlist",
+  "source": "features/bookstore/api/bookstore.api.ts:23"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/classes",
+  "source": "features/school/api/structure.api.ts:97"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/classes",
+  "source": "features/school/api/structure.api.ts:108"
+ },
+ {
+  "client": "web",
+  "method": "PATCH",
+  "path": "/classes/X",
+  "source": "features/school/api/structure.api.ts:123"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/communication/announcements",
+  "source": "features/communication/api/communication.api.ts:52"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/communication/announcements",
+  "source": "features/communication/api/communication.api.ts:66"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/communication/announcements/X/archive",
+  "source": "features/communication/api/communication.api.ts:79"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/communication/announcements/X/publish",
+  "source": "features/communication/api/communication.api.ts:73"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/communication/announcements/teacher",
+  "source": "features/communication/api/communication.api.ts:90"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/communication/contacts",
+  "source": "features/communication/api/communication.api.ts:109"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/communication/conversations",
+  "source": "features/communication/api/communication.api.ts:97"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/communication/conversations",
+  "source": "features/communication/api/communication.api.ts:118"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/communication/conversations/X/messages",
+  "source": "features/communication/api/communication.api.ts:125"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/communication/conversations/X/messages",
+  "source": "features/communication/api/communication.api.ts:131"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/communication/deliveries",
+  "source": "features/communication/api/communication.api.ts:149"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/communication/notifications",
+  "source": "features/communication/api/communication.api.ts:30"
+ },
+ {
+  "client": "web",
+  "method": "DELETE",
+  "path": "/communication/notifications/X",
+  "source": "features/communication/api/communication.api.ts:48"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/communication/notifications/X/read",
+  "source": "features/communication/api/communication.api.ts:38"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/communication/notifications/read-all",
+  "source": "features/communication/api/communication.api.ts:42"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/communication/notifications/unread-count",
+  "source": "features/communication/api/communication.api.ts:34"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/communication/preferences",
+  "source": "features/communication/api/communication.api.ts:138"
+ },
+ {
+  "client": "web",
+  "method": "PATCH",
+  "path": "/communication/preferences",
+  "source": "features/communication/api/communication.api.ts:142"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/communication/stats",
+  "source": "features/communication/api/communication.api.ts:155"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/diary/entries",
+  "source": "features/diary/api/diary.api.ts:6"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/diary/entries",
+  "source": "features/diary/api/diary.api.ts:16"
+ },
+ {
+  "client": "web",
+  "method": "DELETE",
+  "path": "/diary/entries/X",
+  "source": "features/diary/api/diary.api.ts:39"
+ },
+ {
+  "client": "web",
+  "method": "PATCH",
+  "path": "/diary/entries/X",
+  "source": "features/diary/api/diary.api.ts:32"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/documents",
+  "source": "features/study-materials/api/study-materials.api.ts:39"
+ },
+ {
+  "client": "web",
+  "method": "DELETE",
+  "path": "/documents/X",
+  "source": "features/study-materials/api/study-materials.api.ts:71"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/documents/upload",
+  "source": "features/study-materials/api/study-materials.api.ts:62"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/enrollments",
+  "source": "features/school/api/structure.api.ts:131"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/enrollments",
+  "source": "features/school/api/structure.api.ts:140"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/exams",
+  "source": "features/exams/api/exams.api.ts:51"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/exams",
+  "source": "features/exams/api/exams.api.ts:71"
+ },
+ {
+  "client": "web",
+  "method": "DELETE",
+  "path": "/exams/X",
+  "source": "features/exams/api/exams.api.ts:79"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/exams/X",
+  "source": "features/exams/api/exams.api.ts:55"
+ },
+ {
+  "client": "web",
+  "method": "PATCH",
+  "path": "/exams/X",
+  "source": "features/exams/api/exams.api.ts:75"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/exams/X/calculate",
+  "source": "features/exams/api/exams.api.ts:133"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/exams/X/marks",
+  "source": "features/exams/api/exams.api.ts:162"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/exams/X/marks",
+  "source": "features/exams/api/exams.api.ts:180"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/exams/X/marks/submit",
+  "source": "features/exams/api/exams.api.ts:187"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/exams/X/marks/unlock",
+  "source": "features/exams/api/exams.api.ts:151"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/exams/X/open",
+  "source": "features/exams/api/exams.api.ts:129"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/exams/X/overview",
+  "source": "features/exams/api/exams.api.ts:118"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/exams/X/publish",
+  "source": "features/exams/api/exams.api.ts:122"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/exams/X/schedule",
+  "source": "features/exams/api/exams.api.ts:111"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/exams/X/subjects",
+  "source": "features/exams/api/exams.api.ts:94"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/exams/X/unlock",
+  "source": "features/exams/api/exams.api.ts:144"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/exams/grading-scales",
+  "source": "features/exams/api/exams.api.ts:35"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/exams/grading-scales",
+  "source": "features/exams/api/exams.api.ts:44"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/exams/me/schedule",
+  "source": "features/exams/api/exams.api.ts:198"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/exams/mine",
+  "source": "features/exams/api/exams.api.ts:158"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/exams/parent/children",
+  "source": "features/exams/api/exams.api.ts:202"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/exams/parent/schedule",
+  "source": "features/exams/api/exams.api.ts:206"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/exams/types",
+  "source": "features/exams/api/exams.api.ts:27"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/exams/types",
+  "source": "features/exams/api/exams.api.ts:31"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/fees/accounts/X/adjustments",
+  "source": "features/fees/api/fees.api.ts:202"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/fees/categories",
+  "source": "features/fees/api/fees.api.ts:29"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/fees/categories",
+  "source": "features/fees/api/fees.api.ts:33"
+ },
+ {
+  "client": "web",
+  "method": "PATCH",
+  "path": "/fees/categories/X",
+  "source": "features/fees/api/fees.api.ts:219"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/fees/dashboard",
+  "source": "features/fees/api/fees.api.ts:25"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/fees/invoices",
+  "source": "features/fees/api/fees.api.ts:101"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/fees/invoices/X",
+  "source": "features/fees/api/fees.api.ts:105"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/fees/invoices/X/cancel",
+  "source": "features/fees/api/fees.api.ts:226"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/fees/invoices/generate",
+  "source": "features/fees/api/fees.api.ts:71"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/fees/late-fee-rules",
+  "source": "features/fees/api/fees.api.ts:254"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/fees/late-fee-rules",
+  "source": "features/fees/api/fees.api.ts:265"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/fees/late-fees/apply",
+  "source": "features/fees/api/fees.api.ts:272"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/fees/me/children",
+  "source": "features/fees/api/fees.api.ts:145"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/fees/me/invoices",
+  "source": "features/fees/api/fees.api.ts:149"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/fees/me/payments",
+  "source": "features/fees/components/PayOrderView.tsx:50"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/fees/me/receipts",
+  "source": "features/fees/api/fees.api.ts:157"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/fees/overdue/refresh",
+  "source": "features/fees/api/fees.api.ts:276"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/fees/payments",
+  "source": "features/fees/components/PayOrderView.tsx:51"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/fees/payments/X/refund",
+  "source": "features/fees/api/fees.api.ts:233"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/fees/payments/manual",
+  "source": "features/fees/api/fees.api.ts:115"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/fees/receipts/X",
+  "source": "features/fees/api/fees.api.ts:240"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/fees/reminders/run",
+  "source": "features/fees/api/fees.api.ts:280"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/fees/reports/collection",
+  "source": "features/fees/api/fees.api.ts:179"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/fees/reports/outstanding",
+  "source": "features/fees/api/fees.api.ts:185"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/fees/reports/overdue",
+  "source": "features/fees/api/fees.api.ts:288"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/fees/settings",
+  "source": "features/fees/api/fees.api.ts:161"
+ },
+ {
+  "client": "web",
+  "method": "PATCH",
+  "path": "/fees/settings",
+  "source": "features/fees/api/fees.api.ts:172"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/fees/structures",
+  "source": "features/fees/api/fees.api.ts:40"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/fees/structures",
+  "source": "features/fees/api/fees.api.ts:50"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/fees/structures/X",
+  "source": "features/fees/api/fees.api.ts:46"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/fees/structures/X/installments",
+  "source": "features/fees/api/fees.api.ts:64"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/fees/structures/X/publish",
+  "source": "features/fees/api/fees.api.ts:57"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/fees/students",
+  "source": "features/fees/api/fees.api.ts:87"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/fees/students/X",
+  "source": "features/fees/api/fees.api.ts:91"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/fees/students/X/ledger",
+  "source": "features/fees/api/fees.api.ts:95"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/grades",
+  "source": "features/school/api/structure.api.ts:76"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/grades",
+  "source": "features/school/api/structure.api.ts:80"
+ },
+ {
+  "client": "web",
+  "method": "PATCH",
+  "path": "/grades/X",
+  "source": "features/school/api/structure.api.ts:90"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/homework",
+  "source": "features/homework/api/homework.api.ts:28"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/homework",
+  "source": "features/homework/api/homework.api.ts:64"
+ },
+ {
+  "client": "web",
+  "method": "DELETE",
+  "path": "/homework/X",
+  "source": "features/homework/api/homework.api.ts:99"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/homework/X",
+  "source": "features/homework/api/homework.api.ts:47"
+ },
+ {
+  "client": "web",
+  "method": "PATCH",
+  "path": "/homework/X",
+  "source": "features/homework/api/homework.api.ts:84"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/homework/X/close",
+  "source": "features/homework/api/homework.api.ts:95"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/homework/X/publish",
+  "source": "features/homework/api/homework.api.ts:91"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/homework/X/submission",
+  "source": "features/homework/api/homework.api.ts:107"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/homework/X/submission",
+  "source": "features/homework/api/homework.api.ts:111"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/homework/X/submissions",
+  "source": "features/homework/api/homework.api.ts:103"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/homework/children",
+  "source": "features/homework/api/homework.api.ts:128"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/homework/children/X",
+  "source": "features/homework/api/homework.api.ts:139"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/homework/mine",
+  "source": "features/homework/api/homework.api.ts:43"
+ },
+ {
+  "client": "web",
+  "method": "PATCH",
+  "path": "/homework/submissions/X",
+  "source": "features/homework/api/homework.api.ts:121"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/hr/dashboard",
+  "source": "features/hrm/api/dashboard.api.ts:58"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/hr/leave/requests",
+  "source": "features/hr/api/hr.api.ts:42"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/hr/leave/requests",
+  "source": "features/hr/api/hr.api.ts:57"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/hr/leave/requests/X/cancel",
+  "source": "features/hr/api/hr.api.ts:64"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/hr/leave/requests/X/decide",
+  "source": "features/hr/api/hr.api.ts:84"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/hr/leave/requests/X/resubmit",
+  "source": "features/hr/api/hr.api.ts:69"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/hr/leave/requests/X/revoke",
+  "source": "features/hr/api/hr.api.ts:77"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/hr/leave/requests/me",
+  "source": "features/hr/api/hr.api.ts:46"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/hr/me/files",
+  "source": "features/hrm/api/files.api.ts:159"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/hr/me/letters",
+  "source": "features/hrm/api/letters.api.ts:139"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/hr/me/profile",
+  "source": "features/hrm/api/requests.api.ts:107"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/hr/me/workflows",
+  "source": "features/hrm/api/workflows.api.ts:133"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/hr/payroll/payslips",
+  "source": "features/hr/api/hr.api.ts:114"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/hr/payroll/payslips/X/pdf",
+  "source": "features/hr/api/hr.api.ts:128"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/hr/payroll/payslips/me",
+  "source": "features/hr/api/hr.api.ts:118"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/hr/payroll/runs",
+  "source": "features/hr/api/hr.api.ts:93"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/intelligence/cohort",
+  "source": "features/student-intelligence/api/student-intelligence.api.ts:182"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/intelligence/me",
+  "source": "features/student-intelligence/api/student-intelligence.api.ts:118"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/intelligence/students/X",
+  "source": "features/student-intelligence/api/student-intelligence.api.ts:125"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/notes",
+  "source": "features/notes/api/notes.api.ts:6"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/notes",
+  "source": "features/notes/api/notes.api.ts:10"
+ },
+ {
+  "client": "web",
+  "method": "DELETE",
+  "path": "/notes/X",
+  "source": "features/notes/api/notes.api.ts:24"
+ },
+ {
+  "client": "web",
+  "method": "PATCH",
+  "path": "/notes/X",
+  "source": "features/notes/api/notes.api.ts:17"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/notifications",
+  "source": "features/attendance/api/attendance.api.ts:196"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/notifications/X/read",
+  "source": "features/attendance/api/attendance.api.ts:200"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/parents",
+  "source": "features/school/api/people.api.ts:29"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/parents",
+  "source": "features/school/api/people.api.ts:41"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/parents/by-student/X",
+  "source": "features/school/api/people.api.ts:48"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/parents/by-student/X/link",
+  "source": "features/school/api/people.api.ts:55"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/parents/by-student/X/unlink",
+  "source": "features/school/api/people.api.ts:68"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/parents/me",
+  "source": "features/parent/api/children.api.ts:7"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/parents/me/children",
+  "source": "features/parent/api/children.api.ts:11"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/payments/orders",
+  "source": "features/fees/api/fees.api.ts:126"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/payments/verify",
+  "source": "features/fees/api/fees.api.ts:138"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/personal-life/goals",
+  "source": "features/goals/api/goals.api.ts:36"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/personal-life/goals",
+  "source": "features/goals/api/goals.api.ts:46"
+ },
+ {
+  "client": "web",
+  "method": "DELETE",
+  "path": "/personal-life/goals/X",
+  "source": "features/goals/api/goals.api.ts:71"
+ },
+ {
+  "client": "web",
+  "method": "PATCH",
+  "path": "/personal-life/goals/X",
+  "source": "features/goals/api/goals.api.ts:63"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/personal-life/goals/X/milestones/X/toggle",
+  "source": "features/goals/api/goals.api.ts:75"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/personal-life/habits",
+  "source": "features/habits/api/habits.api.ts:35"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/personal-life/habits",
+  "source": "features/habits/api/habits.api.ts:45"
+ },
+ {
+  "client": "web",
+  "method": "DELETE",
+  "path": "/personal-life/habits/X",
+  "source": "features/habits/api/habits.api.ts:70"
+ },
+ {
+  "client": "web",
+  "method": "PATCH",
+  "path": "/personal-life/habits/X",
+  "source": "features/habits/api/habits.api.ts:62"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/personal-life/habits/X/checkin",
+  "source": "features/habits/api/habits.api.ts:74"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/platform/activity",
+  "source": "features/platform/components/SchoolDetailView.tsx:168"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/platform/admins",
+  "source": "features/platform/components/AdminsListView.tsx:52"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/platform/admins/X",
+  "source": "app/(platform)/platform/admins/detail/page.tsx:33"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/platform/ai",
+  "source": "features/platform/components/PlatformAiView.tsx:67"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/platform/ai/settings",
+  "source": "features/platform/components/PlatformAiView.tsx:68"
+ },
+ {
+  "client": "web",
+  "method": "PATCH",
+  "path": "/platform/ai/settings",
+  "source": "features/platform/components/PlatformAiView.tsx:90"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/platform/dashboard",
+  "source": "features/platform/components/PlatformDashboard.tsx:56"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/platform/employees",
+  "source": "features/platform/components/TeamAccessView.tsx:50"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/platform/employees",
+  "source": "features/platform/components/InviteTeamView.tsx:85"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/platform/employees/X",
+  "source": "app/(platform)/platform/team/detail/page.tsx:48"
+ },
+ {
+  "client": "web",
+  "method": "PATCH",
+  "path": "/platform/employees/X",
+  "source": "app/(platform)/platform/team/detail/page.tsx:65"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/platform/plans",
+  "source": "features/platform/components/PlatformPlansView.tsx:52"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/platform/plans",
+  "source": "features/platform/components/PlatformPlansView.tsx:72"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/platform/plans/X",
+  "source": "app/(platform)/platform/plans/detail/page.tsx:50"
+ },
+ {
+  "client": "web",
+  "method": "PATCH",
+  "path": "/platform/plans/X",
+  "source": "app/(platform)/platform/plans/detail/page.tsx:79"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/platform/plans/X/archive",
+  "source": "app/(platform)/platform/plans/detail/page.tsx:108"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/platform/schools",
+  "source": "features/platform/components/AssignAdminView.tsx:42"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/platform/schools",
+  "source": "features/platform/components/CreateSchoolView.tsx:170"
+ },
+ {
+  "client": "web",
+  "method": "DELETE",
+  "path": "/platform/schools/X",
+  "source": "features/platform/components/SchoolDetailView.tsx:262"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/platform/schools/X",
+  "source": "features/platform/components/SchoolDetailView.tsx:104"
+ },
+ {
+  "client": "web",
+  "method": "PATCH",
+  "path": "/platform/schools/X",
+  "source": "features/platform/components/SchoolDetailView.tsx:294"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/platform/schools/X/admin/clear-mfa",
+  "source": "features/platform/components/SchoolDetailView.tsx:225"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/platform/schools/X/admin/reset-password",
+  "source": "features/platform/components/SchoolDetailView.tsx:209"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/platform/schools/X/admins",
+  "source": "features/platform/components/AddSchoolAdminLogin.tsx:31"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/platform/schools/X/invitations",
+  "source": "features/platform/components/SchoolDetailView.tsx:163"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/platform/schools/X/invitations",
+  "source": "features/platform/components/AssignAdminView.tsx:77"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/platform/schools/X/logo",
+  "source": "features/platform/components/SchoolDetailView.tsx:276"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/platform/search",
+  "source": "features/platform/components/PlatformGlobalSearch.tsx:41"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/platform/settings",
+  "source": "features/platform/components/PlatformSettingsView.tsx:55"
+ },
+ {
+  "client": "web",
+  "method": "PATCH",
+  "path": "/platform/settings",
+  "source": "features/platform/components/PlatformSettingsView.tsx:72"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/platform/staff",
+  "source": "features/platform/components/StaffAccessScreen.tsx:61"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/platform/staff",
+  "source": "features/platform/components/StaffAccessScreen.tsx:74"
+ },
+ {
+  "client": "web",
+  "method": "PUT",
+  "path": "/platform/staff/X/access",
+  "source": "features/platform/components/StaffAccessScreen.tsx:91"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/platform/staff/X/revoke",
+  "source": "features/platform/components/StaffAccessScreen.tsx:102"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/progress/practice-attempts",
+  "source": "features/ai-practice/api/practice.api.ts:31"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/progress/practice-attempts",
+  "source": "features/ai-practice/api/practice.api.ts:23"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/progress/recompute",
+  "source": "features/progress/api/progress.api.ts:41"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/progress/summary/X",
+  "source": "features/progress/api/progress.api.ts:35"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/progress/summary/me",
+  "source": "features/progress/api/progress.api.ts:31"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/reports",
+  "source": "features/reports/api/reports.api.ts:59"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/reports/generate",
+  "source": "features/reports/api/reports.api.ts:63"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/reports/saved",
+  "source": "features/reports/api/reports.api.ts:70"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/reports/saved",
+  "source": "features/reports/api/reports.api.ts:80"
+ },
+ {
+  "client": "web",
+  "method": "DELETE",
+  "path": "/reports/saved/X",
+  "source": "features/reports/api/reports.api.ts:87"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/results/children",
+  "source": "features/exams/api/exams.api.ts:210"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/results/children/X",
+  "source": "features/exams/api/exams.api.ts:214"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/results/exams/X",
+  "source": "features/exams/api/exams.api.ts:218"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/results/me",
+  "source": "features/exams/api/exams.api.ts:194"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/schools/me",
+  "source": "app/(school)/school-admin/settings/page.tsx:39"
+ },
+ {
+  "client": "web",
+  "method": "PATCH",
+  "path": "/schools/me",
+  "source": "app/(school)/school-admin/settings/page.tsx:65"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/schools/me/logo",
+  "source": "app/(school)/school-admin/settings/page.tsx:85"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/students",
+  "source": "features/school/api/students.api.ts:152"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/students",
+  "source": "features/school/api/students.api.ts:160"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/students/X",
+  "source": "features/school/api/students.api.ts:156"
+ },
+ {
+  "client": "web",
+  "method": "PATCH",
+  "path": "/students/X",
+  "source": "features/school/api/students.api.ts:167"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/students/X/enroll",
+  "source": "features/school/api/students.api.ts:184"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/students/X/photo",
+  "source": "features/school/api/students.api.ts:207"
+ },
+ {
+  "client": "web",
+  "method": "PATCH",
+  "path": "/students/X/status",
+  "source": "features/school/api/students.api.ts:174"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/students/X/transfer",
+  "source": "features/school/api/students.api.ts:191"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/students/X/withdraw",
+  "source": "features/school/api/students.api.ts:198"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/students/import/confirm",
+  "source": "features/school/api/students.api.ts:226"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/students/import/validate",
+  "source": "features/school/api/students.api.ts:214"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/subjects",
+  "source": "features/subjects/api/subjects.api.ts:6"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/subjects",
+  "source": "features/school/api/teachers.api.ts:169"
+ },
+ {
+  "client": "web",
+  "method": "DELETE",
+  "path": "/subjects/X",
+  "source": "features/school/api/teachers.api.ts:186"
+ },
+ {
+  "client": "web",
+  "method": "PATCH",
+  "path": "/subjects/X",
+  "source": "features/school/api/teachers.api.ts:179"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/syllabus",
+  "source": "features/syllabus/api/syllabus.api.ts:10"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/syllabus",
+  "source": "features/school/api/syllabus.api.ts:45"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/syllabus/X",
+  "source": "features/school/api/syllabus.api.ts:35"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/syllabus/X/topics",
+  "source": "features/syllabus/api/syllabus.api.ts:14"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/syllabus/X/topics",
+  "source": "features/school/api/syllabus.api.ts:64"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/syllabus/mine",
+  "source": "features/syllabus/api/syllabus.api.ts:6"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/teacher-assignments",
+  "source": "features/school/api/teachers.api.ts:199"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/teacher-assignments",
+  "source": "features/school/api/teachers.api.ts:214"
+ },
+ {
+  "client": "web",
+  "method": "DELETE",
+  "path": "/teacher-assignments/X",
+  "source": "features/school/api/teachers.api.ts:221"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/teacher-assignments/mine",
+  "source": "features/school/api/teachers.api.ts:205"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/teachers",
+  "source": "features/school/api/teachers.api.ts:109"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/teachers",
+  "source": "features/school/api/teachers.api.ts:125"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/teachers/X",
+  "source": "features/school/api/teachers.api.ts:113"
+ },
+ {
+  "client": "web",
+  "method": "PATCH",
+  "path": "/teachers/X",
+  "source": "features/school/api/teachers.api.ts:135"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/teachers/X/photo",
+  "source": "features/school/api/teachers.api.ts:151"
+ },
+ {
+  "client": "web",
+  "method": "PATCH",
+  "path": "/teachers/X/status",
+  "source": "features/school/api/teachers.api.ts:142"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/teachers/me",
+  "source": "features/school/api/teachers.api.ts:117"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/teachers/me/dashboard",
+  "source": "features/school/api/teachers.api.ts:121"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/teaching-records",
+  "source": "features/teaching-record/api/teaching-record.api.ts:7"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/teaching-records",
+  "source": "features/teaching-record/api/teaching-record.api.ts:11"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/timetable",
+  "source": "features/timetable/api/timetable.api.ts:119"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/timetable",
+  "source": "features/timetable/api/timetable.api.ts:134"
+ },
+ {
+  "client": "web",
+  "method": "DELETE",
+  "path": "/timetable/X",
+  "source": "features/timetable/api/timetable.api.ts:158"
+ },
+ {
+  "client": "web",
+  "method": "PATCH",
+  "path": "/timetable/X",
+  "source": "features/timetable/api/timetable.api.ts:151"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/timetable/grid",
+  "source": "features/timetable/api/timetable.api.ts:104"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/timetable/mine",
+  "source": "features/attendance/api/attendance.api.ts:63"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/timetable/parent",
+  "source": "features/timetable/api/timetable.api.ts:174"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/timetable/parent/children",
+  "source": "features/timetable/api/timetable.api.ts:170"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/timetable/periods",
+  "source": "features/timetable/api/timetable.api.ts:27"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/timetable/periods",
+  "source": "features/timetable/api/timetable.api.ts:38"
+ },
+ {
+  "client": "web",
+  "method": "DELETE",
+  "path": "/timetable/periods/X",
+  "source": "features/timetable/api/timetable.api.ts:62"
+ },
+ {
+  "client": "web",
+  "method": "PATCH",
+  "path": "/timetable/periods/X",
+  "source": "features/timetable/api/timetable.api.ts:55"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/timetable/periods/reorder",
+  "source": "features/timetable/api/timetable.api.ts:66"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/timetable/rooms",
+  "source": "features/timetable/api/timetable.api.ts:74"
+ },
+ {
+  "client": "web",
+  "method": "POST",
+  "path": "/timetable/rooms",
+  "source": "features/timetable/api/timetable.api.ts:83"
+ },
+ {
+  "client": "web",
+  "method": "DELETE",
+  "path": "/timetable/rooms/X",
+  "source": "features/timetable/api/timetable.api.ts:100"
+ },
+ {
+  "client": "web",
+  "method": "PATCH",
+  "path": "/timetable/rooms/X",
+  "source": "features/timetable/api/timetable.api.ts:93"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/timetable/settings",
+  "source": "features/timetable/api/timetable.api.ts:15"
+ },
+ {
+  "client": "web",
+  "method": "PATCH",
+  "path": "/timetable/settings",
+  "source": "features/timetable/api/timetable.api.ts:19"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/timetable/student",
+  "source": "features/timetable/api/timetable.api.ts:166"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/timetable/teacher",
+  "source": "features/timetable/api/timetable.api.ts:162"
+ },
+ {
+  "client": "web",
+  "method": "GET",
+  "path": "/timetable/today",
+  "source": "features/timetable/api/timetable.api.ts:183"
+ },
+ {
+  "client": "web",
+  "method": "PATCH",
+  "path": "/users/X/status",
+  "source": "features/school/api/people.api.ts:96"
+ }
+]

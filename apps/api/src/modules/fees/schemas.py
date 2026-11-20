@@ -2,7 +2,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class FeeCategoryCreate(BaseModel):
@@ -10,12 +10,18 @@ class FeeCategoryCreate(BaseModel):
     code: str = Field(min_length=1, max_length=64)
     description: str | None = None
     active: bool = True
+    is_80c_eligible: bool = False
+    gst_rate: Decimal = Field(default=Decimal("0"), ge=0)
+    tally_ledger: str | None = None
 
 
 class FeeCategoryUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=128)
     description: str | None = None
     active: bool | None = None
+    is_80c_eligible: bool | None = None
+    gst_rate: Decimal | None = Field(default=None, ge=0)
+    tally_ledger: str | None = None
 
 
 class FeeCategoryOut(BaseModel):
@@ -27,6 +33,9 @@ class FeeCategoryOut(BaseModel):
     code: str
     description: str | None = None
     active: bool
+    is_80c_eligible: bool = False
+    gst_rate: Decimal = Decimal("0")
+    tally_ledger: str | None = None
 
 
 class StructureItemIn(BaseModel):
@@ -195,11 +204,13 @@ class ManualPaymentIn(BaseModel):
     reference: str | None = None
     paid_at: datetime | None = None
     notes: str | None = None
+    idempotency_key: str | None = Field(default=None, max_length=255)
 
 
 class PaymentOrderIn(BaseModel):
     invoice_id: UUID
     amount: Decimal | None = None
+    idempotency_key: str | None = Field(default=None, max_length=255)
 
 
 class PaymentOrderOut(BaseModel):
@@ -210,6 +221,47 @@ class PaymentOrderOut(BaseModel):
     currency: str
     gateway: str
     public_key: str | None = None
+    platform_fee_amount: Decimal | None = None
+    transfer_amount: Decimal | None = None
+    route_account_id: str | None = None
+
+
+class PaymentLinkIn(BaseModel):
+    invoice_id: UUID
+    amount: Decimal | None = None
+    idempotency_key: str | None = Field(default=None, max_length=255)
+
+
+class PaymentLinkOut(BaseModel):
+    payment_id: UUID
+    payment_number: str
+    invoice_id: UUID
+    order_id: str
+    amount: Decimal
+    currency: str
+    gateway: str
+    url: str
+    status: str
+
+
+class OnlinePaymentRow(BaseModel):
+    payment_id: UUID
+    payment_number: str
+    invoice_id: UUID | None = None
+    student_name: str | None = None
+    amount: Decimal
+    currency: str
+    status: str
+    gateway: str | None = None
+    gateway_order_id: str | None = None
+    gateway_payment_id: str | None = None
+    paid_at: datetime | None = None
+    created_at: datetime
+    payment_link: bool = False
+    transfer_status: str | None = None
+    transfer_amount: Decimal | None = None
+    platform_fee_amount: Decimal | None = None
+    settlement_id: str | None = None
 
 
 class PaymentVerifyIn(BaseModel):
@@ -244,6 +296,19 @@ class PaymentOut(BaseModel):
 class RefundIn(BaseModel):
     amount: Decimal = Field(gt=0)
     reason: str = Field(min_length=1)
+    idempotency_key: str | None = Field(default=None, max_length=255)
+
+
+class RefundOut(BaseModel):
+    id: UUID
+    school_id: UUID
+    payment_id: UUID
+    amount: Decimal
+    reason: str
+    status: str
+    gateway_refund_id: str | None = None
+    created_by: UUID | None = None
+    approved_by: UUID | None = None
 
 
 class ReceiptOut(BaseModel):
@@ -259,6 +324,9 @@ class ReceiptOut(BaseModel):
     student_name: str | None = None
     invoice_number: str | None = None
     method: str | None = None
+    status: str | None = None
+    copy_label: str | None = None
+    cancel_reason: str | None = None
 
 
 class StudentFeeSummaryOut(BaseModel):
@@ -306,6 +374,21 @@ class FeeSettingsOut(BaseModel):
     invoice_prefix: str
     receipt_prefix: str
     payment_prefix: str
+    linked_account_id: str | None = None
+    route_status: str = "not_started"
+    platform_fee_percent: Decimal = Decimal("0")
+    platform_fee_fixed: Decimal | None = None
+    settlement_on_hold: bool = False
+    allow_platform_settlement: bool = False
+    bank_account_last4: str | None = None
+    bank_ifsc: str | None = None
+    beneficiary_name: str | None = None
+    legal_business_name: str | None = None
+    tally_ledger_map: dict[str, str] = {}
+    section_80c_template: str = ""
+    section_80c_signatory: str = "Principal"
+    section_80c_heads: list[str] = ["TUITION"]
+    financial_year_start_month: int = 4
 
 
 class FeeSettingsUpdate(BaseModel):
@@ -315,6 +398,64 @@ class FeeSettingsUpdate(BaseModel):
     gateway_provider: str | None = None
     gateway_mode: str | None = None
     gateway_public_key: str | None = None
+    tally_ledger_map: dict[str, str] | None = None
+    section_80c_template: str | None = Field(default=None, max_length=8000)
+    section_80c_signatory: str | None = Field(default=None, max_length=160)
+    section_80c_heads: list[str] | None = None
+    financial_year_start_month: int | None = Field(default=None, ge=1, le=12)
+
+    @field_validator("tally_ledger_map")
+    @classmethod
+    def _ledger_map(cls, value: dict[str, str] | None) -> dict[str, str] | None:
+        if value is None:
+            return None
+        if len(value) > 40:
+            raise ValueError("At most 40 ledger names")
+        cleaned: dict[str, str] = {}
+        for key, name in value.items():
+            code = str(key).strip().upper()
+            ledger = str(name).strip()
+            if not code or len(code) > 32 or not code.replace("_", "").isalnum():
+                raise ValueError("Ledger codes are short names like TUITION")
+            if not ledger or len(ledger) > 120:
+                raise ValueError("Each ledger name must be 1 to 120 characters")
+            cleaned[code] = ledger
+        return cleaned
+
+    @field_validator("section_80c_signatory")
+    @classmethod
+    def _signatory(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        if not text:
+            raise ValueError("The signatory name cannot be blank")
+        return text
+
+    @field_validator("section_80c_heads")
+    @classmethod
+    def _heads(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        if len(value) > 40:
+            raise ValueError("At most 40 fee heads")
+        cleaned: list[str] = []
+        for item in value:
+            code = str(item).strip().upper()
+            if not code or len(code) > 32 or not code.replace("_", "").isalnum():
+                raise ValueError("Fee heads are short names like TUITION")
+            if code not in cleaned:
+                cleaned.append(code)
+        if not cleaned:
+            raise ValueError("Choose at least one fee head for the 80C certificate")
+        return cleaned
+
+    @field_validator("section_80c_template")
+    @classmethod
+    def _wording(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip()
 
 
 class LateFeeRuleIn(BaseModel):
@@ -323,6 +464,7 @@ class LateFeeRuleIn(BaseModel):
     calculation_type: str = "FIXED"
     amount: Decimal = Field(ge=0)
     maximum_amount: Decimal | None = None
+    slabs: list[dict] | None = None
     active: bool = True
 
 
@@ -335,6 +477,7 @@ class LateFeeRuleOut(BaseModel):
     calculation_type: str
     amount: Decimal
     maximum_amount: Decimal | None = None
+    slabs: list[dict] | None = None
     active: bool
 
 

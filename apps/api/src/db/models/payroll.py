@@ -54,6 +54,9 @@ class PayrollSchoolSettings(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     esi_wage_ceiling: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=Decimal("21000"))
     rounding_mode: Mapped[str] = mapped_column(String(16), nullable=False, default="NEAREST_RUPEE")
     lop_base: Mapped[str] = mapped_column(String(16), nullable=False, default="BASIC")
+    # DO_NOT_DEDUCT: a day with no attendance mark is not loss of pay (flagged instead).
+    # DEDUCT: an unmarked working day that has already passed is loss of pay.
+    unmarked_attendance_policy: Mapped[str] = mapped_column(String(32), nullable=False, default="DO_NOT_DEDUCT")
     pay_date_rule: Mapped[str] = mapped_column(String(32), nullable=False, default="LAST_WORKING_DAY")
     pay_day: Mapped[int | None] = mapped_column(Integer, nullable=True)
     auto_publish: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

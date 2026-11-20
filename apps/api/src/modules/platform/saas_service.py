@@ -15,6 +15,7 @@ from src.modules.audit.repository import AuditRepository
 from src.modules.platform.schemas import (
     PlanCreate,
     PlanOut,
+    PlanPricing,
     PlanUpdate,
     PlatformAiOverview,
     PlatformAiSettingsOut,
@@ -24,6 +25,21 @@ from src.modules.platform.schemas import (
     MetricPoint,
 )
 from src.shared.enums import SubscriptionStatus
+
+
+def _pricing_of(entitlements: dict | None) -> PlanPricing:
+    raw = (entitlements or {}).get("pricing") or {}
+    try:
+        return PlanPricing.model_validate(raw)
+    except Exception:  # noqa: BLE001 - older free-form rows
+        return PlanPricing()
+
+
+def _with_pricing(entitlements: dict, pricing: PlanPricing | None) -> dict:
+    out = dict(entitlements or {})
+    if pricing is not None:
+        out["pricing"] = pricing.model_dump()
+    return out
 
 
 class PlatformSaasService:
@@ -82,7 +98,7 @@ class PlatformSaasService:
             max_teachers=data.max_teachers,
             max_storage_gb=data.max_storage_gb,
             ai_monthly_tokens=data.ai_monthly_tokens,
-            entitlements=data.entitlements or {},
+            entitlements=_with_pricing(data.entitlements or {}, data.pricing),
             is_public=data.is_public,
             sort_order=data.sort_order,
         )
@@ -101,8 +117,15 @@ class PlatformSaasService:
         plan = await self.db.get(PlatformPlan, plan_id)
         if not plan:
             raise NotFoundError("Plan not found")
-        for k, v in data.model_dump(exclude_unset=True).items():
+        changes = data.model_dump(exclude_unset=True)
+        pricing = changes.pop("pricing", None)
+        for k, v in changes.items():
             setattr(plan, k, v)
+        if pricing is not None or "entitlements" in changes:
+            plan.entitlements = _with_pricing(
+                dict(plan.entitlements or {}),
+                data.pricing if pricing is not None else _pricing_of(plan.entitlements),
+            )
         await self.db.flush()
         await self.audit.write(
             action="platform.plan.update",
@@ -113,6 +136,47 @@ class PlatformSaasService:
             details={"fields": list(data.model_dump(exclude_unset=True).keys())},
         )
         return self._plan_out(plan)
+
+    async def delete_plan(self, actor: CurrentUser, plan_id: UUID) -> dict:
+        """Permanently remove a plan and clear it from schools that were using it.
+
+        Subscription rows are tenant-scoped. Bypass has to be on before they are read or updated,
+        or row-level security hides them from a platform session that has no school.
+        """
+        from src.modules.fees.tenant import open_platform_school, set_rls_bypass
+
+        await set_rls_bypass(self.db, True)
+        plan = await self.db.get(PlatformPlan, plan_id)
+        if not plan:
+            raise NotFoundError("Plan not found")
+        subs = list(
+            (
+                await self.db.execute(select(Subscription).where(Subscription.plan_code == plan.code))
+            ).scalars().all()
+        )
+        school_ids = []
+        for sub in subs:
+            school_ids.append(str(sub.school_id))
+            await open_platform_school(self.db, sub.school_id)
+            sub.plan_code = "unassigned"
+        code = plan.code
+        name = plan.name
+        await self.db.delete(plan)
+        await self.db.flush()
+        await self.audit.write(
+            action="platform.super_admin.delete",
+            actor_id=actor.id,
+            resource_type="platform_plan",
+            resource_id=str(plan_id),
+            message=f"Plan permanently deleted: {name}",
+            details={
+                "mode": "hard",
+                "label": name,
+                "plan_code": code,
+                "schools_detached": school_ids,
+            },
+        )
+        return {"deleted": True, "plan_code": code, "schools_detached": len(school_ids)}
 
     async def archive_plan(self, actor: CurrentUser, plan_id: UUID) -> PlanOut:
         plan = await self.db.get(PlatformPlan, plan_id)
@@ -143,6 +207,7 @@ class PlatformSaasService:
             max_storage_gb=plan.max_storage_gb,
             ai_monthly_tokens=plan.ai_monthly_tokens,
             entitlements=plan.entitlements or {},
+            pricing=_pricing_of(plan.entitlements),
             is_active=plan.is_active,
             is_public=plan.is_public,
             sort_order=plan.sort_order,
@@ -155,17 +220,38 @@ class PlatformSaasService:
         return PlatformSettingsOut.model_validate(row)
 
     async def update_settings(self, actor: CurrentUser, data: PlatformSettingsUpdate) -> PlatformSettingsOut:
+        from src.core.exceptions import ValidationError
+
         row = await self._ensure_settings()
-        for k, v in data.model_dump(exclude_unset=True).items():
-            setattr(row, k, v)
+        changes = data.model_dump(exclude_unset=True)
+        if "default_timezone" in changes and changes["default_timezone"] is not None:
+            zone = str(changes["default_timezone"]).strip()
+            if not zone or len(zone) > 64 or any(ch.isspace() for ch in zone):
+                raise ValidationError("Timezone must be an IANA name such as Asia/Kolkata")
+            changes["default_timezone"] = zone
+        if "default_currency" in changes and changes["default_currency"] is not None:
+            code = str(changes["default_currency"]).strip().upper() or "INR"
+            if len(code) > 8:
+                raise ValidationError("Currency code is too long")
+            changes["default_currency"] = code
+        if "default_trial_days" in changes and changes["default_trial_days"] is not None:
+            days = int(changes["default_trial_days"])
+            if not 1 <= days <= 3650:
+                raise ValidationError("Free-trial days must be between 1 and 3650")
+            changes["default_trial_days"] = days
+        watched = ("default_timezone", "default_currency", "default_trial_days")
+        before = {key: getattr(row, key) for key in watched}
+        for key, value in changes.items():
+            setattr(row, key, value)
         await self.db.flush()
+        after = {key: getattr(row, key) for key in watched}
         await self.audit.write(
             action="platform.settings.update",
             actor_id=actor.id,
             resource_type="platform_settings",
             resource_id=str(row.id),
             message="Platform settings updated",
-            details={"fields": list(data.model_dump(exclude_unset=True).keys())},
+            details={"fields": list(changes.keys()), "before": before, "after": after},
         )
         return PlatformSettingsOut.model_validate(row)
 
@@ -221,6 +307,9 @@ class PlatformSaasService:
         return row
 
     async def ai_overview(self) -> PlatformAiOverview:
+        from src.modules.fees.tenant import set_rls_bypass
+
+        await set_rls_bypass(self.db, True)
         since = datetime.now(timezone.utc) - timedelta(days=30)
         rows = list(
             (
@@ -234,7 +323,11 @@ class PlatformSaasService:
         cost = float(sum(float(r.estimated_cost or 0) for r in rows))
         errors = sum(r.errors for r in rows)
         safety = sum(r.safety_blocks for r in rows)
-        schools = {r.school_id for r in rows if r.school_id}
+        schools = {
+            row.school_id
+            for row in rows
+            if row.school_id is not None and (int(row.input_tokens or 0) + int(row.output_tokens or 0) + int(getattr(row, "total_tokens", 0) or 0)) > 0
+        }
 
         by_provider: dict[str, int] = {}
         by_model: dict[str, int] = {}

@@ -6,5 +6,5 @@ from src.main import app
 
 @pytest.fixture
 def client():
-    with TestClient(app) as c:
+    with TestClient(app, headers={"Origin": "http://testserver"}) as c:
         yield c

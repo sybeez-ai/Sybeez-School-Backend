@@ -516,6 +516,22 @@ class ExamService:
 
     # ── exams CRUD ───────────────────────────────────────────
 
+    async def _exam_class_ids(self, exam: Exam) -> set[UUID]:
+        sections = (
+            await self.db.execute(select(ExamSection.class_id).where(ExamSection.exam_id == exam.id))
+        ).scalars().all()
+        ids = set(sections)
+        if exam.class_id:
+            ids.add(exam.class_id)
+        return ids
+
+    async def _assert_teacher_sees_exam(self, school_id: UUID, user_id: UUID, exam: Exam) -> None:
+        from src.modules.access.scope import teacher_class_ids
+
+        classes = await teacher_class_ids(self.db, user_id, school_id)
+        if not (await self._exam_class_ids(exam)).intersection(classes):
+            raise NotFoundError("Exam not found")
+
     async def list_exams(
         self,
         school_id: UUID,
@@ -523,6 +539,8 @@ class ExamService:
         academic_year_id: UUID | None = None,
         status: str | None = None,
         grade_id: UUID | None = None,
+        user_id: UUID | None = None,
+        role: str | None = None,
     ) -> list[ExamOut]:
         q = select(Exam).where(Exam.school_id == school_id).order_by(Exam.created_at.desc())
         if academic_year_id:
@@ -531,11 +549,30 @@ class ExamService:
             q = q.where(Exam.status == status)
         if grade_id:
             q = q.where(Exam.grade_id == grade_id)
-        rows = (await self.db.execute(q)).scalars().all()
+        rows = list((await self.db.execute(q)).scalars().all())
+        if role == UserRole.TEACHER.value and user_id is not None:
+            from src.modules.access.scope import teacher_class_ids
+
+            classes = await teacher_class_ids(self.db, user_id, school_id)
+            visible = []
+            for row in rows:
+                if (await self._exam_class_ids(row)).intersection(classes):
+                    visible.append(row)
+            rows = visible
         return [await self._to_exam_out(r) for r in rows]
 
-    async def get_exam(self, school_id: UUID, exam_id: UUID) -> ExamOut:
-        return await self._to_exam_out(await self._get_exam(school_id, exam_id))
+    async def get_exam(
+        self,
+        school_id: UUID,
+        exam_id: UUID,
+        *,
+        user_id: UUID | None = None,
+        role: str | None = None,
+    ) -> ExamOut:
+        exam = await self._get_exam(school_id, exam_id)
+        if role == UserRole.TEACHER.value and user_id is not None:
+            await self._assert_teacher_sees_exam(school_id, user_id, exam)
+        return await self._to_exam_out(exam)
 
     async def create_exam(
         self, school_id: UUID, data: ExamCreate, *, created_by: UUID | None = None
@@ -691,8 +728,17 @@ class ExamService:
         await self.db.delete(row)
         await self.db.commit()
 
-    async def list_schedule(self, school_id: UUID, exam_id: UUID) -> list[ExamScheduleOut]:
+    async def list_schedule(
+        self,
+        school_id: UUID,
+        exam_id: UUID,
+        *,
+        user_id: UUID | None = None,
+        role: str | None = None,
+    ) -> list[ExamScheduleOut]:
         exam = await self._get_exam(school_id, exam_id)
+        if role == UserRole.TEACHER.value and user_id is not None:
+            await self._assert_teacher_sees_exam(school_id, user_id, exam)
         out = await self._to_exam_out(exam)
         return out.schedules
 

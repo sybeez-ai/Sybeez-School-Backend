@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import CurrentUser, require_roles, require_school_scope
+from src.modules.access.deps import require_permission
 from src.core.database import get_db
 from src.core.exceptions import ForbiddenError
 from src.db.models import Notification
@@ -30,7 +31,7 @@ class NotificationOut(BaseModel):
 
 
 @router.get("/health")
-async def notifications_health():
+async def notifications_health(_: Annotated[CurrentUser, Depends(require_permission("notifications.read"))]):
     return {"module": "notifications", "status": "ok"}
 
 
@@ -56,12 +57,16 @@ async def mark_read(
         UserRole.STUDENT,
         UserRole.PARENT,
         UserRole.TEACHER,
+        UserRole.STAFF,
         UserRole.SCHOOL_ADMIN,
+        UserRole.HR,
         UserRole.HR_MANAGER,
         UserRole.PAYROLL_ADMIN,
         UserRole.PAYROLL_APPROVER,
         UserRole.ACCOUNTANT,
+        UserRole.CASHIER,
         UserRole.AUDITOR,
+        UserRole.FINANCE,
     ))],
 ):
     row = await db.get(Notification, notification_id)

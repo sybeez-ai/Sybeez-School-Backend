@@ -76,7 +76,7 @@ class AdmissionApplicationOut(BaseModel):
     created_by: UUID | None
     first_name: str
     last_name: str
-    email: EmailStr
+    email: str
     phone: str | None
     date_of_birth: date | None
     desired_grade_id: UUID | None
@@ -130,6 +130,37 @@ class AdmitApplicationIn(BaseModel):
     date_of_birth: date | None = None
     # Optional parent links at admit-time
     parents: list[ParentLinkInput] = []
+
+
+class AdmissionFormField(BaseModel):
+    key: str = Field(max_length=32)
+    label: str = Field(min_length=1, max_length=80)
+    enabled: bool = True
+    required: bool = False
+
+
+class AdmissionFormOut(BaseModel):
+    intro: str = Field(default="", max_length=400)
+    fields: list[AdmissionFormField]
+
+
+class PublicAdmissionOut(BaseModel):
+    school_name: str
+    intro: str = ""
+    fields: list[AdmissionFormField]
+
+
+class PublicEnquiryIn(BaseModel):
+    student_name: str = Field(default="", max_length=200)
+    parent_name: str | None = Field(default=None, max_length=200)
+    phone: str | None = Field(default=None, max_length=32)
+    email: str | None = Field(default=None, max_length=255)
+    notes: str | None = Field(default=None, max_length=2000)
+    company_website: str | None = Field(default=None, max_length=200)
+
+
+class PublicEnquiryOut(BaseModel):
+    ok: bool = True
 
 
 class AdmitApplicationOut(BaseModel):

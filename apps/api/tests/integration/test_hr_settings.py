@@ -168,7 +168,7 @@ async def test_settings_drive_hr_behaviour(api, hr_world):
             headers=w.admin_a.headers,
             json={
                 "employee_id": emp,
-                "letter_type": "EXPERIENCE",
+                "letter_type": "EMPLOYMENT_VERIFICATION",
                 "issue_date": "2026-10-01",
             },
         )
@@ -228,7 +228,7 @@ async def test_settings_drive_hr_behaviour(api, hr_world):
             headers=w.admin_b.headers,
             json={
                 "employee_id": emp_b,
-                "letter_type": "EXPERIENCE",
+                "letter_type": "EMPLOYMENT_VERIFICATION",
                 "issue_date": "2026-10-01",
             },
         )

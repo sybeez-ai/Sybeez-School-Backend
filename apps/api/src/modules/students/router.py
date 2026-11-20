@@ -6,7 +6,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import CurrentUser, require_roles
+from src.modules.access.deps import require_permission
+from src.shared.enums import UserRole
 from src.core.database import get_db
+from src.db.models import Student as _StudentModel
+from src.modules.schools.login_reset import LoginCredentialsOut, reset_login
 from src.core.exceptions import ForbiddenError
 from src.modules.students.schemas import (
     BulkImportConfirmOut,
@@ -20,15 +24,15 @@ from src.modules.students.schemas import (
     StudentUpdate,
 )
 from src.modules.students.service import StudentService
-from src.shared.enums import UserRole
+from src.shared.pagination import Page, PageQuery
 
 router = APIRouter(prefix="/students", tags=["students"])
 
 
-def _sid(u: CurrentUser) -> UUID:
-    if u.school_id is None:
+def _sid(user: CurrentUser) -> UUID:
+    if user.school_id is None:
         raise ForbiddenError("School context required")
-    return u.school_id
+    return user.school_id
 
 
 class EnrollBody(BaseModel):
@@ -49,7 +53,7 @@ class WithdrawBody(BaseModel):
 @router.get("", response_model=StudentPage)
 async def list_students(
     db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN, UserRole.TEACHER))],
+    user: Annotated[CurrentUser, Depends(require_permission("students.read"))],
     q: str | None = Query(None),
     academic_year_id: UUID | None = Query(None),
     grade_id: UUID | None = Query(None),
@@ -71,6 +75,7 @@ async def list_students(
         sort=sort,
         actor_user_id=user.id,
         actor_role=user.role,
+        user=user,
     )
 
 
@@ -78,7 +83,7 @@ async def list_students(
 async def create_student(
     body: StudentCreate,
     db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    user: Annotated[CurrentUser, Depends(require_permission("students.write"))],
 ):
     return await StudentService(db).create(_sid(user), body)
 
@@ -105,13 +110,13 @@ async def confirm_student_import(
 async def get_student(
     student_id: UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN, UserRole.TEACHER))],
+    user: Annotated[CurrentUser, Depends(require_permission("students.read"))],
 ):
     svc = StudentService(db)
     school_id = _sid(user)
     if user.role == UserRole.TEACHER:
         await svc.assert_teacher_can_view(school_id, student_id, user.id)
-    return await svc.get(school_id, student_id)
+    return await svc.get(school_id, student_id, user)
 
 
 @router.post("/{student_id}/photo", response_model=StudentOut)
@@ -182,3 +187,15 @@ async def withdraw_student(
     user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
 ):
     return await StudentService(db).withdraw(_sid(user), student_id, notes=body.notes)
+
+
+@router.post("/{student_id}/reset-login", response_model=LoginCredentialsOut)
+async def reset_student_login(
+    student_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+):
+    """Issue a new temporary password (shown once); the student must change it at sign-in."""
+    return await reset_login(
+        db, school_id=_sid(user), model=_StudentModel, entity_id=student_id, actor_id=user.id
+    )

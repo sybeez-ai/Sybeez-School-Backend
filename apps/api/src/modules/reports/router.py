@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import CurrentUser, require_roles
+from src.modules.access.deps import require_permission
 from src.core.database import get_db
 from src.core.exceptions import ForbiddenError
 from src.modules.reports.schemas import ReportGenerateIn, SavedReportCreate, SavedReportUpdate
@@ -21,7 +22,7 @@ def _sid(u: CurrentUser) -> UUID:
 
 
 @router.get("/health")
-async def reports_health():
+async def reports_health(_: Annotated[CurrentUser, Depends(require_permission("reports.read"))]):
     return {"module": "reports", "status": "ok"}
 
 

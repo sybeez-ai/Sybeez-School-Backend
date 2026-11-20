@@ -49,7 +49,7 @@ async def test_leave_notifications(api, hr_world):
     assert len(admin_items) == 1
     n = admin_items[0]
     assert n["category"] == "LEAVE_SUBMITTED" and n["link_path"] == "/hrm/leave"
-    assert n["title"].startswith("Leave request from") and "(2 days)" in n["body"]
+    assert n["title"].startswith("Leave request from") and "(2 working days)" in n["body"]
     assert n["entity_id"] == leave["id"] and n["is_read"] is False
 
     assert await _titles(api, w.teacher_a) == []
@@ -116,7 +116,7 @@ async def test_request_letter_document_notifications(api, hr_world):
         await api.post(
             f"{API}/letters",
             headers=w.admin_a.headers,
-            json={"employee_id": emp, "letter_type": "EXPERIENCE"},
+            json={"employee_id": emp, "letter_type": "EMPLOYMENT_VERIFICATION"},
         )
     ).json()
     assert len(await _titles(api, w.teacher_a)) == 2, "drafts are not announced"

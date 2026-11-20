@@ -18,6 +18,7 @@ from src.modules.payroll.assistant.imports import PayrollSheetImport
 from src.modules.payroll.assistant.service import PayrollAssistant
 from src.modules.payroll.ratelimit import assistant_rate_limit, payroll_rate_limit
 from src.modules.payroll.service import PayrollService
+from src.modules.access.deps import public
 
 router = APIRouter(prefix="/payroll/assistant", tags=["payroll-assistant"])
 Db = Annotated[AsyncSession, Depends(get_db)]
@@ -110,6 +111,7 @@ async def import_rejects(import_id: UUID, user: User, db: Db):
 
 
 @router.get("/downloads/{token}")
+@public
 async def download(token: str):
     data, content_type, filename = read_download(token)
     safe = filename.replace('"', "")

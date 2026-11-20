@@ -1,5 +1,6 @@
 """Generate, submit, approve, and publish a statutory run on real Postgres."""
 
+from decimal import Decimal as D
 from uuid import uuid4
 
 from src.core.security import create_access_token
@@ -87,3 +88,64 @@ async def test_generate_submit_approve_publishes_payslips(api, db_session, hr_wo
     assert mine["payslip"]["status"] == "PUBLISHED"
     assert mine["lines"]
     assert all(item["payslip"]["status"] == "PUBLISHED" for item in payslips)
+    from sqlalchemy import select
+
+    from src.db.models import ExpenseLedgerEntry, SchoolExpense
+
+    voucher = (
+        await db_session.execute(select(SchoolExpense).where(SchoolExpense.invoice_number == f"PAYRUN-{run_id}"))
+    ).scalar_one()
+    assert voucher.status == "APPROVED"
+    entries = (
+        await db_session.execute(select(ExpenseLedgerEntry).where(ExpenseLedgerEntry.expense_id == voucher.id))
+    ).scalars().all()
+    assert sum(e.debit for e in entries) == sum(e.credit for e in entries) == voucher.total_amount
+    assert any(e.account == "SALARY_PAYABLE" and e.credit > 0 for e in entries)
+
+    # Form 16 reports salary actually paid: payslip gross less loss of pay.
+    lop = sum(D(line["amount"]) for line in mine["lines"] if line["code"] == "LOP")
+    form16 = await api.get(f"{PAYROLL}/form16/{employee_id}?financial_year=2026-27", headers=approver)
+    assert form16.status_code == 200, form16.text
+    assert D(form16.json()["gross"]) == D(mine["payslip"]["gross_amount"]) - lop
+    assert "pf_deducted" in form16.json()
+
+    # Teaching staff carry their code on the teacher record; the bank file must show it.
+    expected_code = next(row["employee_code"] for row in employees if row["id"] == employee_id)
+    saved = await api.put(
+        f"{PAYROLL}/employees/{employee_id}/bank",
+        headers=admin.headers,
+        json={"account_holder": "Teacher A", "account_number": "000012345678", "ifsc": "HDFC0000001", "bank_name": "HDFC", "reason": "Salary account"},
+    )
+    assert saved.status_code == 200, saved.text
+    bank = await api.get(f"{PAYROLL}/runs/{run_id}/bank-file", headers=approver)
+    assert bank.status_code == 200, bank.text
+    assert expected_code
+    assert expected_code in bank.text
+
+    # The teacher sees their own Form 16 even though pay runs are not visible to them.
+    own = await api.get(f"{PAYROLL}/form16/me?financial_year=2026-27", headers=hr_world.teacher_a.headers)
+    assert own.status_code == 200, own.text
+    assert own.json()["payslip_count"] == 1
+    assert D(own.json()["gross"]) == D(form16.json()["gross"])
+
+    # Salary vouchers are settled from payroll, not from finance expenses.
+    pay = await api.post(
+        f"/api/v1/finance/expenses/{voucher.id}/pay", headers=admin.headers, json={"paid_on": "2026-11-01"}
+    )
+    assert pay.status_code in (403, 422), pay.text
+    paid = await api.patch(
+        f"{PAYROLL}/payslips/{mine['payslip']['id']}/payment",
+        headers=admin.headers,
+        json={"status": "PAID", "utr": "UTR123456", "reason": "Paid by bank"},
+    )
+    assert paid.status_code == 200, paid.text
+    net = D(mine["payslip"]["net_amount"])
+    if net > 0:
+        bank_rows = (
+            await db_session.execute(
+                select(ExpenseLedgerEntry).where(
+                    ExpenseLedgerEntry.expense_id == voucher.id, ExpenseLedgerEntry.account == "BANK"
+                )
+            )
+        ).scalars().all()
+        assert sum(row.credit for row in bank_rows) == net

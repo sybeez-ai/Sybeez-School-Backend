@@ -27,6 +27,7 @@ from src.db.models import (
     SalaryTemplateLine,
 )
 from src.modules.payroll.calc import ComponentDef
+from src.modules.payroll.ledger import post_salary_payment
 from src.modules.payroll.ops import (
     arrears_for_revision,
     backdated_months,
@@ -599,6 +600,15 @@ class PayrollFlow:
                 payment.failure_reason = None
                 slip.status = "PAID"
                 slip.paid_on = date.today()
+                await post_salary_payment(
+                    self.db,
+                    school_id=self.school_id,
+                    run_id=run.id,
+                    amount=payment.amount,
+                    paid_on=slip.paid_on,
+                    actor_id=self.actor_id,
+                    reference=payment.utr,
+                )
             else:
                 payment.failure_reason = (item.get("reason") or "Bank rejected the payment")[:500]
             updated += 1

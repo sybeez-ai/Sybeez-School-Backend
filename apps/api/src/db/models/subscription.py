@@ -1,7 +1,9 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String
+from decimal import Decimal
+
+from sqlalchemy import DateTime, ForeignKey, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -17,5 +19,13 @@ class Subscription(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     status: Mapped[str] = mapped_column(String(32), nullable=False, default=SubscriptionStatus.TRIAL.value)
     starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Commercial terms for this school. Null price means "use the plan list price".
+    price_per_student: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    discount_percent: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), nullable=True)
+    discount_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    discount_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    trial_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    trial_ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    renewal_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     school = relationship("School", back_populates="subscriptions")

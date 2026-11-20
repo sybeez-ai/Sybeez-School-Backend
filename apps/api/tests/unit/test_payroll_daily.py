@@ -83,7 +83,9 @@ def test_lop_audit_names_the_source():
     assert sources["2026-10-01"] == "ABSENT"
     assert sources["2026-10-02"] == "HALF_DAY"
     assert sources["2026-10-03"] == "UNPAID_LEAVE"
-    assert sources["2026-10-06"] == "UNMARKED_WORKING_DAY"
+    assert sources["2026-10-06"] == "UNMARKED_NOT_DEDUCTED"
+    deducted = lop_audit(marks, days, deduct_unmarked=True)
+    assert {row["date"]: row["source"] for row in deducted}["2026-10-06"] == "UNMARKED_WORKING_DAY"
     assert "2026-10-04" not in sources
     assert "2026-10-05" not in sources
 
@@ -152,3 +154,12 @@ def test_import_validation_and_exports():
         assert "xl/worksheets/sheet1.xml" in archive.namelist()
     page, total = page_rows([{"name": "Asha"}, {"name": "Ravi"}], q="ash", limit=10, offset=0, text_of=lambda row: row["name"])
     assert total == 1 and page[0]["name"] == "Asha"
+
+
+def test_service_marks_do_not_charge_untracked_or_future_days():
+    import inspect
+
+    from src.modules.payroll.service import PayrollService
+
+    src = inspect.getsource(PayrollService._marks)
+    assert "not tracked or day > today" in src

@@ -119,6 +119,7 @@ class TimetableEntryCreate(BaseModel):
 
 
 class TimetableEntryUpdate(BaseModel):
+    class_id: UUID | None = None
     subject_id: UUID | None = None
     teacher_id: UUID | None = None
     period_id: UUID | None = None
