@@ -2,6 +2,7 @@ import logging
 import re
 import time
 import uuid
+from contextvars import ContextVar
 
 from sqlalchemy.exc import IntegrityError
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -9,6 +10,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 logger = logging.getLogger(__name__)
+
+audit_via: ContextVar[str | None] = ContextVar("audit_via", default=None)
 
 
 def _log_app_error(request: Request, exc: BaseException | None, request_id: str | None) -> None:
@@ -99,7 +102,13 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
         supplied = request.headers.get("X-Request-ID", "")
         request_id = supplied if _CLIENT_REQUEST_ID.fullmatch(supplied) else str(uuid.uuid4())
         request.state.request_id = request_id
-        response = await call_next(request)
+        via = (request.headers.get("x-sybeez-via") or "").strip().lower()
+        token = audit_via.set("ai-assistant") if via == "ai-assistant" else None
+        try:
+            response = await call_next(request)
+        finally:
+            if token is not None:
+                audit_via.reset(token)
         response.headers["X-Request-ID"] = request_id
         return response
 

@@ -78,6 +78,12 @@ async def record_event(
                 "role": "SERVICE",
                 "bypass": "off",
             }
+            from src.core.middleware import audit_via
+
+            via = audit_via.get()
+            stored = _clip(details) if details else None
+            if via:
+                stored = {**(stored or {}), "via": via}
             session.add(
                 AuditLog(
                     action=action[:128],
@@ -87,7 +93,7 @@ async def record_event(
                     resource_id=(resource_id or None) and str(resource_id)[:64],
                     ip_address=(ip_address or None) and ip_address[:64],
                     message=(message or None) and message[:_MAX],
-                    details=_clip(details) if details else None,
+                    details=stored,
                 )
             )
             await session.commit()

@@ -63,7 +63,7 @@ async def login(
     from src.core.exceptions import AppError
 
     try:
-        return _attach(response, await AuthService(db).login(body))
+        token = await AuthService(db).login(body)
     except AppError as exc:
         # Failed sign-ins land in the platform logs (no password, only who/where/why).
         await record_event(
@@ -84,6 +84,23 @@ async def login(
             },
         )
         raise
+    if token.user_id and token.access_token:
+        await record_event(
+            "auth.login",
+            message=f"Signed in on {body.portal or 'web'}",
+            actor_id=token.user_id,
+            actor_email=str(body.email),
+            school_id=getattr(token, "school_id", None) or body.school_id,
+            resource_type="auth",
+            resource_id=(body.portal or "web")[:64],
+            ip_address=client_ip(request),
+            details={
+                "email": str(body.email).lower(),
+                "portal": body.portal,
+                "user_agent": (request.headers.get("user-agent") or "")[:200],
+            },
+        )
+    return _attach(response, token)
 
 
 @router.post("/complete-new-password", response_model=TokenResponse)
