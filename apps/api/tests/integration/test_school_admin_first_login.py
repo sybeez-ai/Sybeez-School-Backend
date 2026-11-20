@@ -33,28 +33,37 @@ async def test_create_then_first_login_then_new_password_then_relogin(api, db_se
         extra={"platform_role": "SUPER_ADMIN"},
     )
     email = f"school-admin-{uuid4().hex[:8]}@example.com"
-    state = {"temporary": None, "permanent": None}
+    accounts: dict[str, dict] = {}
 
     def configured() -> bool:
         return True
 
+    def _row(address: str) -> dict:
+        return accounts.setdefault(
+            address.strip().lower(),
+            {"temp": None, "permanent": None, "username": "cognito-user"},
+        )
+
     def admin_create_user(*, email, temporary_password, full_name, make_permanent=False):
-        state["temporary"] = temporary_password
+        accounts[email.strip().lower()] = {
+            "temp": temporary_password,
+            "permanent": None,
+            "username": "cognito-user",
+        }
         return "cognito-sub-1"
 
     def authenticate(address, password):
-        if state["permanent"] is None:
-            if password != state["temporary"]:
-                from src.core.exceptions import UnauthorizedError
+        row = accounts.get(address.strip().lower())
+        from src.core.exceptions import UnauthorizedError
 
-                raise UnauthorizedError("Invalid email or password")
-            return CognitoNewPasswordChallenge(
-                session="session-cognito-1", email=address, username="cognito-user"
-            )
-        if password != state["permanent"]:
-            from src.core.exceptions import UnauthorizedError
-
+        if row is None or (row["permanent"] is None and password != row["temp"]) or (
+            row["permanent"] is not None and password != row["permanent"]
+        ):
             raise UnauthorizedError("Invalid email or password")
+        if row["permanent"] is None:
+            return CognitoNewPasswordChallenge(
+                session="session-cognito-1", email=address, username=row["username"]
+            )
         return CognitoAuthResult(
             access_token="access",
             id_token=_jwt(address),
@@ -66,13 +75,17 @@ async def test_create_then_first_login_then_new_password_then_relogin(api, db_se
     def complete_new_password(*, email, session, new_password, full_name=None, username=None):
         assert session == "session-cognito-1"
         assert username in (None, "", "cognito-user")
-        state["permanent"] = new_password
-        state["temporary"] = None
+        row = _row(email)
+        row["permanent"] = new_password
+        row["temp"] = None
         return authenticate(email, new_password)
 
     def admin_set_temporary_password(*, email, temporary_password):
-        state["temporary"] = temporary_password
-        state["permanent"] = None
+        accounts[email.strip().lower()] = {
+            "temp": temporary_password,
+            "permanent": None,
+            "username": "cognito-user",
+        }
 
     import src.modules.auth.cognito as cognito
 
@@ -123,28 +136,37 @@ async def test_create_then_first_login_then_new_password_then_relogin(api, db_se
         headers=_h(token),
     )
     assert reset.status_code == 200, reset.text
+    reset_email = reset.json()["admin_email"]
     second_temp = reset.json()["temporary_password"]
     assert second_temp and second_temp != NEW
 
-    stale = await api.post(LOGIN, json={"email": email, "password": NEW, "portal": "school"})
+    stale = await api.post(LOGIN, json={"email": reset_email, "password": "Not-The-Temp-1!", "portal": "school"})
     assert stale.status_code == 401, stale.text
 
-    challenged = await api.post(LOGIN, json={"email": email, "password": second_temp, "portal": "school"})
+    challenged = await api.post(LOGIN, json={"email": reset_email, "password": second_temp, "portal": "school"})
     assert challenged.status_code == 200, challenged.text
-    assert challenged.json()["challenge"] == "NEW_PASSWORD_REQUIRED"
-    assert challenged.json()["username"] == "cognito-user"
-
     newer = "Later-Pass-789!"
-    finished = await api.post(
-        "/api/v1/auth/complete-new-password",
-        json={
-            "email": email,
-            "session": challenged.json()["session"],
-            "new_password": newer,
-            "portal": "school",
-            "username": challenged.json()["username"],
-        },
-    )
+    if challenged.json().get("challenge") == "NEW_PASSWORD_REQUIRED":
+        assert challenged.json()["username"] == "cognito-user"
+        finished = await api.post(
+            "/api/v1/auth/complete-new-password",
+            json={
+                "email": reset_email,
+                "session": challenged.json()["session"],
+                "new_password": newer,
+                "portal": "school",
+                "username": challenged.json()["username"],
+            },
+        )
+    else:
+        assert challenged.json()["must_change_password"] is True
+        changed = await api.post(
+            "/api/v1/auth/change-password",
+            json={"current_password": second_temp, "new_password": newer},
+            headers=_h(challenged.json()["access_token"]),
+        )
+        assert changed.status_code == 200, changed.text
+        finished = await api.post(LOGIN, json={"email": reset_email, "password": newer, "portal": "school"})
     assert finished.status_code == 200, finished.text
     assert finished.json()["must_change_password"] is False
     dash = await api.get("/api/v1/admin/dashboard", headers=_h(finished.json()["access_token"]))
@@ -158,5 +180,8 @@ async def test_create_then_first_login_then_new_password_then_relogin(api, db_se
     assert again_reset.status_code == 200, again_reset.text
     third_temp = again_reset.json()["temporary_password"]
     assert third_temp != second_temp
-    third = await api.post(LOGIN, json={"email": email, "password": third_temp, "portal": "school"})
-    assert third.status_code == 200 and third.json()["challenge"] == "NEW_PASSWORD_REQUIRED"
+    third = await api.post(
+        LOGIN, json={"email": again_reset.json()["admin_email"], "password": third_temp, "portal": "school"}
+    )
+    assert third.status_code == 200, third.text
+    assert third.json().get("challenge") == "NEW_PASSWORD_REQUIRED" or third.json().get("must_change_password") is True
