@@ -136,7 +136,7 @@ async def test_create_then_first_login_then_new_password_then_relogin(api, db_se
         headers=_h(token),
     )
     assert reset.status_code == 200, reset.text
-    from sqlalchemy import func
+    from sqlalchemy import func, select
 
     reset_email = reset.json()["admin_email"].strip().lower()
     second_temp = reset.json()["temporary_password"]
