@@ -119,6 +119,7 @@ async def test_create_then_first_login_then_new_password_then_relogin(api, db_se
 
     reset = await api.post(
         f"/api/v1/platform/schools/{hr_world.admin_a.school_id}/admin/reset-password",
+        json={},
         headers=_h(token),
     )
     assert reset.status_code == 200, reset.text
@@ -151,6 +152,7 @@ async def test_create_then_first_login_then_new_password_then_relogin(api, db_se
 
     again_reset = await api.post(
         f"/api/v1/platform/schools/{hr_world.admin_a.school_id}/admin/reset-password",
+        json={},
         headers=_h(token),
     )
     assert again_reset.status_code == 200, again_reset.text
