@@ -708,7 +708,9 @@ class PlatformService:
         from src.modules.schools.provisioning import issue_temporary_password
 
         user = (
-            await self.db.execute(select(User).where(User.email == admin_email.lower().strip()))
+            await self.db.execute(
+                select(User).where(func.lower(User.email) == admin_email.lower().strip())
+            )
         ).scalar_one_or_none()
         if user is None:
             raise NotFoundError("User not found")

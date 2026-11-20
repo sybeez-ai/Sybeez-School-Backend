@@ -21,6 +21,7 @@ class CompleteNewPasswordRequest(BaseModel):
     session: str = Field(min_length=10)
     new_password: str = Field(min_length=8)
     portal: str | None = None
+    username: str | None = None
 
 
 class TokenResponse(BaseModel):
@@ -45,6 +46,8 @@ class TokenResponse(BaseModel):
     challenge: str | None = None
     session: str | None = None
     email: str | None = None
+    # Pool username the NEW_PASSWORD_REQUIRED session was issued for.
+    username: str | None = None
     # True when the account signed in with an admin-issued temporary password; the
     # client must send the user to change it (POST /auth/change-password) first.
     must_change_password: bool = False

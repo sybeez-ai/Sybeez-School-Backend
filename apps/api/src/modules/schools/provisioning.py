@@ -229,15 +229,19 @@ async def issue_temporary_password(
     await db.execute(select(User).where(User.id == user.id).with_for_update())
     await db.refresh(user)
     temp = temporary_password or cognito_svc.generate_temporary_password()
+    email = (user.email or "").strip().lower()
     done = False
     if cognito_svc.cognito_configured() and user.cognito_sub:
         try:
-            cognito_svc.admin_set_temporary_password(email=user.email, temporary_password=temp)
+            cognito_svc.admin_set_temporary_password(email=email, temporary_password=temp)
             done = True
         except ConflictError as exc:
             if "AccessDenied" not in str(exc) or (get_settings().auth_mode or "both").lower() == "cognito":
                 raise
-    if not done:
+    if done:
+        # Cognito owns the credential. A leftover local hash must not be accepted later.
+        user.password_hash = None
+    else:
         user.password_hash = hash_password(temp)
         user.cognito_sub = None
     user.is_active = True

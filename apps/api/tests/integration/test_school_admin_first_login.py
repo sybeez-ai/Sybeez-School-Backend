@@ -48,7 +48,9 @@ async def test_create_then_first_login_then_new_password_then_relogin(api, db_se
                 from src.core.exceptions import UnauthorizedError
 
                 raise UnauthorizedError("Invalid email or password")
-            return CognitoNewPasswordChallenge(session="session-cognito-1", email=address)
+            return CognitoNewPasswordChallenge(
+                session="session-cognito-1", email=address, username="cognito-user"
+            )
         if password != state["permanent"]:
             from src.core.exceptions import UnauthorizedError
 
@@ -61,10 +63,16 @@ async def test_create_then_first_login_then_new_password_then_relogin(api, db_se
             email=address,
         )
 
-    def complete_new_password(*, email, session, new_password, full_name=None):
+    def complete_new_password(*, email, session, new_password, full_name=None, username=None):
         assert session == "session-cognito-1"
+        assert username in (None, "", "cognito-user")
         state["permanent"] = new_password
+        state["temporary"] = None
         return authenticate(email, new_password)
+
+    def admin_set_temporary_password(*, email, temporary_password):
+        state["temporary"] = temporary_password
+        state["permanent"] = None
 
     import src.modules.auth.cognito as cognito
 
@@ -72,6 +80,7 @@ async def test_create_then_first_login_then_new_password_then_relogin(api, db_se
     monkeypatch.setattr(cognito, "admin_create_user", admin_create_user)
     monkeypatch.setattr(cognito, "authenticate", authenticate)
     monkeypatch.setattr(cognito, "complete_new_password", complete_new_password)
+    monkeypatch.setattr(cognito, "admin_set_temporary_password", admin_set_temporary_password)
     monkeypatch.setattr(cognito, "sync_user_groups", lambda **kwargs: True)
     monkeypatch.setattr(cognito, "sync_school_identity", lambda **kwargs: None)
 
@@ -107,3 +116,45 @@ async def test_create_then_first_login_then_new_password_then_relogin(api, db_se
 
     home = await api.get("/api/v1/admin/dashboard", headers=_h(again.json()["access_token"]))
     assert home.status_code == 200, home.text
+
+    reset = await api.post(
+        f"/api/v1/platform/schools/{hr_world.admin_a.school_id}/admin/reset-password",
+        headers=_h(token),
+    )
+    assert reset.status_code == 200, reset.text
+    second_temp = reset.json()["temporary_password"]
+    assert second_temp and second_temp != NEW
+
+    stale = await api.post(LOGIN, json={"email": email, "password": NEW, "portal": "school"})
+    assert stale.status_code == 401, stale.text
+
+    challenged = await api.post(LOGIN, json={"email": email, "password": second_temp, "portal": "school"})
+    assert challenged.status_code == 200, challenged.text
+    assert challenged.json()["challenge"] == "NEW_PASSWORD_REQUIRED"
+    assert challenged.json()["username"] == "cognito-user"
+
+    newer = "Later-Pass-789!"
+    finished = await api.post(
+        "/api/v1/auth/complete-new-password",
+        json={
+            "email": email,
+            "session": challenged.json()["session"],
+            "new_password": newer,
+            "portal": "school",
+            "username": challenged.json()["username"],
+        },
+    )
+    assert finished.status_code == 200, finished.text
+    assert finished.json()["must_change_password"] is False
+    dash = await api.get("/api/v1/admin/dashboard", headers=_h(finished.json()["access_token"]))
+    assert dash.status_code == 200, dash.text
+
+    again_reset = await api.post(
+        f"/api/v1/platform/schools/{hr_world.admin_a.school_id}/admin/reset-password",
+        headers=_h(token),
+    )
+    assert again_reset.status_code == 200, again_reset.text
+    third_temp = again_reset.json()["temporary_password"]
+    assert third_temp != second_temp
+    third = await api.post(LOGIN, json={"email": email, "password": third_temp, "portal": "school"})
+    assert third.status_code == 200 and third.json()["challenge"] == "NEW_PASSWORD_REQUIRED"

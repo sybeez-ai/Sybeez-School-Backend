@@ -34,6 +34,8 @@ class CognitoNewPasswordChallenge:
     session: str
     email: str
     challenge: str = "NEW_PASSWORD_REQUIRED"
+    # The pool username the session was issued for. Email aliases are not that username.
+    username: str = ""
 
 
 def cognito_configured() -> bool:
@@ -161,7 +163,11 @@ def authenticate(email: str, password: str) -> CognitoAuthResult | CognitoNewPas
         session = resp.get("Session") or ""
         if not session:
             raise UnauthorizedError("Password change required but session missing")
-        return CognitoNewPasswordChallenge(session=session, email=email.strip().lower())
+        params = resp.get("ChallengeParameters") or {}
+        bound = str(params.get("USER_ID_FOR_SRP") or username)
+        return CognitoNewPasswordChallenge(
+            session=session, email=email.strip().lower(), username=bound
+        )
 
     if "ChallengeName" in resp:
         raise UnauthorizedError(f"Additional Cognito challenge required: {resp['ChallengeName']}")
@@ -182,13 +188,16 @@ def complete_new_password(
     session: str,
     new_password: str,
     full_name: str | None = None,
+    username: str | None = None,
 ) -> CognitoAuthResult:
     """Finish NEW_PASSWORD_REQUIRED challenge after first login with temporary password."""
     if not cognito_configured():
         raise UnauthorizedError("Cognito is not configured")
 
     s = get_settings()
-    username = _resolve_username(email)
+    # Prefer the username Cognito bound to this session. Re-resolving an email
+    # alias uses a different USERNAME and Cognito rejects the session.
+    username = (username or "").strip() or _resolve_username(email)
     challenge_responses: dict[str, str] = {
         "USERNAME": username,
         "NEW_PASSWORD": new_password,
@@ -337,13 +346,18 @@ def admin_set_enabled(*, email: str, enabled: bool) -> None:
 
 
 def admin_set_temporary_password(*, email: str, temporary_password: str) -> None:
-    """Force a new temporary password so next login requires NEW_PASSWORD_REQUIRED."""
+    """Force a new temporary password so next login requires NEW_PASSWORD_REQUIRED.
+
+    Works for a first login and for a later reset of a confirmed user. The previous
+    password stops working, and existing Cognito sessions are signed out.
+    """
     if not cognito_configured():
         raise ConflictError("Cognito is not configured")
     s = get_settings()
-    username = _resolve_username(email)
+    username = _resolve_username(email.strip().lower())
+    client = _client()
     try:
-        _client().admin_set_user_password(
+        client.admin_set_user_password(
             UserPoolId=s.cognito_user_pool_id,
             Username=username,
             Password=temporary_password,
@@ -353,6 +367,10 @@ def admin_set_temporary_password(*, email: str, temporary_password: str) -> None
         code = exc.response.get("Error", {}).get("Code", "")
         msg = exc.response.get("Error", {}).get("Message") or "Could not reset password"
         raise ConflictError(f"{msg} ({code})") from exc
+    try:
+        client.admin_user_global_sign_out(UserPoolId=s.cognito_user_pool_id, Username=username)
+    except ClientError as exc:
+        logger.warning("Cognito global sign-out after reset failed: %s", exc)
 
 
 def admin_clear_mfa(*, email: str) -> None:
