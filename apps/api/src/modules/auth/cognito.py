@@ -34,6 +34,8 @@ class CognitoNewPasswordChallenge:
     session: str
     email: str
     challenge: str = "NEW_PASSWORD_REQUIRED"
+    # The pool username the session was issued for. Email aliases are not that username.
+    username: str = ""
 
 
 def cognito_configured() -> bool:
@@ -148,13 +150,24 @@ def authenticate(email: str, password: str) -> CognitoAuthResult | CognitoNewPas
             resp = None
 
     if resp is None:
-        raise UnauthorizedError("Invalid email or password") from last_exc
+        code = ""
+        if isinstance(last_exc, ClientError):
+            code = last_exc.response.get("Error", {}).get("Code", "") or ""
+        # The message stays generic. The code is for the platform login log only.
+        raise UnauthorizedError(
+            "Invalid email or password",
+            code=f"cognito_{code.lower()}" if code else "unauthorized",
+        ) from last_exc
 
     if resp.get("ChallengeName") == "NEW_PASSWORD_REQUIRED":
         session = resp.get("Session") or ""
         if not session:
             raise UnauthorizedError("Password change required but session missing")
-        return CognitoNewPasswordChallenge(session=session, email=email.strip().lower())
+        params = resp.get("ChallengeParameters") or {}
+        bound = str(params.get("USER_ID_FOR_SRP") or username)
+        return CognitoNewPasswordChallenge(
+            session=session, email=email.strip().lower(), username=bound
+        )
 
     if "ChallengeName" in resp:
         raise UnauthorizedError(f"Additional Cognito challenge required: {resp['ChallengeName']}")
@@ -175,13 +188,16 @@ def complete_new_password(
     session: str,
     new_password: str,
     full_name: str | None = None,
+    username: str | None = None,
 ) -> CognitoAuthResult:
     """Finish NEW_PASSWORD_REQUIRED challenge after first login with temporary password."""
     if not cognito_configured():
         raise UnauthorizedError("Cognito is not configured")
 
     s = get_settings()
-    username = _resolve_username(email)
+    # Prefer the username Cognito bound to this session. Re-resolving an email
+    # alias uses a different USERNAME and Cognito rejects the session.
+    username = (username or "").strip() or _resolve_username(email)
     challenge_responses: dict[str, str] = {
         "USERNAME": username,
         "NEW_PASSWORD": new_password,
@@ -330,13 +346,18 @@ def admin_set_enabled(*, email: str, enabled: bool) -> None:
 
 
 def admin_set_temporary_password(*, email: str, temporary_password: str) -> None:
-    """Force a new temporary password so next login requires NEW_PASSWORD_REQUIRED."""
+    """Force a new temporary password so next login requires NEW_PASSWORD_REQUIRED.
+
+    Works for a first login and for a later reset of a confirmed user. The previous
+    password stops working, and existing Cognito sessions are signed out.
+    """
     if not cognito_configured():
         raise ConflictError("Cognito is not configured")
     s = get_settings()
-    username = _resolve_username(email)
+    username = _resolve_username(email.strip().lower())
+    client = _client()
     try:
-        _client().admin_set_user_password(
+        client.admin_set_user_password(
             UserPoolId=s.cognito_user_pool_id,
             Username=username,
             Password=temporary_password,
@@ -346,6 +367,10 @@ def admin_set_temporary_password(*, email: str, temporary_password: str) -> None
         code = exc.response.get("Error", {}).get("Code", "")
         msg = exc.response.get("Error", {}).get("Message") or "Could not reset password"
         raise ConflictError(f"{msg} ({code})") from exc
+    try:
+        client.admin_user_global_sign_out(UserPoolId=s.cognito_user_pool_id, Username=username)
+    except ClientError as exc:
+        logger.warning("Cognito global sign-out after reset failed: %s", exc)
 
 
 def admin_clear_mfa(*, email: str) -> None:
@@ -626,6 +651,31 @@ def groups_for_roles(roles) -> set[str]:
     return {GROUP_FOR_ROLE[str(r)] for r in roles if str(r) in GROUP_FOR_ROLE}
 
 
+def sync_school_identity(*, email: str, school_id: str, role: str) -> None:
+    """Store the school and role on the pool user when the pool defines those attributes.
+
+    Groups are updated either way. A pool without custom:school_id still provisions the login.
+    """
+    if not cognito_configured():
+        return
+    s = get_settings()
+    username = _resolve_username(email)
+    try:
+        _client().admin_update_user_attributes(
+            UserPoolId=s.cognito_user_pool_id,
+            Username=username,
+            UserAttributes=[
+                {"Name": "custom:school_id", "Value": str(school_id)},
+                {"Name": "custom:role", "Value": str(role)},
+            ],
+        )
+    except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code", "")
+        if code not in {"InvalidParameterException", "UserNotFoundException"}:
+            logger.warning("Cognito school attributes not saved (%s)", code)
+    sync_user_groups(email=email, roles={role})
+
+
 def sync_user_groups(*, email: str, roles) -> bool:
     """Make the pool user's managed groups equal the groups for ``roles``. Best effort: never raises.
 
@@ -651,7 +701,17 @@ def sync_user_groups(*, email: str, roles) -> bool:
             if not token:
                 break
         for g in sorted(want - have):
-            client.admin_add_user_to_group(UserPoolId=s.cognito_user_pool_id, Username=username, GroupName=g)
+            try:
+                client.admin_add_user_to_group(UserPoolId=s.cognito_user_pool_id, Username=username, GroupName=g)
+            except ClientError as exc:
+                if exc.response.get("Error", {}).get("Code") != "ResourceNotFoundException":
+                    raise
+                client.create_group(
+                    UserPoolId=s.cognito_user_pool_id,
+                    GroupName=g,
+                    Description="Sybeez school role",
+                )
+                client.admin_add_user_to_group(UserPoolId=s.cognito_user_pool_id, Username=username, GroupName=g)
         for g in sorted((have & MANAGED_GROUPS) - want):
             client.admin_remove_user_from_group(UserPoolId=s.cognito_user_pool_id, Username=username, GroupName=g)
         return True

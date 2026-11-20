@@ -422,6 +422,7 @@ class AuthService:
                         challenge=cog.challenge,
                         session=cog.session,
                         email=cog.email,
+                        username=cog.username or None,
                     )
                 cognito_ok = True
                 user = await self._user_from_cognito(cog, email)
@@ -465,6 +466,7 @@ class AuthService:
             session=data.session,
             new_password=data.new_password,
             full_name=existing.full_name if existing else None,
+            username=getattr(data, "username", None),
         )
         user = await self._user_from_cognito(cog, email)
         # Cognito now owns the permanent password — drop any local hash
