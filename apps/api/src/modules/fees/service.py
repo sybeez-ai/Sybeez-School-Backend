@@ -85,6 +85,7 @@ from src.shared.enums import (
     UserRole,
 )
 from src.db.models.fee import StudentFeeAccount
+from src.shared.utils import format_class_label
 
 
 def _utcnow() -> datetime:
@@ -518,7 +519,7 @@ class FeeService:
         c = await self.db.get(ClassRoom, class_id)
         if not c:
             return None
-        return f"{c.name}{('-' + c.section) if c.section else ''}"
+        return format_class_label(c.name, c.section)
 
     async def _invoice_out(self, inv: FeeInvoice) -> InvoiceOut:
         acc = await self.db.get(StudentFeeAccount, inv.student_fee_account_id)

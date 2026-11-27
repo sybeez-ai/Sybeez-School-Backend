@@ -113,6 +113,7 @@ def test_notification_priorities():
 
 def test_announcement_statuses_and_audiences():
     assert AnnouncementStatus.DRAFT.value == "DRAFT"
+    assert AnnouncementStatus.SCHEDULED.value == "SCHEDULED"
     assert AnnouncementStatus.PUBLISHED.value == "PUBLISHED"
     assert AnnouncementStatus.ARCHIVED.value == "ARCHIVED"
     assert {a.value for a in AudienceType} == {
@@ -121,6 +122,7 @@ def test_announcement_statuses_and_audiences():
         "GRADE",
         "SECTION",
         "USER",
+        "STUDENT",
     }
 
 

@@ -102,6 +102,26 @@ async def publish_test(test_id: UUID, db: DB, user: Author):
     return await OnlineTestService(db).publish(user, test_id)
 
 
+@router.post("/{test_id}/submit", response_model=S.OnlineTestDetailOut)
+async def submit_test(test_id: UUID, db: DB, user: Author):
+    return await OnlineTestService(db).submit_for_approval(user, test_id)
+
+
+@router.post("/{test_id}/approve", response_model=S.OnlineTestDetailOut)
+async def approve_test(test_id: UUID, db: DB, user: Author):
+    return await OnlineTestService(db).approve_test(user, test_id)
+
+
+@router.post("/{test_id}/reject", response_model=S.OnlineTestDetailOut)
+async def reject_test(test_id: UUID, db: DB, user: Author, body: S.ApprovalDecision | None = None):
+    return await OnlineTestService(db).reject_test(user, test_id, body.reason if body else None)
+
+
+@router.post("/{test_id}/questions/from-bank", response_model=S.OnlineTestDetailOut, status_code=201)
+async def add_questions_from_bank(test_id: UUID, body: S.BankQuestionsIn, db: DB, user: Author):
+    return await OnlineTestService(db).add_questions_from_bank(user, test_id, body.question_ids)
+
+
 @router.post("/{test_id}/close", response_model=S.OnlineTestDetailOut)
 async def close_test(test_id: UUID, db: DB, user: Author):
     return await OnlineTestService(db).close(user, test_id)

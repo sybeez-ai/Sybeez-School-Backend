@@ -210,6 +210,7 @@ class NotificationPriority(StrEnum):
 
 class AnnouncementStatus(StrEnum):
     DRAFT = "DRAFT"
+    SCHEDULED = "SCHEDULED"
     PUBLISHED = "PUBLISHED"
     ARCHIVED = "ARCHIVED"
 
@@ -220,6 +221,7 @@ class AudienceType(StrEnum):
     GRADE = "GRADE"
     SECTION = "SECTION"
     USER = "USER"
+    STUDENT = "STUDENT"
 
 
 class ConversationType(StrEnum):

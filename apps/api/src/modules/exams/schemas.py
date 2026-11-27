@@ -226,6 +226,12 @@ class ExamOut(BaseModel):
     starts_on: date | None
     ends_on: date | None
     status: str
+    approval_status: str = "DRAFT"
+    workflow_status: str = "draft"
+    workflow_label: str = "Draft"
+    submitted_at: datetime | None = None
+    approved_at: datetime | None = None
+    rejection_reason: str | None = None
     must_pass_all_subjects: bool
     published_at: datetime | None
     locked: bool
@@ -298,6 +304,9 @@ class TeacherExamOut(BaseModel):
     marks_entered: int = 0
     starts_on: date | None
     ends_on: date | None
+    approval_status: str = "DRAFT"
+    workflow_status: str = "draft"
+    workflow_label: str = "Draft"
 
 
 class UnlockMarksIn(BaseModel):
@@ -410,3 +419,89 @@ class PublishOut(BaseModel):
     published_at: datetime
     passed: int = 0
     failed: int = 0
+
+
+class ClassTestCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=255)
+    class_id: UUID | None = None
+    class_ids: list[UUID] = Field(default_factory=list)
+    subject_id: UUID
+    exam_date: date
+    start_time: time
+    duration_minutes: int = Field(gt=0, le=480)
+    description: str | None = None
+    max_marks: float = Field(default=100, gt=0)
+    question_ids: list[UUID] = Field(default_factory=list)
+    submit_for_approval: bool = False
+    schedule_now: bool = False  # admin: approve and schedule immediately
+    start_now: bool = False  # admin: approve and open immediately
+
+    def resolved_class_ids(self) -> list[UUID]:
+        ids: list[UUID] = []
+        for cid in ([self.class_id] if self.class_id else []) + list(self.class_ids):
+            if cid not in ids:
+                ids.append(cid)
+        return ids
+
+
+class ApprovalDecision(BaseModel):
+    reason: str | None = Field(default=None, max_length=500)
+
+
+class ExamHubNewQuestion(BaseModel):
+    prompt: str = Field(min_length=1)
+    options: list[str] = Field(default_factory=list)
+    correct_index: int = 0
+    points: int = Field(default=1, ge=1, le=100)
+
+
+class ExamHubScheduleIn(BaseModel):
+    kind: str = Field(pattern="^(written|online)$")
+    title: str = Field(min_length=1, max_length=255)
+    subject_id: UUID
+    class_ids: list[UUID] = Field(min_length=1)
+    exam_date: date
+    start_time: time
+    duration_minutes: int = Field(gt=0, le=480)
+    description: str | None = None
+    max_marks: float = Field(default=100, gt=0)
+    question_ids: list[UUID] = Field(default_factory=list)
+    new_questions: list[ExamHubNewQuestion] = Field(default_factory=list)
+    action: str = Field(default="schedule", pattern="^(draft|schedule|start_now)$")
+
+
+class ExamHubRescheduleIn(BaseModel):
+    exam_date: date
+    start_time: time
+    duration_minutes: int = Field(gt=0, le=480)
+
+
+class ExamHubItemOut(BaseModel):
+    id: UUID
+    kind: str
+    title: str
+    subject_id: UUID | None = None
+    subject_name: str | None = None
+    class_ids: list[UUID] = Field(default_factory=list)
+    class_names: list[str] = Field(default_factory=list)
+    exam_date: date | None = None
+    starts_at: datetime | None = None
+    ends_at: datetime | None = None
+    duration_minutes: int | None = None
+    approval_status: str
+    workflow_status: str
+    workflow_label: str
+    live_status: str
+    countdown_seconds: int | None = None
+    question_count: int = 0
+    max_marks: float | None = None
+
+
+class ExamHubListOut(BaseModel):
+    items: list[ExamHubItemOut]
+    counts: dict[str, int]
+
+
+class ExamHubScheduleOut(BaseModel):
+    kind: str
+    items: list[ExamHubItemOut]

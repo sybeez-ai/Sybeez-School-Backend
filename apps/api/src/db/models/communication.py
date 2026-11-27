@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -33,6 +33,9 @@ class Announcement(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    scheduled_for: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    channels: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    attachments: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
 
     audiences = relationship(
         "AnnouncementAudience", back_populates="announcement", cascade="all, delete-orphan"
@@ -58,6 +61,9 @@ class AnnouncementAudience(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
     user_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=True
+    )
+    student_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("students.id", ondelete="CASCADE"), nullable=True
     )
 
     announcement = relationship("Announcement", back_populates="audiences")

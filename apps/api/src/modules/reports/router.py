@@ -74,6 +74,15 @@ async def export_pdf(
     )
 
 
+@router.get("/history")
+async def list_history(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    limit: int = 50,
+):
+    return await ReportService(db).history(_sid(user), limit=limit)
+
+
 @router.get("/saved")
 async def list_saved(
     db: Annotated[AsyncSession, Depends(get_db)],

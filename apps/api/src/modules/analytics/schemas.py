@@ -12,6 +12,7 @@ class AnalyticsFilters(BaseModel):
     exam_id: UUID | None = None
     from_date: date | None = None
     to_date: date | None = None
+    term: str | None = None
 
 
 class MetricPoint(BaseModel):
@@ -32,10 +33,10 @@ class AttentionItem(BaseModel):
 class OverviewOut(BaseModel):
     students: int
     teachers: int
-    attendance_rate: float
-    homework_completion: float
-    exam_average: float
-    fees_collection_rate: float
+    attendance_rate: float | None = None
+    homework_completion: float | None = None
+    exam_average: float | None = None
+    fees_collection_rate: float | None = None
     attendance_trend: list[MetricPoint] = []
     exam_trend: list[MetricPoint] = []
     fee_trend: list[MetricPoint] = []
@@ -65,7 +66,7 @@ class StudentsAnalyticsOut(BaseModel):
 
 
 class AttendanceAnalyticsOut(BaseModel):
-    attendance_rate: float
+    attendance_rate: float | None = None
     present: int
     absent: int
     late: int
@@ -129,7 +130,7 @@ class ClassAnalyticsOut(BaseModel):
     section_id: UUID
     class_name: str
     students: int
-    attendance_rate: float
+    attendance_rate: float | None = None
     homework_completion: float
     exam_average: float | None
     fee_collection_rate: float | None

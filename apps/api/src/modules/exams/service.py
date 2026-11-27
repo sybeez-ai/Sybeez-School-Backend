@@ -19,6 +19,7 @@ from src.db.models import (
     GradingScale,
     MarksEntry,
     Parent,
+    Question,
     Result,
     ResultAuditLog,
     School,
@@ -34,6 +35,7 @@ from src.modules.exams.schemas import (
     AuditLogOut,
     CalculateResultsOut,
     ChildBriefOut,
+    ClassTestCreate,
     ExamCreate,
     ExamOut,
     ExamOverviewOut,
@@ -358,6 +360,29 @@ class ExamService:
                 )
             )
 
+        from src.shared.test_workflow import (
+            combine_start,
+            ends_from_duration,
+            workflow_label,
+            workflow_status,
+        )
+
+        first_sched = schedule_outs[0] if schedule_outs else None
+        first_subj = subject_outs[0] if subject_outs else None
+        starts = combine_start(
+            first_sched.exam_date if first_sched else exam.starts_on,
+            first_sched.starts_at if first_sched else None,
+        )
+        duration = first_subj.duration_minutes if first_subj else None
+        ends = ends_from_duration(starts, duration)
+        if first_sched and first_sched.ends_at and first_sched.exam_date:
+            ends = combine_start(first_sched.exam_date, first_sched.ends_at)
+        wf = workflow_status(
+            approval_status=getattr(exam, "approval_status", None),
+            starts_at=starts,
+            ends_at=ends,
+            record_status=exam.status,
+        )
         return ExamOut(
             id=exam.id,
             school_id=exam.school_id,
@@ -372,6 +397,12 @@ class ExamService:
             starts_on=exam.starts_on,
             ends_on=exam.ends_on,
             status=exam.status,
+            approval_status=getattr(exam, "approval_status", None) or "DRAFT",
+            workflow_status=wf,
+            workflow_label=workflow_label(wf),
+            submitted_at=getattr(exam, "submitted_at", None),
+            approved_at=getattr(exam, "approved_at", None),
+            rejection_reason=getattr(exam, "rejection_reason", None),
             must_pass_all_subjects=exam.must_pass_all_subjects,
             published_at=exam.published_at,
             locked=exam.locked,
@@ -2065,3 +2096,174 @@ class ExamService:
             "grade_label": result.grade_label,
             "pass_fail": result.pass_fail,
         }
+
+
+    async def create_class_test(self, school_id: UUID, user, data: ClassTestCreate) -> ExamOut:
+        from datetime import datetime, timedelta, timezone
+        from src.db.models.question_bank import QuestionBankItem
+        from src.modules.question_bank.service import QuestionBankService, _options_list, _correct_index
+        from src.shared.test_workflow import APPROVAL_APPROVED, APPROVAL_DRAFT, APPROVAL_PENDING
+
+        class_ids = data.resolved_class_ids()
+        if not class_ids:
+            raise AppError("Select at least one class", status_code=422)
+        rooms: list[ClassRoom] = []
+        for cid in class_ids:
+            room = await self.db.get(ClassRoom, cid)
+            if not room or room.school_id != school_id:
+                raise NotFoundError("Class not found")
+            rooms.append(room)
+        room = rooms[0]
+        subject = await self.db.get(Subject, data.subject_id)
+        if not subject or subject.school_id != school_id:
+            raise NotFoundError("Subject not found")
+        role = getattr(getattr(user, "role", None), "value", getattr(user, "role", None))
+        is_admin = role in {UserRole.SCHOOL_ADMIN.value, "SCHOOL_ADMIN", "PLATFORM_ADMIN"}
+        if not is_admin:
+            teacher = await self._teacher_for_user(school_id, user.id)
+            from src.db.models import ClassSubject
+            for candidate in rooms:
+                allowed = False
+                try:
+                    await self._assert_teacher_assignment(
+                        school_id, teacher.id, candidate.id, data.subject_id, candidate.academic_year_id
+                    )
+                    allowed = True
+                except Exception:
+                    link = (
+                        await self.db.execute(
+                            select(ClassSubject).where(
+                                ClassSubject.school_id == school_id,
+                                ClassSubject.class_id == candidate.id,
+                                ClassSubject.subject_id == data.subject_id,
+                                ClassSubject.teacher_id == teacher.id,
+                            )
+                        )
+                    ).scalar_one_or_none()
+                    allowed = link is not None
+                if not allowed:
+                    raise ForbiddenError("You can only create tests for classes and subjects you teach")
+
+        start_date = data.exam_date
+        start_clock = data.start_time
+        if is_admin and data.start_now:
+            now = _utcnow()
+            start_date = now.date()
+            start_clock = now.timetz().replace(tzinfo=None)
+        ends_clock = (datetime.combine(start_date, start_clock) + timedelta(minutes=data.duration_minutes)).time()
+        exam = Exam(
+            school_id=school_id,
+            academic_year_id=room.academic_year_id,
+            grade_id=room.grade_id,
+            class_id=room.id,
+            subject_id=subject.id,
+            title=data.title.strip(),
+            description=data.description,
+            starts_on=data.exam_date,
+            ends_on=data.exam_date,
+            status=ExamStatus.DRAFT.value,
+            must_pass_all_subjects=False,
+            max_score=data.max_marks,
+            created_by=user.id,
+            approval_status=APPROVAL_DRAFT,
+        )
+        if is_admin and (data.schedule_now or data.start_now):
+            exam.approval_status = APPROVAL_APPROVED
+            exam.approved_at = _utcnow()
+            exam.approved_by = user.id
+            exam.status = ExamStatus.ONGOING.value if data.start_now else ExamStatus.SCHEDULED.value
+            exam.starts_on = start_date
+            exam.ends_on = start_date
+            exam.scheduled_at = datetime.combine(start_date, start_clock, tzinfo=timezone.utc)
+        elif data.submit_for_approval or (not is_admin and data.submit_for_approval):
+            exam.approval_status = APPROVAL_PENDING
+            exam.submitted_at = _utcnow()
+            exam.submitted_by = user.id
+        self.db.add(exam)
+        await self.db.flush()
+        exam_subject = ExamSubject(
+            school_id=school_id,
+            exam_id=exam.id,
+            subject_id=subject.id,
+            grade_id=room.grade_id,
+            max_marks=data.max_marks,
+            pass_marks=max(data.max_marks * 0.35, 1),
+            duration_minutes=data.duration_minutes,
+            exam_date=start_date,
+            starts_at=start_clock,
+            ends_at=ends_clock,
+        )
+        self.db.add(exam_subject)
+        await self.db.flush()
+        for candidate in rooms:
+            self.db.add(ExamSection(school_id=school_id, exam_id=exam.id, class_id=candidate.id))
+            self.db.add(
+                ExamSchedule(
+                    school_id=school_id,
+                    exam_id=exam.id,
+                    exam_subject_id=exam_subject.id,
+                    class_id=candidate.id,
+                    exam_date=start_date,
+                    starts_at=start_clock,
+                    ends_at=ends_clock,
+                )
+            )
+        if data.question_ids:
+            bank = await QuestionBankService(self.db).get_many(school_id, list(data.question_ids))
+            for i, item in enumerate(bank):
+                self.db.add(
+                    Question(
+                        school_id=school_id,
+                        exam_id=exam.id,
+                        prompt=item.prompt,
+                        question_type=item.question_type,
+                        options={"choices": _options_list(item.options) or []} if item.options else None,
+                        answer_key=item.answer_key,
+                        points=item.points,
+                        sort_order=i,
+                    )
+                )
+        await self.db.commit()
+        await self.db.refresh(exam)
+        return await self._to_exam_out(exam)
+
+    async def submit_exam(self, school_id: UUID, user_id: UUID, exam_id: UUID) -> ExamOut:
+        from src.shared.test_workflow import APPROVAL_DRAFT, APPROVAL_PENDING, APPROVAL_REJECTED
+
+        exam = await self._get_exam(school_id, exam_id)
+        if exam.approval_status not in {APPROVAL_DRAFT, APPROVAL_REJECTED}:
+            raise AppError("Only a draft or rejected test can be submitted", status_code=409)
+        exam.approval_status = APPROVAL_PENDING
+        exam.submitted_at = _utcnow()
+        exam.submitted_by = user_id
+        exam.rejection_reason = None
+        await self.db.commit()
+        return await self._to_exam_out(exam)
+
+    async def approve_exam(self, school_id: UUID, user_id: UUID, exam_id: UUID) -> ExamOut:
+        from src.shared.test_workflow import APPROVAL_APPROVED, APPROVAL_PENDING
+
+        exam = await self._get_exam(school_id, exam_id)
+        if exam.approval_status not in {APPROVAL_PENDING, "DRAFT"}:
+            raise AppError("This test is not waiting for approval", status_code=409)
+        exam.approval_status = APPROVAL_APPROVED
+        exam.approved_at = _utcnow()
+        exam.approved_by = user_id
+        exam.rejection_reason = None
+        if exam.status == ExamStatus.DRAFT.value:
+            exam.status = ExamStatus.SCHEDULED.value
+        await self.db.commit()
+        return await self._to_exam_out(exam)
+
+    async def reject_exam(self, school_id: UUID, user_id: UUID, exam_id: UUID, reason: str | None) -> ExamOut:
+        from src.shared.test_workflow import APPROVAL_PENDING, APPROVAL_REJECTED
+
+        exam = await self._get_exam(school_id, exam_id)
+        if exam.approval_status != APPROVAL_PENDING:
+            raise AppError("This test is not waiting for approval", status_code=409)
+        exam.approval_status = APPROVAL_REJECTED
+        exam.rejection_reason = (reason or "").strip() or "Not approved"
+        exam.approved_at = _utcnow()
+        exam.approved_by = user_id
+        await self.db.commit()
+        return await self._to_exam_out(exam)

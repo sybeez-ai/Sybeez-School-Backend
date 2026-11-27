@@ -20,6 +20,8 @@ from src.modules.audit.router import router as audit_router
 from src.modules.auth.router import router as auth_router
 from src.modules.bookstore.router import router as bookstore_router
 from src.modules.classes.router import router as classes_router
+from src.modules.class_subjects.router import router as class_subjects_router
+from src.modules.question_bank.router import router as question_bank_router
 from src.modules.communication.router import router as communication_router
 from src.modules.diary.router import router as diary_router
 from src.modules.documents.router import router as documents_router
@@ -125,6 +127,8 @@ api_router.include_router(subscriptions_router, prefix=API_V1_PREFIX, dependenci
 api_router.include_router(academic_years_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
 api_router.include_router(grades_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
 api_router.include_router(classes_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
+api_router.include_router(class_subjects_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
+api_router.include_router(question_bank_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
 api_router.include_router(subjects_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
 api_router.include_router(syllabus_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])
 api_router.include_router(teachers_router, prefix=API_V1_PREFIX, dependencies=[Depends(feature_gate)])

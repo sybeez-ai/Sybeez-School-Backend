@@ -79,8 +79,26 @@ async def make_test(api, w: World, *, who=None, settings=None, questions=QUESTIO
         r = await api.post(f"{API}/online-tests/{test['id']}/publish", headers=who.h)
         assert r.status_code == 200, r.text
         test = r.json()
+        if test.get("status") != "PUBLISHED":
+            r = await api.post(f"{API}/online-tests/{test['id']}/approve", headers=w.admin.h)
+            assert r.status_code == 200, r.text
+            test = r.json()
     return test
 
+
+
+async def publish_live(api, w: World, test_id, *, who=None) -> dict:
+    """Teacher submit plus admin approval, so the test is actually live."""
+    who = who or w.teacher
+    r = await api.post(f"{API}/online-tests/{test_id}/publish", headers=who.h)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    if body.get("status") != "PUBLISHED":
+        r = await api.post(f"{API}/online-tests/{test_id}/approve", headers=w.admin.h)
+        assert r.status_code == 200, r.text
+        body = r.json()
+    assert body.get("status") == "PUBLISHED", body
+    return body
 
 async def start(api, w, test, student=None):
     student = student or w.students[0]
@@ -116,7 +134,15 @@ async def age_events(db, attempt_id):
 
 
 async def test_teacher_creates_and_publishes_and_totals(api, world):
-    t = await make_test(api, world)
+    pending = await make_test(api, world, publish=False)
+    r = await api.post(f"{API}/online-tests/{pending['id']}/publish", headers=world.teacher.h)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["status"] == "DRAFT"
+    assert body.get("approval_status") == "PENDING_APPROVAL"
+    r = await api.post(f"{API}/online-tests/{pending['id']}/approve", headers=world.admin.h)
+    assert r.status_code == 200, r.text
+    t = r.json()
     assert t["status"] == "PUBLISHED" and t["total_points"] == 4 and t["question_count"] == 3
     assert t["questions"][0]["correct_option_id"]  # teacher sees the key
 
@@ -130,6 +156,10 @@ async def test_draft_not_visible_to_students_and_publish_validations(api, world)
     assert r.status_code == 422 and r.json()["error"]["code"] == "no_questions"
     r = await api.post(f"{API}/online-tests/{t['id']}/publish", headers=world.teacher.h)
     assert r.status_code == 200
+    assert r.json()["status"] == "DRAFT"
+    assert r.json().get("approval_status") == "PENDING_APPROVAL"
+    still = await api.get(f"{API}/online-tests/me", headers=world.students[0].h)
+    assert still.json() == []
 
 
 async def test_question_validation(api, world):
@@ -348,7 +378,7 @@ async def test_start_blocked_before_open_and_after_close(api, world):
             "duration_minutes": 10, "opens_at": _iso(60), "closes_at": _iso(180)}
     t = (await api.post(f"{API}/online-tests", json=body, headers=world.teacher.h)).json()
     await api.post(f"{API}/online-tests/{t['id']}/questions", json=QUESTIONS[0], headers=world.teacher.h)
-    assert (await api.post(f"{API}/online-tests/{t['id']}/publish", headers=world.teacher.h)).status_code == 200
+    await publish_live(api, world, t["id"])
     r = await start(api, world, t)
     assert r.status_code == 409 and r.json()["error"]["code"] == "not_open"
     lst = (await api.get(f"{API}/online-tests/me", headers=world.students[0].h)).json()
@@ -360,7 +390,7 @@ async def test_deadline_is_capped_by_closing_time(api, world):
             "duration_minutes": 60, "opens_at": _iso(-5), "closes_at": _iso(10)}
     t = (await api.post(f"{API}/online-tests", json=body, headers=world.teacher.h)).json()
     await api.post(f"{API}/online-tests/{t['id']}/questions", json=QUESTIONS[0], headers=world.teacher.h)
-    await api.post(f"{API}/online-tests/{t['id']}/publish", headers=world.teacher.h)
+    await publish_live(api, world, t["id"])
     s = (await start(api, world, t)).json()
     deadline = datetime.fromisoformat(s["deadline_at"])
     assert deadline <= datetime.now(timezone.utc) + timedelta(minutes=10, seconds=5)
@@ -659,7 +689,7 @@ async def test_maintenance_sends_reminders_once(api, world, db_session):
             "duration_minutes": 10, "opens_at": _iso(30), "closes_at": _iso(300)}
     t = (await api.post(f"{API}/online-tests", json=body, headers=world.teacher.h)).json()
     await api.post(f"{API}/online-tests/{t['id']}/questions", json=QUESTIONS[0], headers=world.teacher.h)
-    await api.post(f"{API}/online-tests/{t['id']}/publish", headers=world.teacher.h)
+    await publish_live(api, world, t["id"])
     out = (await api.post("/internal/v1/online-tests/maintenance", headers=_internal())).json()
     assert out["reminders"] == 1
     out = (await api.post("/internal/v1/online-tests/maintenance", headers=_internal())).json()

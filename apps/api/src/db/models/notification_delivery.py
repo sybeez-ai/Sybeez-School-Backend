@@ -41,13 +41,11 @@ class NotificationDelivery(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    next_attempt_at: Mapped[datetime | None] = mapped_column(
-        nullable=True
-    )  # populated by scheduler when implementing delayed retries
-    sent_at: Mapped[datetime | None] = mapped_column(nullable=True)
-    delivered_at: Mapped[datetime | None] = mapped_column(nullable=True)
-    read_at: Mapped[datetime | None] = mapped_column(nullable=True)
-    failed_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    failed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     event_key: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     locale: Mapped[str | None] = mapped_column(String(8), nullable=True)
     template_name: Mapped[str | None] = mapped_column(String(128), nullable=True)

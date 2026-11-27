@@ -10,6 +10,7 @@ from src.core.exceptions import AppError, ForbiddenError, NotFoundError
 from src.modules.access.scope import restrict_student_rows
 from src.shared.listing import fetch_page
 from src.shared.pagination import PageParams
+from src.shared.utils import format_class_label
 from src.db.models import (
     Attendance,
     AttendanceAuditLog,
@@ -92,7 +93,7 @@ class AttendanceService:
         if not class_id:
             return None
         classroom = await self.db.get(ClassRoom, class_id)
-        return classroom.name if classroom else None
+        return format_class_label(classroom.name, classroom.section) if classroom else None
 
     async def _active_class_for_student(
         self, school_id: UUID, student_id: UUID
@@ -477,7 +478,7 @@ class AttendanceService:
                 await self._notify_parents_absent(
                     school_id=school_id,
                     student_id=sid,
-                    class_name=classroom.name,
+                    class_name=format_class_label(classroom.name, classroom.section),
                     attended_on=data.attended_on,
                     marked_at=datetime.utcnow(),
                 )
@@ -485,7 +486,7 @@ class AttendanceService:
                 await self._notify_parents_late(
                     school_id=school_id,
                     student_id=sid,
-                    class_name=classroom.name,
+                    class_name=format_class_label(classroom.name, classroom.section),
                     attended_on=data.attended_on,
                 )
 
@@ -697,7 +698,7 @@ class AttendanceService:
             excused=summary.excused,
             half_day=summary.half_day,
             total_marked=marked,
-            rate_percent=_rate(present_like, marked) if marked else 100.0,
+            rate_percent=_rate(present_like, marked) if marked else None,
             days=[await self._to_attendance_out(r) for r in sorted(rows, key=lambda x: x.attended_on)],
         )
 
@@ -1028,7 +1029,7 @@ class AttendanceService:
                 low.append(
                     ClassLowAttendanceOut(
                         class_id=classroom.id,
-                        class_name=classroom.name,
+                        class_name=format_class_label(classroom.name, classroom.section),
                         rate_percent=summary.rate_percent,
                         present=summary.present + summary.late + summary.excused + summary.half_day,
                         total=marked,
@@ -1045,7 +1046,7 @@ class AttendanceService:
             excused=excused,
             half_day=half_day,
             total=total,
-            rate_percent=_rate(present + late + excused + half_day, marked_total) if marked_total else 100.0,
+            rate_percent=_rate(present + late + excused + half_day, marked_total) if marked_total else None,
             low_classes=low[:10],
         )
 
@@ -1115,7 +1116,7 @@ class AttendanceService:
             out.append(
                 ClassRateOut(
                     class_id=classroom.id,
-                    class_name=classroom.name,
+                    class_name=format_class_label(classroom.name, classroom.section),
                     present=present,
                     absent=absent,
                     late=late,
@@ -1354,7 +1355,7 @@ class AttendanceService:
                 year=month_start.year,
                 month=month_start.month,
             )
-            if month.total_marked >= 5 and month.rate_percent < settings.low_attendance_percent:
+            if month.total_marked >= 5 and month.rate_percent is not None and month.rate_percent < settings.low_attendance_percent:
                 alerts.append(
                     AlertOut(
                         kind="LOW_ATTENDANCE",

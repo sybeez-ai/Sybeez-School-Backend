@@ -66,6 +66,16 @@ class OnlineTest(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
     reminded_24h_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     reminded_1h_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    approval_status: Mapped[str] = mapped_column(String(32), nullable=False, default="DRAFT", server_default="DRAFT", index=True)
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    submitted_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    approved_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class OnlineTestQuestion(Base, UUIDPrimaryKeyMixin, TimestampMixin):

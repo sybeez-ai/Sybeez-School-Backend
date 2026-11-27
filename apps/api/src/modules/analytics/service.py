@@ -54,6 +54,7 @@ from src.modules.analytics.schemas import (
     StudentsAnalyticsOut,
     TeacherAnalyticsOut,
 )
+from src.shared.utils import format_class_label
 from src.shared.enums import (
     AttendanceStatus,
     EnrollmentStatus,
@@ -137,7 +138,7 @@ class AnalyticsService:
         c = await self.db.get(ClassRoom, class_id)
         if not c:
             return None
-        return f"{c.name}{('-' + c.section) if getattr(c, 'section', None) else ''}"
+        return format_class_label(c.name, getattr(c, 'section', None))
 
     async def _linked_children(self, school_id: UUID, user_id: UUID) -> list[UUID]:
         parent = (
@@ -245,7 +246,7 @@ class AnalyticsService:
             teachers=int(teachers or 0),
             attendance_rate=att.attendance_rate,
             homework_completion=hw.submission_rate,
-            exam_average=exams.average or 0.0,
+            exam_average=exams.average,
             fees_collection_rate=fees.collection_rate,
             attendance_trend=att.trend,
             exam_trend=exams.exam_trend,
@@ -356,7 +357,30 @@ class AnalyticsService:
             by_grade=academic.by_grade,
         )
 
+    async def _expected_attendance_slots(self, school_id: UUID, f: AnalyticsFilters) -> int:
+        """Enrolment × working days in the window, so unmarked days are not 100%."""
+        from src.modules.analytics.insights import InsightsService
+        from src.modules.analytics.rates import working_dates
+
+        svc = InsightsService(self.db)
+        start, end, _, _ = await svc.resolve_window(school_id, f)
+        weekdays = await svc.weekdays_for(school_id)
+        days = working_dates(start, end, weekdays)
+        eq = select(func.count()).select_from(Enrollment).where(
+            Enrollment.school_id == school_id,
+            Enrollment.status == EnrollmentStatus.ACTIVE.value,
+        )
+        if f.academic_year_id:
+            eq = eq.where(Enrollment.academic_year_id == f.academic_year_id)
+        if f.grade_id:
+            eq = eq.where(Enrollment.grade_id == f.grade_id)
+        if f.section_id:
+            eq = eq.where(Enrollment.class_id == f.section_id)
+        students = int((await self.db.execute(eq)).scalar_one() or 0)
+        return students * len(days)
+
     async def attendance(self, school_id: UUID, f: AnalyticsFilters) -> AttendanceAnalyticsOut:
+
         q = select(Attendance.status, func.count()).where(Attendance.school_id == school_id)
         if f.from_date:
             q = q.where(Attendance.attended_on >= f.from_date)
@@ -390,7 +414,15 @@ class AnalyticsService:
         total = sum(counts.values())
         # Rate: present+late+half as attending
         attending = present + late + half
-        rate = _pct(attending, total)
+        expected = await self._expected_attendance_slots(school_id, f)
+        if total == 0:
+            rate = None
+        elif expected and expected > 0:
+            from src.modules.analytics.rates import optional_rate as _optional_rate
+
+            rate = _optional_rate(attending, expected)
+        else:
+            rate = _pct(attending, total) if total else None
 
         # Monthly trend
         month_expr = func.date_trunc("month", Attendance.attended_on)
@@ -481,7 +513,7 @@ class AnalyticsService:
         if f.grade_id:
             sq = sq.where(ClassRoom.grade_id == f.grade_id)
         by_section = [
-            MetricPoint(label=f"{n}{('-' + s) if s else ''}", value=_pct(a or 0, t or 0))
+            MetricPoint(label=format_class_label(n, s), value=_pct(a or 0, t or 0))
             for n, s, t, a in (await self.db.execute(sq)).all()
         ]
 
@@ -940,7 +972,7 @@ class AnalyticsService:
             out.append(
                 ClassAnalyticsOut(
                     section_id=room.id,
-                    class_name=f"{room.name}{('-' + room.section) if room.section else ''}",
+                    class_name=format_class_label(room.name, room.section),
                     students=int(students or 0),
                     attendance_rate=att.attendance_rate,
                     homework_completion=hw.submission_rate,

@@ -13,6 +13,7 @@ from src.modules.access.scope import teacher_class_ids, teaches_class
 from src.db.models import (
     Announcement,
     AnnouncementAudience,
+    MessageBroadcast,
     ClassRoom,
     CommunicationAuditLog,
     Conversation,
@@ -35,10 +36,14 @@ from src.modules.communication.schemas import (
     AnnouncementUpdate,
     AudienceIn,
     AudienceOut,
+    BroadcastCreate,
+    BroadcastOut,
+    BroadcastRecipientOut,
     CommunicationStatsOut,
     ConversationCreate,
     ConversationOut,
     MessageContactOut,
+    OutreachPersonOut,
     MessageCreate,
     MessageOut,
     NotificationListOut,
@@ -322,6 +327,9 @@ class CommunicationService:
             created_by=a.author_id,
             published_at=a.published_at,
             expires_at=a.expires_at,
+            scheduled_for=getattr(a, "scheduled_for", None),
+            channels=list(getattr(a, "channels", None) or ["IN_APP"]),
+            attachments=list(getattr(a, "attachments", None) or []),
             created_at=a.created_at,
             audiences=[AudienceOut.model_validate(x) for x in (a.audiences or [])],
         )
@@ -335,6 +343,8 @@ class CommunicationService:
         status: str | None = None,
         for_recipient: bool = False,
     ) -> list[AnnouncementOut]:
+        if role == UserRole.SCHOOL_ADMIN.value:
+            await self.release_due_announcements(school_id)
         q = (
             select(Announcement)
             .where(Announcement.school_id == school_id)
@@ -388,14 +398,24 @@ class CommunicationService:
     async def create_announcement(
         self, school_id: UUID, user_id: UUID, data: AnnouncementCreate
     ) -> AnnouncementOut:
+        channels = [str(c).upper() for c in (data.channels or ["IN_APP"])]
+        if not channels:
+            channels = ["IN_APP"]
+        attachments = [item.model_dump() if hasattr(item, "model_dump") else dict(item) for item in (data.attachments or [])]
+        status = AnnouncementStatus.DRAFT.value
+        if data.scheduled_for and not data.publish:
+            status = AnnouncementStatus.SCHEDULED.value
         a = Announcement(
             school_id=school_id,
             author_id=user_id,
             title=data.title.strip(),
             body=data.content,
-            status=AnnouncementStatus.DRAFT.value,
+            status=status,
             priority=data.priority,
             expires_at=data.expires_at,
+            scheduled_for=data.scheduled_for,
+            channels=channels,
+            attachments=attachments,
             is_published=False,
         )
         self.db.add(a)
@@ -403,6 +423,8 @@ class CommunicationService:
         await self._replace_audiences(school_id, a.id, data.audiences)
         await self._audit(school_id, user_id, "ANNOUNCEMENT_CREATED", "announcement", a.id)
         await self.db.commit()
+        if data.publish:
+            return await self.publish_announcement(school_id, user_id, a.id)
         return await self.get_announcement(school_id, a.id)
 
     async def update_announcement(
@@ -450,6 +472,7 @@ class CommunicationService:
                     grade_id=aud.grade_id,
                     section_id=aud.section_id,
                     user_id=aud.user_id,
+                    student_id=getattr(aud, "student_id", None),
                 )
             )
 
@@ -465,47 +488,13 @@ class CommunicationService:
         ).scalar_one_or_none()
         if not a:
             raise NotFoundError("Announcement not found")
-        recipients = await self._resolve_audience_users(school_id, a)
-        a.status = AnnouncementStatus.PUBLISHED.value
-        a.is_published = True
-        a.published_at = _utcnow()
-        await create_bulk_notifications(
-            self.db,
-            school_id=school_id,
-            recipient_user_ids=recipients,
-            title=a.title,
-            body=a.body[:500],
-            category=NotificationType.ANNOUNCEMENT.value,
-            link_path="/announcements",
-            entity_type="announcement",
-            entity_id=a.id,
-            priority=a.priority or NotificationPriority.NORMAL.value,
-            event_key_prefix=f"ANNOUNCEMENT:{a.id}",
-        )
-        from src.modules.alerts.service import dispatch_alert, school_display_name
-
-        preview = " ".join((a.body or "").split())[:180]
-        try:
-            await dispatch_alert(
-                self.db,
-                school_id=school_id,
-                event_key="announcement",
-                notification_type=NotificationType.ANNOUNCEMENT.value,
-                explicit_user_ids=recipients,
-                variables={
-                    "title": a.title,
-                    "preview": preview or a.title,
-                    "school_name": await school_display_name(self.db, school_id),
-                },
-                dedupe_key=f"announcement:{a.id}",
-                title=a.title,
-                link_path="/announcements",
-                urgent=a.priority == NotificationPriority.URGENT.value,
-            )
-        except Exception:
-            from src.core.telemetry import track_alert
-
-            track_alert("announcement_alert_failed", announcement_id=str(a.id))
+        if a.scheduled_for and a.scheduled_for > _utcnow() and a.status != AnnouncementStatus.PUBLISHED.value:
+            a.status = AnnouncementStatus.SCHEDULED.value
+            a.is_published = False
+            await self._audit(school_id, user_id, "ANNOUNCEMENT_SCHEDULED", "announcement", a.id)
+            await self.db.commit()
+            return await self.get_announcement(school_id, a.id)
+        await self._deliver_announcement(school_id, a)
         await self._audit(school_id, user_id, "ANNOUNCEMENT_PUBLISHED", "announcement", a.id)
         await self.db.commit()
         return await self.get_announcement(school_id, a.id)
@@ -600,6 +589,8 @@ class CommunicationService:
                 users |= await self._users_for_section(school_id, aud.section_id, aud.role)
             elif aud.audience_type == AudienceType.USER.value and aud.user_id:
                 users.add(aud.user_id)
+            elif aud.audience_type == "STUDENT" and getattr(aud, "student_id", None):
+                users |= await self._users_for_student(school_id, aud.student_id, aud.role)
         return list(users)
 
     async def _users_for_role(self, school_id: UUID, role: str) -> set[UUID]:
@@ -1462,3 +1453,393 @@ class CommunicationService:
             notifications_unread=notif_unread,
             conversations=convs,
         )
+
+
+    async def _users_for_student(self, school_id: UUID, student_id: UUID, role: str | None) -> set[UUID]:
+        out: set[UUID] = set()
+        student = await self.db.get(Student, student_id)
+        if not student or student.school_id != school_id:
+            return out
+        want_students = role is None or role.upper() in ("STUDENT", "BOTH", "")
+        want_parents = role is not None and role.upper() in ("PARENT", "BOTH")
+        want_teachers = role is not None and role.upper() in ("TEACHER", "BOTH")
+        if want_students:
+            out.add(student.user_id)
+        if want_parents:
+            links = (
+                await self.db.execute(
+                    select(StudentParent).where(
+                        StudentParent.school_id == school_id,
+                        StudentParent.student_id == student_id,
+                    )
+                )
+            ).scalars().all()
+            for link in links:
+                parent = await self.db.get(Parent, link.parent_id)
+                if parent:
+                    out.add(parent.user_id)
+        if want_teachers:
+            enrollment = (
+                await self.db.execute(
+                    select(Enrollment).where(
+                        Enrollment.school_id == school_id,
+                        Enrollment.student_id == student_id,
+                        Enrollment.status == EnrollmentStatus.ACTIVE.value,
+                    )
+                )
+            ).scalars().first()
+            if enrollment:
+                out |= await self._users_for_section(school_id, enrollment.class_id, "TEACHER")
+        return out
+
+    async def _deliver_announcement(self, school_id: UUID, a: Announcement) -> None:
+        from src.modules.communication.outreach import dispatch_outreach
+
+        recipients = await self._resolve_audience_users(school_id, a)
+        a.status = AnnouncementStatus.PUBLISHED.value
+        a.is_published = True
+        a.published_at = _utcnow()
+        channels = list(getattr(a, "channels", None) or ["IN_APP"])
+        await dispatch_outreach(
+            self.db,
+            school_id=school_id,
+            recipient_user_ids=recipients,
+            channels=channels,
+            title=a.title,
+            body=a.body,
+            notification_type=NotificationType.ANNOUNCEMENT.value,
+            entity_type="announcement",
+            entity_id=a.id,
+            link_path="/school-admin/announcements",
+            category=NotificationType.ANNOUNCEMENT.value,
+            priority=a.priority or NotificationPriority.NORMAL.value,
+        )
+
+    async def release_due_announcements(self, school_id: UUID) -> int:
+        now = _utcnow()
+        rows = (
+            await self.db.execute(
+                select(Announcement)
+                .where(
+                    Announcement.school_id == school_id,
+                    Announcement.status == AnnouncementStatus.SCHEDULED.value,
+                    Announcement.scheduled_for.is_not(None),
+                    Announcement.scheduled_for <= now,
+                )
+                .options(selectinload(Announcement.audiences))
+            )
+        ).scalars().all()
+        for a in rows:
+            await self._deliver_announcement(school_id, a)
+        if rows:
+            await self.db.commit()
+        return len(rows)
+
+    async def announcement_deliveries(self, school_id: UUID, announcement_id: UUID):
+        from src.modules.communication.outreach import delivery_public_status
+
+        a = await self.db.get(Announcement, announcement_id)
+        if not a or a.school_id != school_id:
+            raise NotFoundError("Announcement not found")
+        rows = await self.list_deliveries(school_id, limit=500)
+        out = []
+        for row in rows:
+            meta = {}
+            if row.meta_json:
+                import json
+
+                try:
+                    meta = json.loads(row.meta_json)
+                except Exception:
+                    meta = {}
+            if meta.get("entity_id") == str(announcement_id) or (
+                row.notification_type == NotificationType.ANNOUNCEMENT.value
+                and row.title == a.title
+            ):
+                name = await self._user_name(row.user_id)
+                out.append(
+                    BroadcastRecipientOut(
+                        user_id=row.user_id,
+                        name=name,
+                        channel=row.channel,
+                        status=delivery_public_status(row),
+                        to=row.to,
+                        last_error=row.last_error,
+                    )
+                )
+        return out
+
+    async def _resolve_broadcast_users(
+        self,
+        school_id: UUID,
+        *,
+        audience_type: str,
+        class_ids: list[UUID],
+        user_ids: list[UUID],
+        student_ids: list[UUID],
+        include_parents: bool,
+        include_teachers: bool,
+    ) -> list[UUID]:
+        kind = (audience_type or "").lower()
+        users: set[UUID] = set()
+        if kind in {"students", "student"}:
+            if student_ids:
+                for sid in student_ids:
+                    users |= await self._users_for_student(school_id, sid, "STUDENT")
+            elif class_ids:
+                for cid in class_ids:
+                    users |= await self._users_for_section(school_id, cid, "STUDENT")
+            else:
+                users |= await self._users_for_role(school_id, UserRole.STUDENT.value)
+        elif kind in {"parents", "parent"}:
+            if student_ids:
+                for sid in student_ids:
+                    users |= await self._users_for_student(school_id, sid, "PARENT")
+            elif class_ids:
+                for cid in class_ids:
+                    users |= await self._users_for_section(school_id, cid, "PARENT")
+            else:
+                users |= await self._users_for_role(school_id, UserRole.PARENT.value)
+        elif kind in {"teachers", "teacher"}:
+            if class_ids:
+                for cid in class_ids:
+                    users |= await self._users_for_section(school_id, cid, "TEACHER")
+                    # Class teachers are also in _users_for_role; section role TEACHER
+                    # may be empty because _users_for_section only handles students/parents.
+                    teachers = (
+                        await self.db.execute(select(Teacher).where(Teacher.school_id == school_id))
+                    ).scalars().all()
+                    # Prefer teachers assigned to the class via TeacherAssignment
+                    from src.db.models import TeacherAssignment
+
+                    assigned = (
+                        await self.db.execute(
+                            select(TeacherAssignment.teacher_id).where(
+                                TeacherAssignment.school_id == school_id,
+                                TeacherAssignment.class_id.in_(class_ids),
+                            )
+                        )
+                    ).scalars().all()
+                    by_id = {t.id: t for t in teachers}
+                    for tid in assigned:
+                        teacher = by_id.get(tid)
+                        if teacher:
+                            users.add(teacher.user_id)
+            else:
+                users |= await self._users_for_role(school_id, UserRole.TEACHER.value)
+        elif kind in {"class", "classes"}:
+            roles = ["STUDENT"]
+            if include_parents:
+                roles.append("PARENT")
+            for cid in class_ids:
+                for role in roles:
+                    users |= await self._users_for_section(school_id, cid, role)
+            if include_teachers and class_ids:
+                from src.db.models import TeacherAssignment
+
+                assigned = (
+                    await self.db.execute(
+                        select(TeacherAssignment.teacher_id).where(
+                            TeacherAssignment.school_id == school_id,
+                            TeacherAssignment.class_id.in_(class_ids),
+                        )
+                    )
+                ).scalars().all()
+                for tid in assigned:
+                    teacher = await self.db.get(Teacher, tid)
+                    if teacher:
+                        users.add(teacher.user_id)
+        elif kind in {"people", "users"}:
+            users |= set(user_ids or [])
+            for sid in student_ids or []:
+                users |= await self._users_for_student(school_id, sid, "STUDENT")
+        else:
+            raise AppError("Unknown audience type", status_code=422)
+        return list(users)
+
+    async def list_outreach_people(
+        self,
+        school_id: UUID,
+        *,
+        audience_type: str,
+        class_id: UUID | None = None,
+        q: str | None = None,
+    ) -> list[OutreachPersonOut]:
+        class_ids = [class_id] if class_id else []
+        ids = await self._resolve_broadcast_users(
+            school_id,
+            audience_type=audience_type,
+            class_ids=class_ids,
+            user_ids=[],
+            student_ids=[],
+            include_parents=False,
+            include_teachers=False,
+        )
+        out: list[OutreachPersonOut] = []
+        query = (q or "").strip().lower()
+        for user_id in ids:
+            user = await self.db.get(User, user_id)
+            if not user:
+                continue
+            name = user.full_name or user.email or "Member"
+            if query and query not in name.lower() and query not in (user.email or "").lower():
+                continue
+            role = "USER"
+            student = (
+                await self.db.execute(select(Student).where(Student.user_id == user_id, Student.school_id == school_id))
+            ).scalar_one_or_none()
+            parent = (
+                await self.db.execute(select(Parent).where(Parent.user_id == user_id, Parent.school_id == school_id))
+            ).scalar_one_or_none()
+            teacher = (
+                await self.db.execute(select(Teacher).where(Teacher.user_id == user_id, Teacher.school_id == school_id))
+            ).scalar_one_or_none()
+            class_ref = None
+            student_id = None
+            detail = None
+            if student:
+                role = "STUDENT"
+                student_id = student.id
+                enrollment = (
+                    await self.db.execute(
+                        select(Enrollment).where(
+                            Enrollment.student_id == student.id,
+                            Enrollment.status == EnrollmentStatus.ACTIVE.value,
+                        )
+                    )
+                ).scalars().first()
+                if enrollment:
+                    class_ref = enrollment.class_id
+                    room = await self.db.get(ClassRoom, enrollment.class_id)
+                    if room:
+                        from src.shared.utils import format_class_label
+
+                        detail = format_class_label(room.name, room.section)
+            elif parent:
+                role = "PARENT"
+            elif teacher:
+                role = "TEACHER"
+            out.append(
+                OutreachPersonOut(
+                    user_id=user_id,
+                    name=name,
+                    role=role,
+                    detail=detail,
+                    class_id=class_ref,
+                    student_id=student_id,
+                    email=bool(user.email),
+                    phone=bool(user.phone or (parent.phone if parent else None) or (teacher.phone if teacher else None) or (student.phone if student else None)),
+                )
+            )
+        out.sort(key=lambda x: x.name.lower())
+        return out
+
+    async def create_broadcast(self, school_id: UUID, user_id: UUID, data: BroadcastCreate) -> BroadcastOut:
+        from src.modules.communication.outreach import dispatch_outreach
+
+        recipients = await self._resolve_broadcast_users(
+            school_id,
+            audience_type=data.audience_type,
+            class_ids=list(data.class_ids or []),
+            user_ids=list(data.user_ids or []),
+            student_ids=list(data.student_ids or []),
+            include_parents=data.include_parents,
+            include_teachers=data.include_teachers,
+        )
+        if not recipients:
+            raise AppError("No recipients match that audience", status_code=422)
+        channels = [str(c).upper() for c in data.channels]
+        row = MessageBroadcast(
+            school_id=school_id,
+            created_by=user_id,
+            title=(data.title or "").strip() or None,
+            body=data.body.strip(),
+            audience_type=data.audience_type.lower(),
+            audience_json={
+                "class_ids": [str(x) for x in (data.class_ids or [])],
+                "user_ids": [str(x) for x in (data.user_ids or [])],
+                "student_ids": [str(x) for x in (data.student_ids or [])],
+                "include_parents": data.include_parents,
+                "include_teachers": data.include_teachers,
+            },
+            channels=channels,
+            recipient_count=len(recipients),
+        )
+        self.db.add(row)
+        await self.db.flush()
+        await dispatch_outreach(
+            self.db,
+            school_id=school_id,
+            recipient_user_ids=recipients,
+            channels=channels,
+            title=row.title or "School message",
+            body=row.body,
+            notification_type="MESSAGE_BROADCAST",
+            entity_type="message_broadcast",
+            entity_id=row.id,
+            link_path="/school-admin/communication",
+            category="MESSAGE_BROADCAST",
+        )
+        await self.db.commit()
+        return await self.get_broadcast(school_id, row.id)
+
+    async def _broadcast_out(self, row: MessageBroadcast) -> BroadcastOut:
+        from src.modules.communication.outreach import delivery_public_status
+        import json
+
+        deliveries = (
+            await self.db.execute(
+                select(NotificationDelivery)
+                .where(NotificationDelivery.school_id == row.school_id)
+                .order_by(NotificationDelivery.created_at.desc())
+                .limit(1000)
+            )
+        ).scalars().all()
+        items: list[BroadcastRecipientOut] = []
+        for d in deliveries:
+            meta = {}
+            if d.meta_json:
+                try:
+                    meta = json.loads(d.meta_json)
+                except Exception:
+                    meta = {}
+            if meta.get("entity_id") != str(row.id):
+                continue
+            items.append(
+                BroadcastRecipientOut(
+                    user_id=d.user_id,
+                    name=await self._user_name(d.user_id),
+                    channel=d.channel,
+                    status=delivery_public_status(d),
+                    to=d.to,
+                    last_error=d.last_error,
+                )
+            )
+        return BroadcastOut(
+            id=row.id,
+            school_id=row.school_id,
+            title=row.title,
+            body=row.body,
+            audience_type=row.audience_type,
+            channels=list(row.channels or []),
+            recipient_count=row.recipient_count,
+            created_at=row.created_at,
+            created_by=row.created_by,
+            deliveries=items,
+        )
+
+    async def list_broadcasts(self, school_id: UUID) -> list[BroadcastOut]:
+        rows = (
+            await self.db.execute(
+                select(MessageBroadcast)
+                .where(MessageBroadcast.school_id == school_id)
+                .order_by(MessageBroadcast.created_at.desc())
+            )
+        ).scalars().all()
+        return [await self._broadcast_out(r) for r in rows]
+
+    async def get_broadcast(self, school_id: UUID, broadcast_id: UUID) -> BroadcastOut:
+        row = await self.db.get(MessageBroadcast, broadcast_id)
+        if not row or row.school_id != school_id:
+            raise NotFoundError("Broadcast not found")
+        return await self._broadcast_out(row)

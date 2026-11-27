@@ -396,9 +396,30 @@ class OnlineTestService:
                     attempts_submitted=c["sub"],
                     attempts_flagged=c["flag"],
                     created_at=test.created_at,
+                    **self._workflow_fields(test, now),
                 )
             )
         return listed
+
+
+    def _workflow_fields(self, test, now):
+        from src.shared.test_workflow import workflow_label, workflow_status
+
+        wf = workflow_status(
+            approval_status=getattr(test, "approval_status", None),
+            starts_at=test.opens_at,
+            ends_at=test.closes_at,
+            record_status=test.status,
+            now=now,
+        )
+        return {
+            "approval_status": getattr(test, "approval_status", None) or "DRAFT",
+            "workflow_status": wf,
+            "workflow_label": workflow_label(wf),
+            "submitted_at": getattr(test, "submitted_at", None),
+            "approved_at": getattr(test, "approved_at", None),
+            "rejection_reason": getattr(test, "rejection_reason", None),
+        }
 
     async def _test_out(self, test: OnlineTest, now: datetime, counts: dict | None = None) -> S.OnlineTestOut:
         c = counts or (await self._counts([test.id]))[test.id]
@@ -433,6 +454,7 @@ class OnlineTestService:
             attempts_submitted=c["sub"],
             attempts_flagged=c["flag"],
             created_at=test.created_at,
+            **self._workflow_fields(test, now),
         )
 
     @staticmethod
@@ -774,15 +796,88 @@ class OnlineTestService:
             raise AppError("Set when the test closes before publishing", code="closes_at_required", status_code=422)
         if test.closes_at <= now:
             raise AppError("The closing time is in the past", code="invalid_window", status_code=422)
+        if not self._is_admin(user):
+            test.approval_status = "PENDING_APPROVAL"
+            test.submitted_at = now
+            test.submitted_by = user.id
+            test.rejection_reason = None
+            await self.db.flush()
+            await self._audit(sid, user.id, "TEST_SUBMITTED", test_id=test.id, details={"questions": len(qs)})
+            return await self.get_test(user, test.id)
         if test.opens_at is None:
             test.opens_at = now
         await self._recount(test)
         test.status = "PUBLISHED"
         test.published_at = now
+        test.approval_status = "APPROVED"
+        test.approved_at = now
+        test.approved_by = user.id
         await self.db.flush()
         await self._audit(sid, user.id, "TEST_PUBLISHED", test_id=test.id, details={"questions": len(qs)})
         await self._notify_published(test)
         return await self.get_test(user, test.id)
+
+    async def submit_for_approval(self, user: CurrentUser, test_id: UUID) -> S.OnlineTestDetailOut:
+        return await self.publish(user, test_id)
+
+    async def approve_test(self, user: CurrentUser, test_id: UUID) -> S.OnlineTestDetailOut:
+        if not self._is_admin(user):
+            raise ForbiddenError("Only a school admin can approve a test")
+        test = await self._manage_test(user, test_id, write=True)
+        if (test.approval_status or "DRAFT") not in {"PENDING_APPROVAL", "DRAFT"}:
+            raise ConflictError("This test is not waiting for approval", code="not_pending")
+        test.approval_status = "APPROVED"
+        test.approved_at = await self._now()
+        test.approved_by = user.id
+        test.rejection_reason = None
+        await self.db.flush()
+        if test.status == "DRAFT":
+            return await self.publish(user, test_id)
+        return await self.get_test(user, test.id)
+
+    async def reject_test(self, user: CurrentUser, test_id: UUID, reason: str | None) -> S.OnlineTestDetailOut:
+        if not self._is_admin(user):
+            raise ForbiddenError("Only a school admin can reject a test")
+        test = await self._manage_test(user, test_id, write=True)
+        if (test.approval_status or "") != "PENDING_APPROVAL":
+            raise ConflictError("This test is not waiting for approval", code="not_pending")
+        test.approval_status = "REJECTED"
+        test.rejection_reason = (reason or "").strip() or "Not approved"
+        test.approved_at = await self._now()
+        test.approved_by = user.id
+        await self.db.flush()
+        await self._audit(self._sid(user), user.id, "TEST_REJECTED", test_id=test.id)
+        return await self.get_test(user, test.id)
+
+    async def add_questions_from_bank(self, user: CurrentUser, test_id: UUID, question_ids: list) -> S.OnlineTestDetailOut:
+        from src.modules.question_bank.service import QuestionBankService, _correct_index, _options_list
+
+        await self._manage_test(user, test_id, write=True)
+        bank = await QuestionBankService(self.db).get_many(self._sid(user), list(question_ids))
+        items = []
+        for item in bank:
+            options = _options_list(item.options) or []
+            if len(options) < 2:
+                continue
+            idx = _correct_index(options, item.answer_key) or 0
+            if idx >= len(options):
+                idx = 0
+            items.append(
+                S.QuestionBulkItem(
+                    prompt=item.prompt,
+                    options=options,
+                    correct_index=idx,
+                    points=item.points or 1,
+                    source="MANUAL",
+                    reviewed=True,
+                )
+            )
+        if not items:
+            raise AppError(
+                "Those bank questions need at least two options to use in an online test",
+                status_code=422,
+            )
+        return await self.add_questions(user, test_id, items, None)
 
     async def close(self, user: CurrentUser, test_id: UUID) -> S.OnlineTestDetailOut:
         sid = self._sid(user)

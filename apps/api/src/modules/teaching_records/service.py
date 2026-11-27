@@ -19,6 +19,7 @@ from src.db.models import (
 from src.modules.teaching_records.repository import TeachingRecordRepository
 from src.modules.teaching_records.schemas import TeachingRecordCreate, TeachingRecordOut
 from src.shared.enums import EnrollmentStatus
+from src.shared.utils import format_class_label
 
 
 class TeachingRecordService:
@@ -108,7 +109,7 @@ class TeachingRecordService:
             ).scalars().all()
         }
         classes = {
-            c.id: f"{c.name}{f'-{c.section}' if c.section else ''}"
+            c.id: format_class_label(c.name, c.section)
             for c in (
                 await self.db.execute(select(ClassRoom).where(ClassRoom.id.in_(class_ids)))
             ).scalars().all()

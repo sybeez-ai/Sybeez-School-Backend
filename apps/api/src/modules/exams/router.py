@@ -12,6 +12,8 @@ from src.modules.exams.pdf import build_report_card_pdf
 from src.modules.exams.schemas import (
     AuditLogOut,
     CalculateResultsOut,
+    ApprovalDecision,
+    ClassTestCreate,
     ExamCreate,
     ExamOut,
     ExamOverviewOut,
@@ -37,8 +39,14 @@ from src.modules.exams.schemas import (
     StudentExamScheduleItemOut,
     TeacherExamOut,
     UnlockMarksIn,
+    ExamHubListOut,
+    ExamHubRescheduleIn,
+    ExamHubScheduleIn,
+    ExamHubScheduleOut,
+    ExamHubItemOut,
 )
 from src.modules.exams.service import ExamService
+from src.modules.exams.hub import ExamHubService
 from src.shared.enums import UserRole
 from src.modules.access.deps import public
 
@@ -190,6 +198,61 @@ async def create_exam(
     return await ExamService(db).create_exam(_sid(user), body, created_by=user.id)
 
 
+@router.post("/class-tests", response_model=ExamOut, status_code=201)
+async def create_class_test(
+    body: ClassTestCreate,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN, UserRole.TEACHER))],
+):
+    return await ExamService(db).create_class_test(_sid(user), user, body)
+
+
+
+@router.get("/hub", response_model=ExamHubListOut)
+async def list_exam_hub(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN, UserRole.TEACHER))],
+    tab: str | None = Query(None, pattern="^(upcoming|live|completed|pending|all)$"),
+):
+    return await ExamHubService(db).list_hub(_sid(user), tab=tab)
+
+
+@router.post("/hub/schedule", response_model=ExamHubScheduleOut, status_code=201)
+async def schedule_exam_hub(
+    body: ExamHubScheduleIn,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN, UserRole.TEACHER))],
+):
+    return await ExamHubService(db).schedule(_sid(user), user, body)
+
+
+@router.post("/hub/{kind}/{item_id}/start-now", response_model=ExamHubItemOut)
+async def start_exam_now(
+    kind: str,
+    item_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+):
+    if kind not in {"written", "online"}:
+        from src.core.exceptions import AppError
+        raise AppError("Unknown exam type", status_code=422)
+    return await ExamHubService(db).start_now(_sid(user), user, kind=kind, item_id=item_id)
+
+
+@router.post("/hub/{kind}/{item_id}/reschedule", response_model=ExamHubItemOut)
+async def reschedule_exam_hub(
+    kind: str,
+    item_id: UUID,
+    body: ExamHubRescheduleIn,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN, UserRole.TEACHER))],
+):
+    if kind not in {"written", "online"}:
+        from src.core.exceptions import AppError
+        raise AppError("Unknown exam type", status_code=422)
+    return await ExamHubService(db).reschedule(_sid(user), user, kind=kind, item_id=item_id, data=body)
+
+
 @router.get("/{exam_id}", response_model=ExamOut)
 async def get_exam(
     exam_id: UUID,
@@ -202,6 +265,34 @@ async def get_exam(
     return await ExamService(db).get_exam(
         _sid(user), exam_id, user_id=user.id, role=user.role.value
     )
+
+
+@router.post("/{exam_id}/submit", response_model=ExamOut)
+async def submit_exam(
+    exam_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN, UserRole.TEACHER))],
+):
+    return await ExamService(db).submit_exam(_sid(user), user.id, exam_id)
+
+
+@router.post("/{exam_id}/approve", response_model=ExamOut)
+async def approve_exam(
+    exam_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+):
+    return await ExamService(db).approve_exam(_sid(user), user.id, exam_id)
+
+
+@router.post("/{exam_id}/reject", response_model=ExamOut)
+async def reject_exam(
+    exam_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    body: ApprovalDecision | None = None,
+):
+    return await ExamService(db).reject_exam(_sid(user), user.id, exam_id, body.reason if body else None)
 
 
 @router.patch("/{exam_id}", response_model=ExamOut)
