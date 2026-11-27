@@ -978,6 +978,120 @@ async def seed_insights_demo(db, *, school, year, grade, classroom, subject, tea
 
 
 
+    # A clearly earlier batch so the default 8-week window has a previous period
+    # for score and fee deltas (existing mid-term marks sit in the current window).
+    prior_days = [date(2026, 8, 20), date(2026, 9, 10), date(2026, 9, 24)]
+    prior_titles = [
+        "August warm-up quiz",
+        "September check-in quiz",
+        "Late September review quiz",
+    ]
+    for qi, (qday, qtitle) in enumerate(zip(prior_days, prior_titles)):
+        online = (
+            await db.execute(
+                select(OnlineTest).where(OnlineTest.school_id == school.id, OnlineTest.title == qtitle)
+            )
+        ).scalar_one_or_none()
+        if online is None:
+            online = OnlineTest(
+                school_id=school.id,
+                teacher_id=teacher.id,
+                created_by=school_admin.id if school_admin else None,
+                class_id=classroom.id,
+                subject_id=subject.id,
+                title=qtitle,
+                instructions="Choose the correct answer.",
+                status="PUBLISHED",
+                duration_minutes=15,
+                total_points=1,
+                published_at=datetime.combine(qday, time(8, 0), tzinfo=timezone.utc),
+                approval_status="APPROVED",
+            )
+            db.add(online)
+            await db.flush()
+        for room in rooms:
+            for i, sid in enumerate(room_students.get(room.id, [])):
+                existing_att = (
+                    await db.execute(
+                        select(OnlineTestAttempt).where(
+                            OnlineTestAttempt.test_id == online.id,
+                            OnlineTestAttempt.student_id == sid,
+                        )
+                    )
+                ).scalar_one_or_none()
+                if existing_att is None:
+                    submitted = datetime.combine(qday, time(10, 15), tzinfo=timezone.utc)
+                    started = submitted - timedelta(minutes=12)
+                    score = quiz_scores[(i + qi + 1) % len(quiz_scores)]
+                    if room.id != classroom.id:
+                        score = max(0.0, score - 0.15)
+                    db.add(
+                        OnlineTestAttempt(
+                            school_id=school.id,
+                            test_id=online.id,
+                            student_id=sid,
+                            class_id=room.id,
+                            status="SUBMITTED",
+                            started_at=started,
+                            deadline_at=started + timedelta(minutes=15),
+                            submitted_at=submitted,
+                            score=score,
+                            max_score=1.0,
+                            percentage=round(score * 100, 1),
+                            question_order=[],
+                            option_order={},
+                        )
+                    )
+
+    for room in rooms:
+        for i, sid in enumerate(room_students.get(room.id, [])):
+            acc = (
+                await db.execute(
+                    select(StudentFeeAccount).where(
+                        StudentFeeAccount.school_id == school.id,
+                        StudentFeeAccount.student_id == sid,
+                        StudentFeeAccount.academic_year_id == year.id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if acc is None:
+                continue
+            for inst, (inv_date, total, paid) in enumerate(
+                (
+                    (date(2026, 8, 18), 8000, 6000),
+                    (date(2026, 9, 16), 8000, 8000),
+                )
+            ):
+                number = f"PREV-{room.section}{i+1:02d}-{inst+1:02d}"
+                existing_inv = (
+                    await db.execute(
+                        select(FeeInvoice).where(
+                            FeeInvoice.school_id == school.id,
+                            FeeInvoice.invoice_number == number,
+                        )
+                    )
+                ).scalar_one_or_none()
+                if existing_inv is None:
+                    st = FeeInvoiceStatus.PAID.value if paid >= total else FeeInvoiceStatus.PARTIALLY_PAID.value
+                    db.add(
+                        FeeInvoice(
+                            school_id=school.id,
+                            student_fee_account_id=acc.id,
+                            invoice_number=number,
+                            invoice_date=inv_date,
+                            due_date=inv_date + timedelta(days=14),
+                            currency="INR",
+                            subtotal=total,
+                            total_amount=total,
+                            paid_amount=paid,
+                            balance_amount=total - paid,
+                            status=st,
+                            created_by=school_admin.id if school_admin else None,
+                        )
+                    )
+
+
+
 async def ensure_schema() -> None:
     """Create full Core + AI schema (PostgreSQL + pgvector) if missing."""
     if APP_ENV != "development":

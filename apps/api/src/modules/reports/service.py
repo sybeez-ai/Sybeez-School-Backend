@@ -233,8 +233,6 @@ class ReportService:
             if data.section_id:
                 q = q.where(Result.class_id == data.section_id)
             for r in (await self.db.execute(q.limit(5000))).scalars().all():
-                from src.db.models import Exam
-
                 exam = await self.db.get(Exam, r.exam_id)
                 rows.append(
                     {
