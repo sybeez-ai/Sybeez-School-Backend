@@ -40,9 +40,12 @@ from src.db.models import (
     ExamSection,
     ExamSubject,
     ExamType,
+    MessageBroadcast,
+    NotificationDelivery,
     OnlineTest,
     OnlineTestQuestion,
     OnlineTestQuestionKey,
+    QuestionBankItem,
     StudentMark,
     TeacherAssignment,
     TimetableEntry,
@@ -338,6 +341,7 @@ async def seed_school_admin_demo(db, *, school, year, grade, classroom, subject,
             duration_minutes=20,
             total_points=1,
             published_at=marked_at,
+            approval_status="APPROVED",
         )
         db.add(online)
         await db.flush()
@@ -393,6 +397,111 @@ async def seed_school_admin_demo(db, *, school, year, grade, classroom, subject,
                 audience_type=AudienceType.SCHOOL.value,
             )
         )
+        notice.channels = ["IN_APP", "WHATSAPP", "EMAIL", "SMS"]
+
+    # Question bank items for the class subject
+    existing_bank = (
+        await db.execute(
+            select(QuestionBankItem).where(
+                QuestionBankItem.school_id == school.id,
+                QuestionBankItem.prompt == "What is 3/4 as a decimal?",
+            )
+        )
+    ).scalar_one_or_none()
+    if existing_bank is None:
+        db.add(
+            QuestionBankItem(
+                school_id=school.id,
+                subject_id=subject.id,
+                class_id=classroom.id,
+                created_by=teacher.user_id if teacher else (school_admin.id if school_admin else None),
+                teacher_id=teacher.id if teacher else None,
+                prompt="What is 3/4 as a decimal?",
+                question_type="mcq",
+                options=["0.25", "0.5", "0.75", "1"],
+                answer_key="2",
+                points=1,
+            )
+        )
+        db.add(
+            QuestionBankItem(
+                school_id=school.id,
+                subject_id=subject.id,
+                class_id=classroom.id,
+                created_by=teacher.user_id if teacher else (school_admin.id if school_admin else None),
+                teacher_id=teacher.id if teacher else None,
+                prompt="Explain how to add two fractions with the same denominator.",
+                question_type="short",
+                options=None,
+                answer_key="Add the numerators and keep the denominator.",
+                points=2,
+            )
+        )
+
+    # A teacher-submitted online test waiting on admin approval
+    pending = (
+        await db.execute(
+            select(OnlineTest).where(OnlineTest.school_id == school.id, OnlineTest.title == "Decimals check-in")
+        )
+    ).scalar_one_or_none()
+    if pending is None:
+        pending = OnlineTest(
+            school_id=school.id,
+            teacher_id=teacher.id,
+            created_by=teacher.user_id if teacher else None,
+            class_id=classroom.id,
+            subject_id=subject.id,
+            title="Decimals check-in",
+            instructions="A short check before the written test.",
+            status="DRAFT",
+            approval_status="PENDING_APPROVAL",
+            submitted_at=marked_at,
+            submitted_by=teacher.user_id if teacher else None,
+            duration_minutes=15,
+            total_points=1,
+        )
+        db.add(pending)
+
+    # Broadcast history with honest unsent channels (local providers are not live)
+    broadcast = (
+        await db.execute(
+            select(MessageBroadcast).where(
+                MessageBroadcast.school_id == school.id,
+                MessageBroadcast.body == "Sports day is this Saturday at 9am on the main ground.",
+            )
+        )
+    ).scalar_one_or_none()
+    if broadcast is None and school_admin is not None:
+        broadcast = MessageBroadcast(
+            school_id=school.id,
+            created_by=school_admin.id,
+            title="Sports day reminder",
+            body="Sports day is this Saturday at 9am on the main ground.",
+            audience_type="class",
+            audience_json={"class_ids": [str(classroom.id)], "include_parents": True, "include_teachers": False},
+            channels=["WHATSAPP", "EMAIL", "SMS"],
+            recipient_count=1,
+        )
+        db.add(broadcast)
+        await db.flush()
+        for channel, dest in (("WHATSAPP", "n/a"), ("EMAIL", "n/a"), ("SMS", "n/a")):
+            db.add(
+                NotificationDelivery(
+                    school_id=school.id,
+                    user_id=school_admin.id,
+                    channel=channel,
+                    notification_type="MESSAGE_BROADCAST",
+                    to=dest,
+                    title="Sports day reminder",
+                    body=broadcast.body,
+                    meta_json=f'{{"entity_type": "message_broadcast", "entity_id": "{broadcast.id}"}}',
+                    provider="none",
+                    status="FAILED",
+                    attempts=0,
+                    last_error="not sent: provider not configured",
+                    error_code="provider_not_configured",
+                )
+            )
 
 
 async def ensure_schema() -> None:

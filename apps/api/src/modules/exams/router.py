@@ -12,6 +12,8 @@ from src.modules.exams.pdf import build_report_card_pdf
 from src.modules.exams.schemas import (
     AuditLogOut,
     CalculateResultsOut,
+    ApprovalDecision,
+    ClassTestCreate,
     ExamCreate,
     ExamOut,
     ExamOverviewOut,
@@ -190,6 +192,15 @@ async def create_exam(
     return await ExamService(db).create_exam(_sid(user), body, created_by=user.id)
 
 
+@router.post("/class-tests", response_model=ExamOut, status_code=201)
+async def create_class_test(
+    body: ClassTestCreate,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN, UserRole.TEACHER))],
+):
+    return await ExamService(db).create_class_test(_sid(user), user, body)
+
+
 @router.get("/{exam_id}", response_model=ExamOut)
 async def get_exam(
     exam_id: UUID,
@@ -202,6 +213,34 @@ async def get_exam(
     return await ExamService(db).get_exam(
         _sid(user), exam_id, user_id=user.id, role=user.role.value
     )
+
+
+@router.post("/{exam_id}/submit", response_model=ExamOut)
+async def submit_exam(
+    exam_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN, UserRole.TEACHER))],
+):
+    return await ExamService(db).submit_exam(_sid(user), user.id, exam_id)
+
+
+@router.post("/{exam_id}/approve", response_model=ExamOut)
+async def approve_exam(
+    exam_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+):
+    return await ExamService(db).approve_exam(_sid(user), user.id, exam_id)
+
+
+@router.post("/{exam_id}/reject", response_model=ExamOut)
+async def reject_exam(
+    exam_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    body: ApprovalDecision | None = None,
+):
+    return await ExamService(db).reject_exam(_sid(user), user.id, exam_id, body.reason if body else None)
 
 
 @router.patch("/{exam_id}", response_model=ExamOut)

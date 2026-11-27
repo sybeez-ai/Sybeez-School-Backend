@@ -12,10 +12,14 @@ from src.modules.communication.schemas import (
     AnnouncementCreate,
     AnnouncementOut,
     AnnouncementUpdate,
+    BroadcastCreate,
+    BroadcastOut,
+    BroadcastRecipientOut,
     CommunicationStatsOut,
     ConversationCreate,
     ConversationOut,
     MessageContactOut,
+    OutreachPersonOut,
     MessageCreate,
     MessageOut,
     NotificationDeliveryOut,
@@ -179,6 +183,45 @@ async def list_deliveries(
     return await CommunicationService(db).list_deliveries(_sid(user), limit=limit)
 
 
+@router.get("/broadcasts", response_model=list[BroadcastOut])
+async def list_broadcasts(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+):
+    return await CommunicationService(db).list_broadcasts(_sid(user))
+
+
+@router.post("/broadcasts", response_model=BroadcastOut, status_code=201)
+async def create_broadcast(
+    body: BroadcastCreate,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+):
+    return await CommunicationService(db).create_broadcast(_sid(user), user.id, body)
+
+
+@router.get("/broadcasts/{broadcast_id}", response_model=BroadcastOut)
+async def get_broadcast(
+    broadcast_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+):
+    return await CommunicationService(db).get_broadcast(_sid(user), broadcast_id)
+
+
+@router.get("/outreach-recipients", response_model=list[OutreachPersonOut])
+async def outreach_recipients(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    audience_type: str = Query("students"),
+    class_id: UUID | None = Query(default=None),
+    q: str | None = Query(default=None),
+):
+    return await CommunicationService(db).list_outreach_people(
+        _sid(user), audience_type=audience_type, class_id=class_id, q=q
+    )
+
+
 # ── announcements ────────────────────────────────────────────
 
 
@@ -233,6 +276,15 @@ async def create_teacher_announcement(
         audience_role=body.audience_role,
         priority=body.priority,
     )
+
+
+@router.get("/announcements/{announcement_id}/deliveries", response_model=list[BroadcastRecipientOut])
+async def announcement_deliveries(
+    announcement_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+):
+    return await CommunicationService(db).announcement_deliveries(_sid(user), announcement_id)
 
 
 @router.get("/announcements/{announcement_id}", response_model=AnnouncementOut)

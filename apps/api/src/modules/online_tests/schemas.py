@@ -166,6 +166,12 @@ class OnlineTestOut(BaseModel):
     instructions: str | None = None
     status: str
     effective_status: str
+    approval_status: str = "DRAFT"
+    workflow_status: str = "draft"
+    workflow_label: str = "Draft"
+    submitted_at: datetime | None = None
+    approved_at: datetime | None = None
+    rejection_reason: str | None = None
     duration_minutes: int
     opens_at: datetime | None = None
     closes_at: datetime | None = None
@@ -465,3 +471,11 @@ class ReleaseOut(BaseModel):
     test_id: UUID
     released_at: datetime
     notified: int
+
+
+class ApprovalDecision(BaseModel):
+    reason: str | None = Field(default=None, max_length=500)
+
+
+class BankQuestionsIn(BaseModel):
+    question_ids: list[UUID] = Field(min_length=1)

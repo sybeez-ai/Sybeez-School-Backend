@@ -34,11 +34,19 @@ class UnreadCountOut(BaseModel):
 
 
 class AudienceIn(BaseModel):
-    audience_type: str  # SCHOOL|ROLE|GRADE|SECTION|USER
+    audience_type: str  # SCHOOL|ROLE|GRADE|SECTION|USER|STUDENT
     role: str | None = None
     grade_id: UUID | None = None
     section_id: UUID | None = None
     user_id: UUID | None = None
+    student_id: UUID | None = None
+
+
+class AttachmentIn(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    url: str | None = Field(default=None, max_length=2000)
+    content_type: str | None = None
+    size: int | None = None
 
 
 class AnnouncementCreate(BaseModel):
@@ -46,8 +54,12 @@ class AnnouncementCreate(BaseModel):
     content: str = Field(min_length=1)
     priority: str = "NORMAL"
     expires_at: datetime | None = None
+    scheduled_for: datetime | None = None
+    channels: list[str] = Field(default_factory=lambda: ["IN_APP"])
+    attachments: list[AttachmentIn] = Field(default_factory=list)
     audiences: list[AudienceIn] = Field(default_factory=list)
     status: str = "DRAFT"
+    publish: bool = False
 
 
 class AnnouncementUpdate(BaseModel):
@@ -55,6 +67,9 @@ class AnnouncementUpdate(BaseModel):
     content: str | None = None
     priority: str | None = None
     expires_at: datetime | None = None
+    scheduled_for: datetime | None = None
+    channels: list[str] | None = None
+    attachments: list[AttachmentIn] | None = None
     audiences: list[AudienceIn] | None = None
 
 
@@ -67,6 +82,7 @@ class AudienceOut(BaseModel):
     grade_id: UUID | None = None
     section_id: UUID | None = None
     user_id: UUID | None = None
+    student_id: UUID | None = None
 
 
 class AnnouncementOut(BaseModel):
@@ -81,6 +97,9 @@ class AnnouncementOut(BaseModel):
     created_by: UUID | None = None
     published_at: datetime | None = None
     expires_at: datetime | None = None
+    scheduled_for: datetime | None = None
+    channels: list[str] = []
+    attachments: list[dict] = []
     created_at: datetime
     audiences: list[AudienceOut] = []
 
@@ -173,3 +192,48 @@ class NotificationDeliveryOut(BaseModel):
     last_error: str | None = None
     created_at: datetime
     sent_at: datetime | None = None
+
+
+class BroadcastCreate(BaseModel):
+    title: str | None = Field(default=None, max_length=255)
+    body: str = Field(min_length=1, max_length=5000)
+    audience_type: str  # students|parents|teachers|class|people
+    class_ids: list[UUID] = Field(default_factory=list)
+    user_ids: list[UUID] = Field(default_factory=list)
+    student_ids: list[UUID] = Field(default_factory=list)
+    include_parents: bool = False
+    include_teachers: bool = False
+    channels: list[str] = Field(min_length=1)
+
+
+class BroadcastRecipientOut(BaseModel):
+    user_id: UUID | None = None
+    name: str | None = None
+    channel: str
+    status: str
+    to: str | None = None
+    last_error: str | None = None
+
+
+class BroadcastOut(BaseModel):
+    id: UUID
+    school_id: UUID
+    title: str | None = None
+    body: str
+    audience_type: str
+    channels: list[str]
+    recipient_count: int
+    created_at: datetime
+    created_by: UUID | None = None
+    deliveries: list[BroadcastRecipientOut] = []
+
+
+class OutreachPersonOut(BaseModel):
+    user_id: UUID
+    name: str
+    role: str
+    detail: str | None = None
+    class_id: UUID | None = None
+    student_id: UUID | None = None
+    email: bool = False
+    phone: bool = False
