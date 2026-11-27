@@ -72,7 +72,7 @@ class MonthlyStatsOut(BaseModel):
     excused: int
     half_day: int
     total_marked: int
-    rate_percent: float
+    rate_percent: float | None = None
     days: list[AttendanceOut]
 
 
@@ -164,7 +164,7 @@ class OverviewOut(BaseModel):
     excused: int
     half_day: int
     total: int
-    rate_percent: float
+    rate_percent: float | None = None
     low_classes: list[ClassLowAttendanceOut]
 
 

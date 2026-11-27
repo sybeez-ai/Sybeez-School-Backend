@@ -32,7 +32,7 @@ class AttentionItem(BaseModel):
 class OverviewOut(BaseModel):
     students: int
     teachers: int
-    attendance_rate: float
+    attendance_rate: float | None = None
     homework_completion: float
     exam_average: float
     fees_collection_rate: float
@@ -65,7 +65,7 @@ class StudentsAnalyticsOut(BaseModel):
 
 
 class AttendanceAnalyticsOut(BaseModel):
-    attendance_rate: float
+    attendance_rate: float | None = None
     present: int
     absent: int
     late: int
@@ -129,7 +129,7 @@ class ClassAnalyticsOut(BaseModel):
     section_id: UUID
     class_name: str
     students: int
-    attendance_rate: float
+    attendance_rate: float | None = None
     homework_completion: float
     exam_average: float | None
     fee_collection_rate: float | None

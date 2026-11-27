@@ -54,6 +54,7 @@ from src.modules.analytics.schemas import (
     StudentsAnalyticsOut,
     TeacherAnalyticsOut,
 )
+from src.shared.utils import format_class_label
 from src.shared.enums import (
     AttendanceStatus,
     EnrollmentStatus,
@@ -137,7 +138,7 @@ class AnalyticsService:
         c = await self.db.get(ClassRoom, class_id)
         if not c:
             return None
-        return f"{c.name}{('-' + c.section) if getattr(c, 'section', None) else ''}"
+        return format_class_label(c.name, getattr(c, 'section', None))
 
     async def _linked_children(self, school_id: UUID, user_id: UUID) -> list[UUID]:
         parent = (
@@ -390,7 +391,7 @@ class AnalyticsService:
         total = sum(counts.values())
         # Rate: present+late+half as attending
         attending = present + late + half
-        rate = _pct(attending, total)
+        rate = _pct(attending, total) if total else None
 
         # Monthly trend
         month_expr = func.date_trunc("month", Attendance.attended_on)
@@ -481,7 +482,7 @@ class AnalyticsService:
         if f.grade_id:
             sq = sq.where(ClassRoom.grade_id == f.grade_id)
         by_section = [
-            MetricPoint(label=f"{n}{('-' + s) if s else ''}", value=_pct(a or 0, t or 0))
+            MetricPoint(label=format_class_label(n, s), value=_pct(a or 0, t or 0))
             for n, s, t, a in (await self.db.execute(sq)).all()
         ]
 
@@ -940,7 +941,7 @@ class AnalyticsService:
             out.append(
                 ClassAnalyticsOut(
                     section_id=room.id,
-                    class_name=f"{room.name}{('-' + room.section) if room.section else ''}",
+                    class_name=format_class_label(room.name, room.section),
                     students=int(students or 0),
                     attendance_rate=att.attendance_rate,
                     homework_completion=hw.submission_rate,

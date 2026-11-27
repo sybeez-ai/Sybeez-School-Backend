@@ -12,7 +12,7 @@ import asyncio
 import os
 import sys
 
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta, timezone
 
 from sqlalchemy import select, text
 
@@ -33,13 +33,32 @@ from src.db.models import (
     Subject,
     Subscription,
     Teacher,
+    Announcement,
+    AnnouncementAudience,
+    Attendance,
+    Exam,
+    ExamSection,
+    ExamSubject,
+    ExamType,
+    OnlineTest,
+    OnlineTestQuestion,
+    OnlineTestQuestionKey,
+    StudentMark,
     TeacherAssignment,
     TimetableEntry,
     User,
 )
+from src.db.models.class_subject import ClassSubject
 from src.shared.enums import (
+    AnnouncementStatus,
+    AttendanceStatus,
+    AudienceType,
     EnrollmentStatus,
+    ExamAttendanceStatus,
+    ExamStatus,
+    MarkEntryStatus,
     MembershipStatus,
+    NotificationPriority,
     PlatformRole,
     SchoolStatus,
     SubscriptionStatus,
@@ -82,6 +101,298 @@ def _assert_safe_to_seed() -> None:
 
 def _enabled() -> bool:
     return os.environ.get("SEED_DEMO_DATA", "").strip().lower() in {"1", "true", "yes"}
+
+
+
+async def seed_school_admin_demo(db, *, school, year, grade, classroom, subject, teacher, school_admin) -> None:
+    """Extra local-only demo data for the school-admin portal (insights, tests, notices)."""
+    from sqlalchemy import select
+
+    # Extra school-wide subjects
+    extra_subjects = [("English", "ENG"), ("Science", "SCI"), ("Social Science", "SOC")]
+    subjects = {subject.code: subject}
+    for name, code in extra_subjects:
+        row = (
+            await db.execute(select(Subject).where(Subject.school_id == school.id, Subject.code == code))
+        ).scalar_one_or_none()
+        if row is None:
+            row = Subject(school_id=school.id, name=name, code=code)
+            db.add(row)
+            await db.flush()
+        subjects[code] = row
+
+    # Class subjects: Maths + English with teacher, Science without (optional teacher)
+    desired = [
+        (subjects["MATH"], teacher.id),
+        (subjects["ENG"], teacher.id),
+        (subjects["SCI"], None),
+        (subjects["SOC"], None),
+    ]
+    for subj, teacher_id in desired:
+        existing = (
+            await db.execute(
+                select(ClassSubject).where(
+                    ClassSubject.class_id == classroom.id,
+                    ClassSubject.subject_id == subj.id,
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is None:
+            db.add(
+                ClassSubject(
+                    school_id=school.id,
+                    class_id=classroom.id,
+                    subject_id=subj.id,
+                    teacher_id=teacher_id,
+                )
+            )
+
+    # A weekday grid so the class timetable is not just "today"
+    weekly = [
+        (0, time(9, 0), time(9, 45), subjects["MATH"], "Room 12"),
+        (0, time(10, 0), time(10, 45), subjects["ENG"], "Room 12"),
+        (1, time(9, 0), time(9, 45), subjects["SCI"], "Lab 2"),
+        (1, time(10, 0), time(10, 45), subjects["SOC"], "Room 12"),
+        (2, time(9, 0), time(9, 45), subjects["ENG"], "Room 12"),
+        (2, time(11, 0), time(11, 45), subjects["MATH"], "Room 12"),
+        (3, time(9, 0), time(9, 45), subjects["SCI"], "Lab 2"),
+        (4, time(9, 0), time(9, 45), subjects["MATH"], "Room 12"),
+        (4, time(10, 0), time(10, 45), subjects["ENG"], "Room 12"),
+    ]
+    for dow, starts_at, ends_at, subj, room in weekly:
+        existing_tt = (
+            await db.execute(
+                select(TimetableEntry).where(
+                    TimetableEntry.school_id == school.id,
+                    TimetableEntry.class_id == classroom.id,
+                    TimetableEntry.day_of_week == dow,
+                    TimetableEntry.starts_at == starts_at,
+                )
+            )
+        ).scalar_one_or_none()
+        if existing_tt is None:
+            db.add(
+                TimetableEntry(
+                    school_id=school.id,
+                    academic_year_id=year.id,
+                    class_id=classroom.id,
+                    subject_id=subj.id,
+                    teacher_id=teacher.id if subj.code in {"MATH", "ENG"} else None,
+                    day_of_week=dow,
+                    starts_at=starts_at,
+                    ends_at=ends_at,
+                    room=room,
+                )
+            )
+
+    enrollments = (
+        await db.execute(
+            select(Enrollment).where(
+                Enrollment.school_id == school.id,
+                Enrollment.class_id == classroom.id,
+                Enrollment.status == EnrollmentStatus.ACTIVE.value,
+            )
+        )
+    ).scalars().all()
+    student_ids = [e.student_id for e in enrollments]
+    today = date.today()
+    # Last 5 weekdays of attendance (mix of present / late / absent)
+    days: list[date] = []
+    cursor = today
+    while len(days) < 5:
+        if cursor.weekday() < 5:
+            days.append(cursor)
+        cursor -= timedelta(days=1)
+    pattern = [
+        AttendanceStatus.PRESENT.value,
+        AttendanceStatus.PRESENT.value,
+        AttendanceStatus.LATE.value,
+        AttendanceStatus.PRESENT.value,
+        AttendanceStatus.ABSENT.value,
+    ]
+    marked_at = datetime.now(timezone.utc)
+    for offset, day in enumerate(days):
+        for i, sid in enumerate(student_ids):
+            existing = (
+                await db.execute(
+                    select(Attendance).where(
+                        Attendance.student_id == sid,
+                        Attendance.class_id == classroom.id,
+                        Attendance.attended_on == day,
+                    )
+                )
+            ).scalar_one_or_none()
+            if existing is None:
+                status = pattern[(offset + i) % len(pattern)]
+                db.add(
+                    Attendance(
+                        school_id=school.id,
+                        student_id=sid,
+                        class_id=classroom.id,
+                        attended_on=day,
+                        status=status,
+                        marked_by=school_admin.id if school_admin else None,
+                        marked_at=marked_at,
+                    )
+                )
+
+    # Written exam + marks (for Tests tab and Insights)
+    exam_type = (
+        await db.execute(select(ExamType).where(ExamType.school_id == school.id, ExamType.name == "Term 1"))
+    ).scalar_one_or_none()
+    if exam_type is None:
+        exam_type = ExamType(school_id=school.id, name="Term 1", description=None, is_active=True)
+        db.add(exam_type)
+        await db.flush()
+    exam = (
+        await db.execute(select(Exam).where(Exam.school_id == school.id, Exam.title == "Term 1 Mid-term"))
+    ).scalar_one_or_none()
+    if exam is None:
+        exam = Exam(
+            school_id=school.id,
+            academic_year_id=year.id,
+            exam_type_id=exam_type.id,
+            grade_id=grade.id,
+            class_id=classroom.id,
+            subject_id=subject.id,
+            title="Term 1 Mid-term",
+            starts_on=days[-1],
+            ends_on=days[0],
+            max_score=100.0,
+            status=ExamStatus.PUBLISHED.value,
+            published_at=marked_at,
+            published_by=school_admin.id if school_admin else None,
+            created_by=school_admin.id if school_admin else None,
+        )
+        db.add(exam)
+        await db.flush()
+    section = (
+        await db.execute(select(ExamSection).where(ExamSection.exam_id == exam.id, ExamSection.class_id == classroom.id))
+    ).scalar_one_or_none()
+    if section is None:
+        section = ExamSection(school_id=school.id, exam_id=exam.id, class_id=classroom.id)
+        db.add(section)
+        await db.flush()
+    scores = {"MATH": [78.0, 91.0, 64.0, 85.0], "ENG": [72.0, 88.0, 69.0, 80.0]}
+    for code, marks in scores.items():
+        subj = subjects[code]
+        exam_subject = (
+            await db.execute(
+                select(ExamSubject).where(ExamSubject.exam_id == exam.id, ExamSubject.subject_id == subj.id)
+            )
+        ).scalar_one_or_none()
+        if exam_subject is None:
+            exam_subject = ExamSubject(
+                school_id=school.id,
+                exam_id=exam.id,
+                subject_id=subj.id,
+                grade_id=grade.id,
+                max_marks=100.0,
+                pass_marks=35.0,
+                exam_date=days[0],
+            )
+            db.add(exam_subject)
+            await db.flush()
+        for sid, obtained in zip(student_ids, marks):
+            existing_mark = (
+                await db.execute(
+                    select(StudentMark).where(
+                        StudentMark.exam_subject_id == exam_subject.id,
+                        StudentMark.student_id == sid,
+                    )
+                )
+            ).scalar_one_or_none()
+            if existing_mark is None:
+                db.add(
+                    StudentMark(
+                        school_id=school.id,
+                        exam_id=exam.id,
+                        exam_subject_id=exam_subject.id,
+                        student_id=sid,
+                        class_id=classroom.id,
+                        obtained_marks=obtained,
+                        max_marks=100.0,
+                        attendance=ExamAttendanceStatus.PRESENT.value,
+                        status=MarkEntryStatus.SUBMITTED.value,
+                        entered_by=school_admin.id if school_admin else None,
+                        entered_at=marked_at,
+                    )
+                )
+
+    # One published online test
+    online = (
+        await db.execute(
+            select(OnlineTest).where(OnlineTest.school_id == school.id, OnlineTest.title == "Fractions practice")
+        )
+    ).scalar_one_or_none()
+    if online is None:
+        online = OnlineTest(
+            school_id=school.id,
+            teacher_id=teacher.id,
+            created_by=school_admin.id if school_admin else None,
+            class_id=classroom.id,
+            subject_id=subject.id,
+            title="Fractions practice",
+            instructions="Choose the correct answer.",
+            status="PUBLISHED",
+            duration_minutes=20,
+            total_points=1,
+            published_at=marked_at,
+        )
+        db.add(online)
+        await db.flush()
+        question = OnlineTestQuestion(
+            school_id=school.id,
+            test_id=online.id,
+            class_id=classroom.id,
+            prompt="What is 1/2 + 1/4?",
+            options=[{"id": "a", "text": "1/4"}, {"id": "b", "text": "3/4"}, {"id": "c", "text": "2/4"}, {"id": "d", "text": "1"}],
+            points=1,
+            sort_order=1,
+            source="MANUAL",
+        )
+        db.add(question)
+        await db.flush()
+        db.add(
+            OnlineTestQuestionKey(
+                question_id=question.id,
+                school_id=school.id,
+                test_id=online.id,
+                class_id=classroom.id,
+                correct_option_id="b",
+                explanation="1/2 + 1/4 = 3/4",
+            )
+        )
+
+    # One published school notice
+    notice = (
+        await db.execute(
+            select(Announcement).where(
+                Announcement.school_id == school.id,
+                Announcement.title == "Parent-teacher meeting next Friday",
+            )
+        )
+    ).scalar_one_or_none()
+    if notice is None:
+        notice = Announcement(
+            school_id=school.id,
+            author_id=school_admin.id if school_admin else None,
+            title="Parent-teacher meeting next Friday",
+            body="Please come to the school hall from 4pm to 6pm to meet your child's teachers.",
+            is_published=True,
+            status=AnnouncementStatus.PUBLISHED.value,
+            priority=NotificationPriority.NORMAL.value,
+            published_at=marked_at,
+        )
+        db.add(notice)
+        await db.flush()
+        db.add(
+            AnnouncementAudience(
+                school_id=school.id,
+                announcement_id=notice.id,
+                audience_type=AudienceType.SCHOOL.value,
+            )
+        )
 
 
 async def ensure_schema() -> None:
@@ -588,6 +899,17 @@ async def seed() -> None:
                     is_primary=True,
                 )
             )
+
+        await seed_school_admin_demo(
+            db,
+            school=school,
+            year=year,
+            grade=grade,
+            classroom=classroom,
+            subject=subject,
+            teacher=teacher,
+            school_admin=school_admin,
+        )
 
         await db.commit()
         print("Seed complete.")

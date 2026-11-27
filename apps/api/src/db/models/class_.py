@@ -38,3 +38,4 @@ class ClassRoom(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     enrollments = relationship("Enrollment", back_populates="classroom")
     teacher_assignments = relationship("TeacherAssignment", back_populates="classroom")
     timetable_entries = relationship("TimetableEntry", back_populates="classroom")
+    class_subjects = relationship("ClassSubject", back_populates="classroom")

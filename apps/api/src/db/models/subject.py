@@ -22,3 +22,4 @@ class Subject(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
     teacher_assignments = relationship("TeacherAssignment", back_populates="subject")
     syllabus_entries = relationship("Syllabus", back_populates="subject")
+    class_subjects = relationship("ClassSubject", back_populates="subject")

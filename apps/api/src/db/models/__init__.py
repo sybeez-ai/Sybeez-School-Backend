@@ -9,6 +9,7 @@ from src.db.models import books as _books  # noqa: F401  (registers books + ops 
 from src.db.models import campus as _campus  # noqa: F401
 from src.db.models.leave_request import LeaveRequest
 from src.db.models.class_ import ClassRoom
+from src.db.models.class_subject import ClassSubject
 from src.db.models.communication import (
     Achievement,
     Announcement,
@@ -266,6 +267,7 @@ __all__ = [
     "AcademicYear",
     "Grade",
     "ClassRoom",
+    "ClassSubject",
     "Subject",
     "Teacher",
     "Student",

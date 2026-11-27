@@ -34,6 +34,7 @@ from src.modules.reports.schemas import (
     SavedReportOut,
     SavedReportUpdate,
 )
+from src.shared.utils import format_class_label
 from src.shared.enums import (
     AttendanceStatus,
     EnrollmentStatus,
@@ -84,7 +85,7 @@ class ReportService:
         c = await self.db.get(ClassRoom, class_id)
         if not c:
             return "—"
-        return f"{c.name}{('-' + c.section) if c.section else ''}"
+        return format_class_label(c.name, c.section)
 
     async def generate(
         self, school_id: UUID, user_id: UUID, data: ReportGenerateIn
