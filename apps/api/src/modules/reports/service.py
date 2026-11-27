@@ -318,7 +318,7 @@ class ReportService:
                 mq = mq.where(ExamSubject.exam_date >= data.from_date)
             if data.to_date:
                 mq = mq.where(ExamSubject.exam_date <= data.to_date)
-            for sid, cid, subj_id, title, exam_date, obtained, max_marks, pass_marks in (
+            for sid, cid, subj_id, assessment_title, exam_date, obtained, max_marks, pass_marks in (
                 await self.db.execute(mq.limit(5000))
             ).all():
                 mx = float(max_marks or 0)
@@ -334,7 +334,7 @@ class ReportService:
                         "student": await self._student_name(sid),
                         "class": await self._class_name(cid),
                         "subject": subj.name if subj else "",
-                        "assessment": title or "Exam",
+                        "assessment": assessment_title or "Exam",
                         "date": str(exam_date or ""),
                         "obtained": obtained,
                         "max": max_marks,
@@ -363,7 +363,7 @@ class ReportService:
                 oq = oq.where(OnlineTestAttempt.class_id == data.section_id)
             if data.subject_id:
                 oq = oq.where(OnlineTest.subject_id == data.subject_id)
-            for sid, cid, subj_id, title, submitted_at, score, max_score, percentage in (
+            for sid, cid, subj_id, assessment_title, submitted_at, score, max_score, percentage in (
                 await self.db.execute(oq.limit(5000))
             ).all():
                 if data.from_date and submitted_at and submitted_at.date() < data.from_date:
@@ -379,7 +379,7 @@ class ReportService:
                         "student": await self._student_name(sid),
                         "class": await self._class_name(cid),
                         "subject": subj.name if subj else "",
-                        "assessment": title or "Online test",
+                        "assessment": assessment_title or "Online test",
                         "date": str(submitted_at.date() if submitted_at else ""),
                         "obtained": score,
                         "max": max_score,
