@@ -642,7 +642,7 @@ async def seed_insights_demo(db, *, school, year, grade, classroom, subject, tea
     today = date.today()
     days: list[date] = []
     cursor = today
-    while len(days) < 40:
+    while len(days) < 80:
         if cursor.weekday() < 5:
             days.append(cursor)
         cursor -= timedelta(days=1)
@@ -767,12 +767,16 @@ async def seed_insights_demo(db, *, school, year, grade, classroom, subject, tea
                         )
 
     # Weekly online quizzes spread across the window so score trends have points
-    quiz_weeks = [days[d] for d in (6, 16, 26, 36) if d < len(days)]
+    quiz_weeks = [days[d] for d in (6, 16, 26, 36, 46, 56, 66, 76) if d < len(days)]
     quiz_titles = [
         "Week 2 decimals quiz",
         "Week 4 fractions quiz",
         "Week 6 geometry quiz",
         "Week 8 review quiz",
+        "Week 10 algebra quiz",
+        "Week 12 ratio quiz",
+        "Week 14 measurement quiz",
+        "Week 16 review quiz",
     ]
     quiz_scores = [0.8, 1.0, 0.6, 0.9, 0.4, 0.7, 0.5]
     for qi, (qday, qtitle) in enumerate(zip(quiz_weeks, quiz_titles)):
@@ -873,8 +877,8 @@ async def seed_insights_demo(db, *, school, year, grade, classroom, subject, tea
                 db.add(hw)
                 await db.flush()
             for i, sid in enumerate(room_students.get(room.id, [])):
-                # Leave every 5th student without a submission (missing).
-                if i % 5 == 4:
+                # Leave some work unmarked/missing so completion is never a fake 100%.
+                if i % 5 == 4 or (i == len(room_students.get(room.id, [])) - 1 and day_idx % 2 == 0):
                     continue
                 existing_sub = (
                     await db.execute(
@@ -932,6 +936,9 @@ async def seed_insights_demo(db, *, school, year, grade, classroom, subject, tea
                     (3, 8000, 8000, FeeInvoiceStatus.PAID.value),
                     (17, 8000, 4000, FeeInvoiceStatus.PARTIALLY_PAID.value),
                     (31, 8000, 0 if i % 3 == 2 else 8000, FeeInvoiceStatus.ISSUED.value if i % 3 == 2 else FeeInvoiceStatus.PAID.value),
+                    (48, 8000, 8000, FeeInvoiceStatus.PAID.value),
+                    (62, 8000, 4000, FeeInvoiceStatus.PARTIALLY_PAID.value),
+                    (74, 8000, 0 if i % 3 == 1 else 8000, FeeInvoiceStatus.ISSUED.value if i % 3 == 1 else FeeInvoiceStatus.PAID.value),
                 )
             ):
                 inv_date = days[offset] if offset < len(days) else today
