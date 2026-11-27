@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.config import get_settings
 from src.core.jobs import enqueue_job
 from src.db.models import NotificationDelivery, Parent, Student, Teacher, User
-from src.modules.notifications.service import create_in_app_notification
+from src.modules.notifications.service import create_in_app_notification, notification_fanout_scope
 from src.shared.enums import NotificationChannel
 
 NOT_CONFIGURED = "not sent: provider not configured"
@@ -106,7 +106,44 @@ async def dispatch_outreach(
     by_id = {u.id: u for u in users}
     rows: list[NotificationDelivery] = []
 
-    for user_id in recipient_user_ids or []:
+    async with notification_fanout_scope(db, school_id):
+        await _write_outreach_rows(
+            db,
+            school_id=school_id,
+            recipient_user_ids=recipient_user_ids or [],
+            by_id=by_id,
+            wanted=wanted,
+            title=title,
+            body=body,
+            notification_type=notification_type,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            link_path=link_path,
+            category=category,
+            priority=priority,
+            rows=rows,
+        )
+    return rows
+
+
+async def _write_outreach_rows(
+    db: AsyncSession,
+    *,
+    school_id: UUID,
+    recipient_user_ids: list,
+    by_id: dict,
+    wanted: list[str],
+    title: str,
+    body: str,
+    notification_type: str,
+    entity_type: str,
+    entity_id: UUID,
+    link_path: str | None,
+    category: str | None,
+    priority: str,
+    rows: list,
+) -> None:
+    for user_id in recipient_user_ids:
         user = by_id.get(user_id)
         if user is None:
             continue
@@ -240,7 +277,6 @@ async def dispatch_outreach(
                 row.failed_at = _utcnow()
             rows.append(row)
 
-    return rows
 
 
 def delivery_public_status(row: NotificationDelivery) -> str:
