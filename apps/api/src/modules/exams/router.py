@@ -39,8 +39,14 @@ from src.modules.exams.schemas import (
     StudentExamScheduleItemOut,
     TeacherExamOut,
     UnlockMarksIn,
+    ExamHubListOut,
+    ExamHubRescheduleIn,
+    ExamHubScheduleIn,
+    ExamHubScheduleOut,
+    ExamHubItemOut,
 )
 from src.modules.exams.service import ExamService
+from src.modules.exams.hub import ExamHubService
 from src.shared.enums import UserRole
 from src.modules.access.deps import public
 
@@ -199,6 +205,52 @@ async def create_class_test(
     user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN, UserRole.TEACHER))],
 ):
     return await ExamService(db).create_class_test(_sid(user), user, body)
+
+
+
+@router.get("/hub", response_model=ExamHubListOut)
+async def list_exam_hub(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN, UserRole.TEACHER))],
+    tab: str | None = Query(None, pattern="^(upcoming|live|completed|pending|all)$"),
+):
+    return await ExamHubService(db).list_hub(_sid(user), tab=tab)
+
+
+@router.post("/hub/schedule", response_model=ExamHubScheduleOut, status_code=201)
+async def schedule_exam_hub(
+    body: ExamHubScheduleIn,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN, UserRole.TEACHER))],
+):
+    return await ExamHubService(db).schedule(_sid(user), user, body)
+
+
+@router.post("/hub/{kind}/{item_id}/start-now", response_model=ExamHubItemOut)
+async def start_exam_now(
+    kind: str,
+    item_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+):
+    if kind not in {"written", "online"}:
+        from src.core.exceptions import AppError
+        raise AppError("Unknown exam type", status_code=422)
+    return await ExamHubService(db).start_now(_sid(user), user, kind=kind, item_id=item_id)
+
+
+@router.post("/hub/{kind}/{item_id}/reschedule", response_model=ExamHubItemOut)
+async def reschedule_exam_hub(
+    kind: str,
+    item_id: UUID,
+    body: ExamHubRescheduleIn,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN, UserRole.TEACHER))],
+):
+    if kind not in {"written", "online"}:
+        from src.core.exceptions import AppError
+        raise AppError("Unknown exam type", status_code=422)
+    return await ExamHubService(db).reschedule(_sid(user), user, kind=kind, item_id=item_id, data=body)
 
 
 @router.get("/{exam_id}", response_model=ExamOut)

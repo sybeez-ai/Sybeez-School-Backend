@@ -37,6 +37,7 @@ from src.db.models import (
     AnnouncementAudience,
     Attendance,
     Exam,
+    ExamSchedule,
     ExamSection,
     ExamSubject,
     ExamType,
@@ -523,6 +524,17 @@ async def seed_school_admin_demo(db, *, school, year, grade, classroom, subject,
         teacher=teacher,
         school_admin=school_admin,
     )
+    await seed_exams_hub_demo(
+        db,
+        school=school,
+        year=year,
+        grade=grade,
+        classroom=classroom,
+        subject=subject,
+        teacher=teacher,
+        school_admin=school_admin,
+    )
+
 
 
 
@@ -1090,6 +1102,196 @@ async def seed_insights_demo(db, *, school, year, grade, classroom, subject, tea
                         )
                     )
 
+
+
+
+async def seed_exams_hub_demo(db, *, school, year, grade, classroom, subject, teacher, school_admin) -> None:
+    """Local-only upcoming, live and multi-class exams for the school-admin Exams hub."""
+    now = datetime.now(timezone.utc)
+    rooms = list(
+        (
+            await db.execute(
+                select(ClassRoom).where(ClassRoom.school_id == school.id, ClassRoom.academic_year_id == year.id)
+            )
+        ).scalars().all()
+    )
+    if classroom not in rooms:
+        rooms.append(classroom)
+    rooms = sorted(rooms, key=lambda r: ((r.name or ""), (r.section or "")))
+
+    # Older seeded online test without a window should appear as completed.
+    fractions = (
+        await db.execute(
+            select(OnlineTest).where(OnlineTest.school_id == school.id, OnlineTest.title == "Fractions practice")
+        )
+    ).scalar_one_or_none()
+    if fractions is not None and fractions.opens_at is None:
+        fractions.opens_at = now - timedelta(days=14)
+        fractions.closes_at = now - timedelta(days=14, hours=-1)
+        fractions.status = "CLOSED"
+
+    upcoming_title = "Term 2 Mathematics paper"
+    exam = (
+        await db.execute(select(Exam).where(Exam.school_id == school.id, Exam.title == upcoming_title))
+    ).scalar_one_or_none()
+    exam_date = (now + timedelta(days=3)).date()
+    start_clock = time(9, 0)
+    end_clock = time(10, 30)
+    if exam is None:
+        exam = Exam(
+            school_id=school.id,
+            academic_year_id=year.id,
+            grade_id=grade.id,
+            class_id=classroom.id,
+            subject_id=subject.id,
+            title=upcoming_title,
+            description="Written paper scheduled for every Grade 8 class.",
+            starts_on=exam_date,
+            ends_on=exam_date,
+            scheduled_at=datetime.combine(exam_date, start_clock, tzinfo=timezone.utc),
+            max_score=80.0,
+            status=ExamStatus.SCHEDULED.value,
+            approval_status="APPROVED",
+            approved_at=now,
+            approved_by=school_admin.id if school_admin else None,
+            created_by=school_admin.id if school_admin else None,
+        )
+        db.add(exam)
+        await db.flush()
+        exam_subject = ExamSubject(
+            school_id=school.id,
+            exam_id=exam.id,
+            subject_id=subject.id,
+            grade_id=grade.id,
+            max_marks=80.0,
+            pass_marks=28.0,
+            duration_minutes=90,
+            exam_date=exam_date,
+            starts_at=start_clock,
+            ends_at=end_clock,
+        )
+        db.add(exam_subject)
+        await db.flush()
+        for room in rooms:
+            existing_section = (
+                await db.execute(
+                    select(ExamSection).where(ExamSection.exam_id == exam.id, ExamSection.class_id == room.id)
+                )
+            ).scalar_one_or_none()
+            if existing_section is None:
+                db.add(ExamSection(school_id=school.id, exam_id=exam.id, class_id=room.id))
+            existing_sch = (
+                await db.execute(
+                    select(ExamSchedule).where(
+                        ExamSchedule.exam_id == exam.id,
+                        ExamSchedule.class_id == room.id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if existing_sch is None:
+                db.add(
+                    ExamSchedule(
+                        school_id=school.id,
+                        exam_id=exam.id,
+                        exam_subject_id=exam_subject.id,
+                        class_id=room.id,
+                        exam_date=exam_date,
+                        starts_at=start_clock,
+                        ends_at=end_clock,
+                    )
+                )
+
+    live_title = "Live Science pulse check"
+    live = (
+        await db.execute(select(OnlineTest).where(OnlineTest.school_id == school.id, OnlineTest.title == live_title))
+    ).scalar_one_or_none()
+    if live is None:
+        live = OnlineTest(
+            school_id=school.id,
+            teacher_id=teacher.id if teacher else None,
+            created_by=school_admin.id if school_admin else None,
+            class_id=classroom.id,
+            subject_id=subject.id,
+            title=live_title,
+            instructions="This test is open now. Answer before the timer ends.",
+            status="PUBLISHED",
+            approval_status="APPROVED",
+            approved_at=now,
+            approved_by=school_admin.id if school_admin else None,
+            published_at=now - timedelta(minutes=20),
+            duration_minutes=60,
+            total_points=1,
+            opens_at=now - timedelta(minutes=20),
+            closes_at=now + timedelta(minutes=40),
+        )
+        db.add(live)
+        await db.flush()
+        question = OnlineTestQuestion(
+            school_id=school.id,
+            test_id=live.id,
+            class_id=classroom.id,
+            prompt="Which unit measures force?",
+            options=[
+                {"id": "a", "text": "Newton"},
+                {"id": "b", "text": "Joule"},
+                {"id": "c", "text": "Watt"},
+                {"id": "d", "text": "Pascal"},
+            ],
+            points=1,
+            sort_order=1,
+            source="MANUAL",
+        )
+        db.add(question)
+        await db.flush()
+        db.add(
+            OnlineTestQuestionKey(
+                question_id=question.id,
+                school_id=school.id,
+                test_id=live.id,
+                class_id=classroom.id,
+                correct_option_id="a",
+                explanation="Force is measured in newtons.",
+            )
+        )
+
+    pending_written = "Algebra checkpoint"
+    pending = (
+        await db.execute(select(Exam).where(Exam.school_id == school.id, Exam.title == pending_written))
+    ).scalar_one_or_none()
+    if pending is None:
+        pending = Exam(
+            school_id=school.id,
+            academic_year_id=year.id,
+            grade_id=grade.id,
+            class_id=classroom.id,
+            subject_id=subject.id,
+            title=pending_written,
+            starts_on=(now + timedelta(days=7)).date(),
+            ends_on=(now + timedelta(days=7)).date(),
+            max_score=40.0,
+            status=ExamStatus.DRAFT.value,
+            approval_status="PENDING_APPROVAL",
+            submitted_at=now,
+            submitted_by=teacher.user_id if teacher else None,
+            created_by=teacher.user_id if teacher else None,
+        )
+        db.add(pending)
+        await db.flush()
+        db.add(ExamSection(school_id=school.id, exam_id=pending.id, class_id=classroom.id))
+        db.add(
+            ExamSubject(
+                school_id=school.id,
+                exam_id=pending.id,
+                subject_id=subject.id,
+                grade_id=grade.id,
+                max_marks=40.0,
+                pass_marks=14.0,
+                duration_minutes=45,
+                exam_date=(now + timedelta(days=7)).date(),
+                starts_at=time(11, 0),
+                ends_at=time(11, 45),
+            )
+        )
 
 
 async def ensure_schema() -> None:

@@ -2104,9 +2104,16 @@ class ExamService:
         from src.modules.question_bank.service import QuestionBankService, _options_list, _correct_index
         from src.shared.test_workflow import APPROVAL_APPROVED, APPROVAL_DRAFT, APPROVAL_PENDING
 
-        room = await self.db.get(ClassRoom, data.class_id)
-        if not room or room.school_id != school_id:
-            raise NotFoundError("Class not found")
+        class_ids = data.resolved_class_ids()
+        if not class_ids:
+            raise AppError("Select at least one class", status_code=422)
+        rooms: list[ClassRoom] = []
+        for cid in class_ids:
+            room = await self.db.get(ClassRoom, cid)
+            if not room or room.school_id != school_id:
+                raise NotFoundError("Class not found")
+            rooms.append(room)
+        room = rooms[0]
         subject = await self.db.get(Subject, data.subject_id)
         if not subject or subject.school_id != school_id:
             raise NotFoundError("Subject not found")
@@ -2114,31 +2121,36 @@ class ExamService:
         is_admin = role in {UserRole.SCHOOL_ADMIN.value, "SCHOOL_ADMIN", "PLATFORM_ADMIN"}
         if not is_admin:
             teacher = await self._teacher_for_user(school_id, user.id)
-            allowed = False
-            try:
-                await self._assert_teacher_assignment(
-                    school_id, teacher.id, data.class_id, data.subject_id, room.academic_year_id
-                )
-                allowed = True
-            except Exception:
+            from src.db.models import ClassSubject
+            for candidate in rooms:
                 allowed = False
-            if not allowed:
-                from src.db.models import ClassSubject
-                link = (
-                    await self.db.execute(
-                        select(ClassSubject).where(
-                            ClassSubject.school_id == school_id,
-                            ClassSubject.class_id == data.class_id,
-                            ClassSubject.subject_id == data.subject_id,
-                            ClassSubject.teacher_id == teacher.id,
-                        )
+                try:
+                    await self._assert_teacher_assignment(
+                        school_id, teacher.id, candidate.id, data.subject_id, candidate.academic_year_id
                     )
-                ).scalar_one_or_none()
-                allowed = link is not None
-            if not allowed:
-                raise ForbiddenError("You can only create tests for classes and subjects you teach")
+                    allowed = True
+                except Exception:
+                    link = (
+                        await self.db.execute(
+                            select(ClassSubject).where(
+                                ClassSubject.school_id == school_id,
+                                ClassSubject.class_id == candidate.id,
+                                ClassSubject.subject_id == data.subject_id,
+                                ClassSubject.teacher_id == teacher.id,
+                            )
+                        )
+                    ).scalar_one_or_none()
+                    allowed = link is not None
+                if not allowed:
+                    raise ForbiddenError("You can only create tests for classes and subjects you teach")
 
-        ends_clock = (datetime.combine(data.exam_date, data.start_time) + timedelta(minutes=data.duration_minutes)).time()
+        start_date = data.exam_date
+        start_clock = data.start_time
+        if is_admin and data.start_now:
+            now = _utcnow()
+            start_date = now.date()
+            start_clock = now.timetz().replace(tzinfo=None)
+        ends_clock = (datetime.combine(start_date, start_clock) + timedelta(minutes=data.duration_minutes)).time()
         exam = Exam(
             school_id=school_id,
             academic_year_id=room.academic_year_id,
@@ -2155,18 +2167,20 @@ class ExamService:
             created_by=user.id,
             approval_status=APPROVAL_DRAFT,
         )
-        if is_admin and data.schedule_now:
+        if is_admin and (data.schedule_now or data.start_now):
             exam.approval_status = APPROVAL_APPROVED
             exam.approved_at = _utcnow()
             exam.approved_by = user.id
-            exam.status = ExamStatus.SCHEDULED.value
+            exam.status = ExamStatus.ONGOING.value if data.start_now else ExamStatus.SCHEDULED.value
+            exam.starts_on = start_date
+            exam.ends_on = start_date
+            exam.scheduled_at = datetime.combine(start_date, start_clock, tzinfo=timezone.utc)
         elif data.submit_for_approval or (not is_admin and data.submit_for_approval):
             exam.approval_status = APPROVAL_PENDING
             exam.submitted_at = _utcnow()
             exam.submitted_by = user.id
         self.db.add(exam)
         await self.db.flush()
-        self.db.add(ExamSection(school_id=school_id, exam_id=exam.id, class_id=room.id))
         exam_subject = ExamSubject(
             school_id=school_id,
             exam_id=exam.id,
@@ -2175,23 +2189,25 @@ class ExamService:
             max_marks=data.max_marks,
             pass_marks=max(data.max_marks * 0.35, 1),
             duration_minutes=data.duration_minutes,
-            exam_date=data.exam_date,
-            starts_at=data.start_time,
+            exam_date=start_date,
+            starts_at=start_clock,
             ends_at=ends_clock,
         )
         self.db.add(exam_subject)
         await self.db.flush()
-        self.db.add(
-            ExamSchedule(
-                school_id=school_id,
-                exam_id=exam.id,
-                exam_subject_id=exam_subject.id,
-                class_id=room.id,
-                exam_date=data.exam_date,
-                starts_at=data.start_time,
-                ends_at=ends_clock,
+        for candidate in rooms:
+            self.db.add(ExamSection(school_id=school_id, exam_id=exam.id, class_id=candidate.id))
+            self.db.add(
+                ExamSchedule(
+                    school_id=school_id,
+                    exam_id=exam.id,
+                    exam_subject_id=exam_subject.id,
+                    class_id=candidate.id,
+                    exam_date=start_date,
+                    starts_at=start_clock,
+                    ends_at=ends_clock,
+                )
             )
-        )
         if data.question_ids:
             bank = await QuestionBankService(self.db).get_many(school_id, list(data.question_ids))
             for i, item in enumerate(bank):
