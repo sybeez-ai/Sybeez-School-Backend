@@ -17,6 +17,7 @@ from src.modules.analytics.schemas import (
     AnalyticsSettingsUpdate,
 )
 from src.modules.analytics.heatmap import class_heatmap
+from src.modules.analytics.insights import InsightsService
 from src.modules.analytics.service import AnalyticsService
 from src.shared.enums import UserRole
 
@@ -37,6 +38,7 @@ def _filters(
     exam_id: UUID | None = None,
     from_date: date | None = Query(None, alias="from"),
     to_date: date | None = Query(None, alias="to"),
+    term: str | None = None,
 ) -> AnalyticsFilters:
     return AnalyticsFilters(
         academic_year_id=academic_year_id,
@@ -46,6 +48,7 @@ def _filters(
         exam_id=exam_id,
         from_date=from_date,
         to_date=to_date,
+        term=term,
     )
 
 
@@ -54,7 +57,60 @@ async def analytics_health(_: Annotated[CurrentUser, Depends(require_permission(
     return {"module": "analytics", "status": "ok"}
 
 
+@router.get("/insights/dashboard")
+async def insights_dashboard(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    f: Annotated[AnalyticsFilters, Depends(_filters)],
+):
+    return await InsightsService(db).dashboard(_sid(user), f)
+
+
+@router.get("/insights/progress")
+async def insights_progress(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    f: Annotated[AnalyticsFilters, Depends(_filters)],
+):
+    return await InsightsService(db).progress(_sid(user), f)
+
+
+@router.get("/insights/progress/students/{student_id}")
+async def insights_student(
+    student_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    f: Annotated[AnalyticsFilters, Depends(_filters)],
+):
+    return await InsightsService(db).student(_sid(user), student_id, f)
+
+
+@router.get("/insights/heatmap")
+async def insights_heatmap(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    f: Annotated[AnalyticsFilters, Depends(_filters)],
+    mode: str = "class_subject",
+):
+    return await InsightsService(db).heatmap(_sid(user), f, mode=mode)
+
+
+@router.get("/insights/heatmap/cell")
+async def insights_heatmap_cell(
+    section_id: UUID,
+    column_id: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],
+    f: Annotated[AnalyticsFilters, Depends(_filters)],
+    mode: str = "class_subject",
+):
+    return await InsightsService(db).heatmap_cell(
+        _sid(user), f, section_id=section_id, mode=mode, column_id=column_id
+    )
+
+
 @router.get("/overview")
+
 async def overview(
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[CurrentUser, Depends(require_roles(UserRole.SCHOOL_ADMIN))],

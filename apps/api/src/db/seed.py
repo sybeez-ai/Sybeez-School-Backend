@@ -43,6 +43,7 @@ from src.db.models import (
     MessageBroadcast,
     NotificationDelivery,
     OnlineTest,
+    OnlineTestAttempt,
     OnlineTestQuestion,
     OnlineTestQuestionKey,
     QuestionBankItem,
@@ -50,6 +51,10 @@ from src.db.models import (
     TeacherAssignment,
     TimetableEntry,
     User,
+    FeeInvoice,
+    Homework,
+    HomeworkSubmission,
+    StudentFeeAccount,
 )
 from src.db.models.class_subject import ClassSubject
 from src.shared.enums import (
@@ -59,7 +64,12 @@ from src.shared.enums import (
     EnrollmentStatus,
     ExamAttendanceStatus,
     ExamStatus,
+    FeeInvoiceStatus,
+    HomeworkStatus,
+    HomeworkSubmissionStatus,
+    HomeworkType,
     MarkEntryStatus,
+    StudentFeeAccountStatus,
     MembershipStatus,
     NotificationPriority,
     PlatformRole,
@@ -502,6 +512,463 @@ async def seed_school_admin_demo(db, *, school, year, grade, classroom, subject,
                     error_code="provider_not_configured",
                 )
             )
+
+    await seed_insights_demo(
+        db,
+        school=school,
+        year=year,
+        grade=grade,
+        classroom=classroom,
+        subject=subject,
+        teacher=teacher,
+        school_admin=school_admin,
+    )
+
+
+
+
+async def seed_insights_demo(db, *, school, year, grade, classroom, subject, teacher, school_admin) -> None:
+    """Richer local-only history so Progress, Heatmap, Analytics and Reports look real."""
+    from collections import defaultdict
+
+    # Resolve subjects already created by seed_school_admin_demo
+    subjects = {}
+    for row in (
+        await db.execute(select(Subject).where(Subject.school_id == school.id))
+    ).scalars().all():
+        subjects[row.code] = row
+
+    # Second class so the heatmap and top/bottom charts have more than one row
+    classroom_b = (
+        await db.execute(
+            select(ClassRoom).where(
+                ClassRoom.school_id == school.id,
+                ClassRoom.academic_year_id == year.id,
+                ClassRoom.section == "B",
+                ClassRoom.grade_id == grade.id,
+            )
+        )
+    ).scalar_one_or_none()
+    if classroom_b is None:
+        classroom_b = ClassRoom(
+            school_id=school.id,
+            grade_id=grade.id,
+            academic_year_id=year.id,
+            name="Grade 8-B",
+            section="B",
+            capacity=40,
+        )
+        db.add(classroom_b)
+        await db.flush()
+
+    for subj, teacher_id in (
+        (subjects.get("MATH"), teacher.id),
+        (subjects.get("ENG"), teacher.id),
+        (subjects.get("SCI"), None),
+        (subjects.get("SOC"), None),
+    ):
+        if subj is None:
+            continue
+        existing = (
+            await db.execute(
+                select(ClassSubject).where(
+                    ClassSubject.class_id == classroom_b.id,
+                    ClassSubject.subject_id == subj.id,
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is None:
+            db.add(
+                ClassSubject(
+                    school_id=school.id,
+                    class_id=classroom_b.id,
+                    subject_id=subj.id,
+                    teacher_id=teacher_id,
+                )
+            )
+
+    for email, name, adm in [
+        ("ananya@greenvalley.edu", "Ananya Iyer", "GV-2404"),
+        ("kabir@greenvalley.edu", "Kabir Singh", "GV-2405"),
+        ("meera@greenvalley.edu", "Meera Nair", "GV-2406"),
+    ]:
+        u = await upsert_local_user(db, email=email, full_name=name, password=DEV_PASSWORD)
+        await ensure_membership(db, user_id=u.id, school_id=school.id, role=UserRole.STUDENT)
+        st = (
+            await db.execute(
+                select(Student).where(Student.school_id == school.id, Student.user_id == u.id)
+            )
+        ).scalar_one_or_none()
+        if st is None:
+            st = Student(school_id=school.id, user_id=u.id, admission_no=adm)
+            db.add(st)
+            await db.flush()
+        en = (
+            await db.execute(
+                select(Enrollment).where(
+                    Enrollment.student_id == st.id, Enrollment.academic_year_id == year.id
+                )
+            )
+        ).scalar_one_or_none()
+        if en is None:
+            db.add(
+                Enrollment(
+                    school_id=school.id,
+                    student_id=st.id,
+                    academic_year_id=year.id,
+                    grade_id=grade.id,
+                    class_id=classroom_b.id,
+                    status=EnrollmentStatus.ACTIVE.value,
+                )
+            )
+        else:
+            en.class_id = classroom_b.id
+            en.status = EnrollmentStatus.ACTIVE.value
+
+    rooms = [classroom, classroom_b]
+    room_students: dict = {}
+    for room in rooms:
+        enrollments = (
+            await db.execute(
+                select(Enrollment).where(
+                    Enrollment.school_id == school.id,
+                    Enrollment.class_id == room.id,
+                    Enrollment.status == EnrollmentStatus.ACTIVE.value,
+                )
+            )
+        ).scalars().all()
+        room_students[room.id] = [e.student_id for e in enrollments]
+
+    today = date.today()
+    days: list[date] = []
+    cursor = today
+    while len(days) < 40:
+        if cursor.weekday() < 5:
+            days.append(cursor)
+        cursor -= timedelta(days=1)
+    days = list(reversed(days))
+    pattern_a = [
+        AttendanceStatus.PRESENT.value,
+        AttendanceStatus.PRESENT.value,
+        AttendanceStatus.LATE.value,
+        AttendanceStatus.PRESENT.value,
+        AttendanceStatus.ABSENT.value,
+        AttendanceStatus.PRESENT.value,
+        AttendanceStatus.PRESENT.value,
+        AttendanceStatus.PRESENT.value,
+    ]
+    pattern_b = [
+        AttendanceStatus.PRESENT.value,
+        AttendanceStatus.ABSENT.value,
+        AttendanceStatus.PRESENT.value,
+        AttendanceStatus.LATE.value,
+        AttendanceStatus.PRESENT.value,
+        AttendanceStatus.PRESENT.value,
+        AttendanceStatus.ABSENT.value,
+        AttendanceStatus.PRESENT.value,
+    ]
+    marked_at = datetime.now(timezone.utc)
+    for room, pattern in ((classroom, pattern_a), (classroom_b, pattern_b)):
+        for offset, day in enumerate(days):
+            for i, sid in enumerate(room_students.get(room.id, [])):
+                # Leave ~1 in 8 slots unmarked so rates cannot fake 100%.
+                if (offset + i) % 8 == 0:
+                    continue
+                existing = (
+                    await db.execute(
+                        select(Attendance).where(
+                            Attendance.student_id == sid,
+                            Attendance.class_id == room.id,
+                            Attendance.attended_on == day,
+                        )
+                    )
+                ).scalar_one_or_none()
+                if existing is None:
+                    status = pattern[(offset + i) % len(pattern)]
+                    db.add(
+                        Attendance(
+                            school_id=school.id,
+                            student_id=sid,
+                            class_id=room.id,
+                            attended_on=day,
+                            status=status,
+                            marked_by=school_admin.id if school_admin else None,
+                            marked_at=marked_at,
+                        )
+                    )
+
+    # Written marks across all subjects for both classes (Term 1 Mid-term already exists)
+    exam = (
+        await db.execute(select(Exam).where(Exam.school_id == school.id, Exam.title == "Term 1 Mid-term"))
+    ).scalar_one_or_none()
+    scores_by_code = {
+        "MATH": [78.0, 91.0, 64.0, 85.0, 42.0, 88.0, 71.0],
+        "ENG": [72.0, 88.0, 69.0, 80.0, 55.0, 90.0, 61.0],
+        "SCI": [81.0, 74.0, 58.0, 92.0, 47.0, 83.0, 70.0],
+        "SOC": [66.0, 79.0, 84.0, 73.0, 39.0, 77.0, 68.0],
+    }
+    if exam is not None:
+        for room in rooms:
+            section = (
+                await db.execute(
+                    select(ExamSection).where(ExamSection.exam_id == exam.id, ExamSection.class_id == room.id)
+                )
+            ).scalar_one_or_none()
+            if section is None:
+                db.add(ExamSection(school_id=school.id, exam_id=exam.id, class_id=room.id))
+                await db.flush()
+            for code, marks in scores_by_code.items():
+                subj = subjects.get(code)
+                if subj is None:
+                    continue
+                exam_subject = (
+                    await db.execute(
+                        select(ExamSubject).where(ExamSubject.exam_id == exam.id, ExamSubject.subject_id == subj.id)
+                    )
+                ).scalar_one_or_none()
+                if exam_subject is None:
+                    exam_subject = ExamSubject(
+                        school_id=school.id,
+                        exam_id=exam.id,
+                        subject_id=subj.id,
+                        grade_id=grade.id,
+                        max_marks=100.0,
+                        pass_marks=35.0,
+                        exam_date=days[-1] if days else today,
+                    )
+                    db.add(exam_subject)
+                    await db.flush()
+                bump = 0 if room.id == classroom.id else -6
+                for i, sid in enumerate(room_students.get(room.id, [])):
+                    existing_mark = (
+                        await db.execute(
+                            select(StudentMark).where(
+                                StudentMark.exam_subject_id == exam_subject.id,
+                                StudentMark.student_id == sid,
+                            )
+                        )
+                    ).scalar_one_or_none()
+                    if existing_mark is None:
+                        obtained = max(20.0, min(99.0, marks[i % len(marks)] + bump))
+                        db.add(
+                            StudentMark(
+                                school_id=school.id,
+                                exam_id=exam.id,
+                                exam_subject_id=exam_subject.id,
+                                student_id=sid,
+                                class_id=room.id,
+                                obtained_marks=obtained,
+                                max_marks=100.0,
+                                attendance=ExamAttendanceStatus.PRESENT.value,
+                                status=MarkEntryStatus.SUBMITTED.value,
+                                entered_by=school_admin.id if school_admin else None,
+                                entered_at=marked_at,
+                            )
+                        )
+
+    # Weekly online quizzes spread across the window so score trends have points
+    quiz_weeks = [days[d] for d in (6, 16, 26, 36) if d < len(days)]
+    quiz_titles = [
+        "Week 2 decimals quiz",
+        "Week 4 fractions quiz",
+        "Week 6 geometry quiz",
+        "Week 8 review quiz",
+    ]
+    quiz_scores = [0.8, 1.0, 0.6, 0.9, 0.4, 0.7, 0.5]
+    for qi, (qday, qtitle) in enumerate(zip(quiz_weeks, quiz_titles)):
+        online = (
+            await db.execute(
+                select(OnlineTest).where(OnlineTest.school_id == school.id, OnlineTest.title == qtitle)
+            )
+        ).scalar_one_or_none()
+        if online is None:
+            online = OnlineTest(
+                school_id=school.id,
+                teacher_id=teacher.id,
+                created_by=school_admin.id if school_admin else None,
+                class_id=classroom.id,
+                subject_id=subject.id,
+                title=qtitle,
+                instructions="Choose the correct answer.",
+                status="PUBLISHED",
+                duration_minutes=15,
+                total_points=1,
+                published_at=datetime.combine(qday, time(8, 0), tzinfo=timezone.utc),
+                approval_status="APPROVED",
+            )
+            db.add(online)
+            await db.flush()
+        for room in rooms:
+            for i, sid in enumerate(room_students.get(room.id, [])):
+                existing_att = (
+                    await db.execute(
+                        select(OnlineTestAttempt).where(
+                            OnlineTestAttempt.test_id == online.id,
+                            OnlineTestAttempt.student_id == sid,
+                        )
+                    )
+                ).scalar_one_or_none()
+                if existing_att is None:
+                    submitted = datetime.combine(qday, time(10, 15), tzinfo=timezone.utc)
+                    started = submitted - timedelta(minutes=12)
+                    score = quiz_scores[(i + qi) % len(quiz_scores)]
+                    if room.id != classroom.id:
+                        score = max(0.0, score - 0.1)
+                    db.add(
+                        OnlineTestAttempt(
+                            school_id=school.id,
+                            test_id=online.id,
+                            student_id=sid,
+                            class_id=room.id,
+                            status="SUBMITTED",
+                            started_at=started,
+                            deadline_at=started + timedelta(minutes=15),
+                            submitted_at=submitted,
+                            score=score,
+                            max_score=1.0,
+                            percentage=round(score * 100, 1),
+                            question_order=[],
+                            option_order={},
+                        )
+                    )
+
+    # Homework over several weeks
+    hw_titles = [
+        ("Fractions worksheet", 4, "MATH"),
+        ("Comprehension practice", 11, "ENG"),
+        ("Plant cell diagram", 18, "SCI"),
+        ("Map skills", 25, "SOC"),
+        ("Algebra review", 32, "MATH"),
+    ]
+    for title, day_idx, code in hw_titles:
+        subj = subjects.get(code)
+        if subj is None or day_idx >= len(days):
+            continue
+        due = datetime.combine(days[day_idx], time(17, 0), tzinfo=timezone.utc)
+        for room in rooms:
+            hw = (
+                await db.execute(
+                    select(Homework).where(
+                        Homework.school_id == school.id,
+                        Homework.class_id == room.id,
+                        Homework.title == title,
+                    )
+                )
+            ).scalar_one_or_none()
+            if hw is None:
+                hw = Homework(
+                    school_id=school.id,
+                    academic_year_id=year.id,
+                    class_id=room.id,
+                    subject_id=subj.id,
+                    teacher_id=teacher.id,
+                    title=title,
+                    description="Complete and submit before the due date.",
+                    homework_type=HomeworkType.HOMEWORK.value,
+                    assigned_at=due - timedelta(days=5),
+                    due_at=due,
+                    max_marks=10.0,
+                    status=HomeworkStatus.PUBLISHED.value,
+                )
+                db.add(hw)
+                await db.flush()
+            for i, sid in enumerate(room_students.get(room.id, [])):
+                # Leave every 5th student without a submission (missing).
+                if i % 5 == 4:
+                    continue
+                existing_sub = (
+                    await db.execute(
+                        select(HomeworkSubmission).where(
+                            HomeworkSubmission.homework_id == hw.id,
+                            HomeworkSubmission.student_id == sid,
+                        )
+                    )
+                ).scalar_one_or_none()
+                if existing_sub is None:
+                    late = i % 4 == 3
+                    submitted_at = due + timedelta(hours=6) if late else due - timedelta(hours=20)
+                    marks = 6.0 + ((i * 1.5) % 4)
+                    db.add(
+                        HomeworkSubmission(
+                            homework_id=hw.id,
+                            student_id=sid,
+                            school_id=school.id,
+                            submitted_at=submitted_at,
+                            content="Submitted.",
+                            status=(
+                                HomeworkSubmissionStatus.LATE.value
+                                if late
+                                else HomeworkSubmissionStatus.GRADED.value
+                            ),
+                            marks=marks,
+                            reviewed_by=school_admin.id if school_admin else None,
+                            reviewed_at=submitted_at + timedelta(hours=8),
+                        )
+                    )
+
+    # Fee invoices spread across the window (local demo only)
+    for room in rooms:
+        for i, sid in enumerate(room_students.get(room.id, [])):
+            acc = (
+                await db.execute(
+                    select(StudentFeeAccount).where(
+                        StudentFeeAccount.school_id == school.id,
+                        StudentFeeAccount.student_id == sid,
+                        StudentFeeAccount.academic_year_id == year.id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if acc is None:
+                acc = StudentFeeAccount(
+                    school_id=school.id,
+                    student_id=sid,
+                    academic_year_id=year.id,
+                    status=StudentFeeAccountStatus.ACTIVE.value,
+                )
+                db.add(acc)
+                await db.flush()
+            for inst, (offset, total, paid, st) in enumerate(
+                (
+                    (3, 8000, 8000, FeeInvoiceStatus.PAID.value),
+                    (17, 8000, 4000, FeeInvoiceStatus.PARTIALLY_PAID.value),
+                    (31, 8000, 0 if i % 3 == 2 else 8000, FeeInvoiceStatus.ISSUED.value if i % 3 == 2 else FeeInvoiceStatus.PAID.value),
+                )
+            ):
+                inv_date = days[offset] if offset < len(days) else today
+                number = f"INS-{room.section}{i+1:02d}-{inst+1:02d}"
+                existing_inv = (
+                    await db.execute(
+                        select(FeeInvoice).where(
+                            FeeInvoice.school_id == school.id,
+                            FeeInvoice.invoice_number == number,
+                        )
+                    )
+                ).scalar_one_or_none()
+                if existing_inv is None:
+                    if st == FeeInvoiceStatus.ISSUED.value and paid == 0:
+                        # leave issued / unpaid
+                        pass
+                    if paid >= total:
+                        st = FeeInvoiceStatus.PAID.value
+                    elif paid > 0:
+                        st = FeeInvoiceStatus.PARTIALLY_PAID.value
+                    db.add(
+                        FeeInvoice(
+                            school_id=school.id,
+                            student_fee_account_id=acc.id,
+                            invoice_number=number,
+                            invoice_date=inv_date,
+                            due_date=inv_date + timedelta(days=14),
+                            currency="INR",
+                            subtotal=total,
+                            total_amount=total,
+                            paid_amount=paid,
+                            balance_amount=total - paid,
+                            status=st,
+                            created_by=school_admin.id if school_admin else None,
+                        )
+                    )
+
 
 
 async def ensure_schema() -> None:
